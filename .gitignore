@@ -1,0 +1,26 @@
+# Gizli bilgiler - GitHub'a gitmesin
+.env
+*.json
+# Hassas olmayan JSON dosyaları izlenir
+!shared/stores.json
+!streamlit/templates/*.json
+loomantikrugs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Mac
+.DS_Store
+
+# Geçici indirme klasörü
+etsy_temp/
+temp/
+.claude/
+.runtime/
+outputs/
+.codex_spreadsheet/
+
+# Yerel yedekler
+vds/migration_yedek_*.csv

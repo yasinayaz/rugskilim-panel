@@ -1,0 +1,112 @@
+{
+  "stores": [
+    {
+      "store_id": "PatchArts",
+      "store_name": "PatchArts",
+      "sheet_tab": "PatchArts",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "default_v1",
+      "active": true
+    },
+    {
+      "store_id": "OldNewRugs",
+      "store_name": "OldNewRugs",
+      "sheet_tab": "OldNewRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "OldNewRugs_v1",
+      "active": false
+    },
+    {
+      "store_id": "LoopRug",
+      "store_name": "LoopRug",
+      "sheet_tab": "LoopRug",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "LoopRug_v1",
+      "active": false
+    },
+    {
+      "store_id": "LoomixRugs",
+      "store_name": "LoomixRugs",
+      "sheet_tab": "LoomixRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "LoomixRugs_v1",
+      "active": false
+    },
+    {
+      "store_id": "RugsShopTurkey",
+      "store_name": "RugsShopTurkey",
+      "sheet_tab": "RugsShopTurkey",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "RugsShopTurkey_v1",
+      "active": false
+    },
+    {
+      "store_id": "WovenTurkishRugs",
+      "store_name": "WovenTurkishRugs",
+      "sheet_tab": "WovenTurkishRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "WovenTurkishRugs_v1",
+      "active": false
+    },
+    {
+      "store_id": "BohoRugHouse",
+      "store_name": "BohoRugHouse",
+      "sheet_tab": "BohoRugHouse",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "BohoRugHouse_v1",
+      "active": false
+    },
+    {
+      "store_id": "İlmekRug",
+      "store_name": "İlmekRug",
+      "sheet_tab": "İlmekRug",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "İlmekRug_v1",
+      "active": false
+    },
+    {
+      "store_id": "WoolCottonRugs",
+      "store_name": "WoolCottonRugs",
+      "sheet_tab": "WoolCottonRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "WoolCottonRugs_v1",
+      "active": false
+    },
+    {
+      "store_id": "WovenLoomRugs",
+      "store_name": "WovenLoomRugs",
+      "sheet_tab": "WovenLoomRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "WovenLoomRugs_v1",
+      "active": false
+    },
+    {
+      "store_id": "RugsKilimLLC",
+      "store_name": "RugsKilimLLC",
+      "sheet_tab": "RugsKilimLLC",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "RugsKilimLLC_v1",
+      "active": false
+    },
+    {
+      "store_id": "LoomAntikRugs",
+      "store_name": "LoomAntikRugs",
+      "sheet_tab": "LoomAntikRugs",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": "LoomAntikRugs_v1",
+      "active": true
+    }
+  ]
+}

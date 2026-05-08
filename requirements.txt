@@ -1,0 +1,9 @@
+streamlit
+httpx
+gspread
+google-auth
+pandas
+openpyxl
+requests
+numpy
+opencv-python-headless
