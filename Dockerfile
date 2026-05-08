@@ -3,6 +3,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive \
     APP_HOME=/app
 
 WORKDIR /app
@@ -20,6 +21,7 @@ RUN pip install -r /app/requirements.txt
 
 COPY . /app
 
+RUN test -f /app/docker/boot.sh && test -f /app/docker/start-panel.sh && test -f /app/docker/start-worker.sh
 RUN chmod +x /app/docker/boot.sh /app/docker/start-panel.sh /app/docker/start-worker.sh
 
 EXPOSE 8501
