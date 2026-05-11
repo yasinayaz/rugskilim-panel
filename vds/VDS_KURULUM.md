@@ -45,6 +45,17 @@ C:\rugskilim-panel\vds\.env
 STORE_ID=PatchArts
 ```
 
+`OldNewRugs` bilgisayari icin ornek:
+```
+STORE_ID=OldNewRugs
+GOOGLE_SHEET_ID=12zcGd3Ila-y_aZWCldNZUeJp-1yBrz_Uvh4Yf3U0f7o
+GOOGLE_CREDS_JSON=C:\rugskilim-panel\streamlit\credentials.json
+TEMP_DIR=C:\etsy_temp\OldNewRugs
+```
+
+Hazir ornek dosya repo icinde vardir:
+`C:\rugskilim-panel\vds\.env.example`
+
 ### 5. `baslat.bat` içindeki ortak ayarları kontrol et
 
 `C:\rugskilim-panel\vds\baslat.bat` dosyasında şunların doğru olduğundan emin ol:
@@ -58,6 +69,36 @@ TEMP_DIR=C:\etsy_temp
 ```
 C:\rugskilim-panel\vds\baslat.bat
 ```
+
+OldNewRugs bilgisayari icin personel komut yazmayacaksa dogrudan su dosyaya cift tiklayabilir:
+```
+C:\rugskilim-panel\vds\OLDNEWRUGS_BASLAT.bat
+```
+
+Bu dosya `STORE_ID=OldNewRugs` ile otomatik baslatir.
+
+---
+
+## Streamlit ile ortaklik mantigi
+
+Bu yapida Streamlit ile Windows worker ortak bir yerel klasor kullanmak zorunda degil.
+Gercek ortak alanlar sunlardir:
+
+- ayni `GOOGLE_SHEET_ID`
+- ayni magaza/store kimligi
+- ayni pCloud kaynagi
+
+OldNewRugs bilgisayari icin eslesme soyle olmalidir:
+
+- Streamlit'te `Hedef Magaza` = `OldNewRugs`
+- Windows `STORE_ID` = `OldNewRugs`
+- Sheet sekmesi = `OldNewRugs`
+- Gerekirse `google_sheet_id` ayni sheet'i gostermeli
+
+Yani Streamlit `ready` yazdigi zaman, Windows worker ayni sheet'teki `OldNewRugs` sekmesinden bu urunleri alip isler.
+
+`TEMP_DIR` altindaki klasor sadece Windows worker'indir. Streamlit bu klasoru okumaz.
+Eger bir gun ayni fiziksel Windows makinede Streamlit de calisacaksa, yine ortak nokta sheet olacaktir; dosya klasoru entegrasyonu su anki kodda yoktur.
 
 ---
 
