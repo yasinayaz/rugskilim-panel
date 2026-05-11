@@ -56,6 +56,14 @@ TEMP_DIR=C:\etsy_temp\OldNewRugs
 Hazir ornek dosya repo icinde vardir:
 `C:\rugskilim-panel\vds\.env.example`
 
+Windows'ta `.env.example` dosyasi acilmazsa veya ugrastirirsa su kolay acilan dosyayi kullan:
+`C:\rugskilim-panel\vds\OLDNEWRUGS_env.txt`
+
+Yapilacak islem:
+1. `OLDNEWRUGS_env.txt` dosyasini ac
+2. `Farkli Kaydet` ile ayni klasore `.env` olarak kaydet
+3. Gerekirse sadece degerleri duzenle
+
 ### 5. `baslat.bat` içindeki ortak ayarları kontrol et
 
 `C:\rugskilim-panel\vds\baslat.bat` dosyasında şunların doğru olduğundan emin ol:
