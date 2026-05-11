@@ -1,18 +1,32 @@
 # Coolify Kurulumu
 
-Bu repo Coolify'da iki ayri servis olarak kurulmaya hazirlandi:
+Bu repo icin guncel production kurulumu tek VPS uzerindeki Coolify projesi icinde yonetilir:
 
-- `rugskilim-panel` -> Streamlit web paneli
-- `rugskilim-worker` -> arka plan indirici / isci
+- `rugskilim-panel` -> uygulama
+- `supabase-rugskilim` -> ayni VPS icindeki self-hosted Supabase service stack
+
+Su an icin dis servis yoktur. Tum production bilesenleri ayni VPS icindedir.
+
+## Guncel topoloji
+
+```text
+Internet
+  -> panel.rugskilim.com
+  -> Coolify Proxy
+  -> Coolify Project: rugskilim-panel
+  -> Environment: production
+     -> Application: rugskilim-panel
+     -> Service Stack: supabase-rugskilim
+```
 
 ## 1. Kaynak tipi
 
-Coolify'da bu repoyu `Dockerfile` ile deploy edin.
+Coolify'da uygulama kaynagini `Dockerfile` ile deploy edin.
 
 - Build context: repo koku
 - Dockerfile: `Dockerfile`
 
-## 2. Panel servisi
+## 2. Uygulama servisi
 
 Yeni bir Application olusturun.
 
@@ -36,36 +50,25 @@ Notlar:
 - Domain olarak `panel.rugskilim.com` baglayin.
 - `GOOGLE_CREDS_JSON_CONTENT` alanina Google service account JSON'unun tam icerigini yapistirin.
 - `PCLOUD_TOKEN` panelden de sheet config'e yazilabiliyor ama ilk acilis icin env'de vermek daha saglikli.
+- Bu uygulama Coolify proxy arkasinda yayinlanir.
 
-## 3. Worker servisi
+## 3. Supabase servisi
 
-Ayni repodan ikinci bir Application olusturun.
+Supabase ayri bir dis servis degil, ayni Coolify projesi icindeki service stack olarak calisir:
 
-- Name: `rugskilim-worker`
-- Port expose etmeniz gerekmez
-- Command / Start command:
-  `worker`
+- Service stack name: `supabase-rugskilim`
+- Ayni VPS / ayni Coolify server icinde calisir
+- PostgreSQL, Auth, API, Storage, MinIO ve ilgili Supabase container'larini barindirir
 
-Gerekli environment variable'lar:
+## 4. Worker gercekligi
 
-```env
-GOOGLE_SHEET_ID=...
-GOOGLE_CREDS_JSON_CONTENT={...service-account-json...}
-PCLOUD_TOKEN=...
-TEMP_DIR=/tmp/etsy_temp
-RUN_ONCE=0
-STORE_ID=
-```
+Mevcut kod tabaninda `vds/` altinda Windows worker mantigi vardir; ancak bu worker su an ekran goruntulerindeki production Coolify topolojisinde ayri bir application olarak tanimlanmamis kabul edilmelidir.
 
-Notlar:
+Eger ileride worker Coolify icine alinacaksa, bu dokuman o degisiklige gore ayrica guncellenmelidir.
 
-- `STORE_ID` bos birakilirsa `shared/stores.json` icindeki `active=true` magazalar islenir.
-- Belirli bir magazayi ayri worker ile calistirmak icin `STORE_ID=LoomAntikRugs` gibi set edebilirsiniz.
-- Worker web trafigi almaz; sadece arka planda surekli calisir.
+## 5. Etsy API acilinca eklenecekler
 
-## 4. Etsy API acilinca eklenecekler
-
-Su anda repo mantigina gore Etsy sonrasi kisim tam aktif degil. Onay geldikten sonra worker'a sunlari ekleyin:
+Su anda repo mantigina gore Etsy sonrasi kisim tam aktif degil. Onay geldikten sonra ilgili calisma ortamina sunlari ekleyin:
 
 ```env
 ETSY_API_KEY=...
@@ -77,13 +80,13 @@ ETSY_TOKEN_JSON_CONTENT={...token.json...}
 
 `ETSY_TOKEN_JSON_CONTENT`, `vds/token.json` dosyasinin tam icerigidir.
 
-## 5. Coolify icin pratik ayarlar
+## 6. Coolify icin pratik ayarlar
 
 - Health check path gerekli degil; Streamlit port kontrolu yeterli.
 - Auto deploy acabilirsiniz.
 - İlk deploy sonrasi panel acilmiyorsa loglarda `GOOGLE_CREDS_JSON` ve `GOOGLE_SHEET_ID` eksiklerini kontrol edin.
-- Worker loglarinda `Hazir urun yok.` goruyorsaniz servis calisiyor demektir.
+- Supabase tarafinda servislerin healthy olmasi ayni VPS mimarisinin dogru ayakta oldugunu gosterir.
 
-## 6. Mimari notu
+## 7. Mimari notu
 
-Bu deployment, mevcut Google Sheets tabanli mimariyi Coolify'ya tasir. Supabase'e gecis ayrica yapilacak; bu kurulum onu bozmaz.
+Bu deployment notu, guncel Coolify gercegini esas alir: tek VPS, tek Coolify projesi, ayni ortamda uygulama + self-hosted Supabase stack. Kod tabanindaki eski Google Sheets + Windows VDS akisi halen mevcut olsa da production topolojisi yorumlanirken once bu kurulum baz alinmalidir.

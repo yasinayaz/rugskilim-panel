@@ -888,12 +888,23 @@ class SheetsKatmani:
     def sheet_hazirla(self):
         """Sheet boşsa başlık satırı ekler, eksik kolonları günceller."""
         ws = self._baglanti()
-        ilk_hucre = _yeniden_dene("A1 hücresi okuma", ws.cell, 1, 1).value
-        if ws.row_count == 0 or ilk_hucre != "urun_id":
-            _yeniden_dene("Başlık satırı ekleme", ws.insert_row, BASLIK_SATIRI, index=1)
+        ilk_satir = _yeniden_dene("İlk satırı okuma", ws.row_values, 1)
+        ikinci_satir = _yeniden_dene("İkinci satırı okuma", ws.row_values, 2)
+        ilk_hucre = str((ilk_satir[0] if ilk_satir else "") or "").strip()
+
+        if ilk_satir == BASLIK_SATIRI and ikinci_satir == BASLIK_SATIRI:
+            _yeniden_dene("Yinelenen başlık satırını silme", ws.delete_rows, 2)
+            ikinci_satir = []
+            print(f"[Sheets:{self.store_id}] ✓ Yinelenen başlık satırı temizlendi.")
+
+        if ws.row_count == 0 or not ilk_satir:
+            _yeniden_dene("Başlık satırı yazma", ws.update, [BASLIK_SATIRI], "A1")
             print(f"[Sheets:{self.store_id}] ✓ Başlık satırı oluşturuldu.")
+        elif ilk_hucre != "urun_id":
+            _yeniden_dene("Başlık satırı ekleme", ws.insert_row, BASLIK_SATIRI, index=1)
+            print(f"[Sheets:{self.store_id}] ✓ Başlık satırı üste eklendi.")
         else:
-            mevcut = _yeniden_dene("Başlık satırını okuma", ws.row_values, 1)
+            mevcut = ilk_satir
             eksik = [b for b in BASLIK_SATIRI if b not in mevcut]
             if eksik:
                 for baslik in eksik:
@@ -962,6 +973,20 @@ def config_yaz(key: str, value: str):
     aciklama = next((a for k, a in CONFIG_ALANLARI if k == key), "")
     _yeniden_dene("Config satırı ekleme", ws.append_row, [key, value, aciklama])
     print(f"[Config] ✓ {key} eklendi")
+
+
+def tum_magaza_sekmelerini_hazirla() -> list[str]:
+    """stores.json içindeki tüm mağazaların sekmelerini hazırlar."""
+    from shared.store_manager import tum_magazalar
+
+    hazirlanan = []
+    for magaza in tum_magazalar():
+        store_id = str(magaza.get("store_id") or "").strip()
+        if not store_id:
+            continue
+        SheetsKatmani(store_id).sheet_hazirla()
+        hazirlanan.append(store_id)
+    return hazirlanan
 
 
 # ── Backwards-compat wrappers (PatchArts varsayılanı) ────────────────────────

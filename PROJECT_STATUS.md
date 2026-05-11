@@ -27,6 +27,10 @@ Bu dosya, projeyi yeni bir sohbette veya daha sonra hızlıca devralmak icin kis
 - Hostinger VPS satin alindi
 - Coolify kuruldu
 - Coolify uzerinde proje adi: `rugskilim-panel`
+- Production environment aktif: `production`
+- Uygulama resource'u: `rugskilim-panel`
+- Supabase resource'u: `supabase-rugskilim`
+- Tum production bilesenleri ayni VPS icinde, dis servis yok
 
 ## Supabase
 
@@ -72,6 +76,25 @@ Yeni hedef mimari:
 - `studio.rugskilim.com` -> Supabase Studio
 - ileride Etsy + Shopify + auth + SaaS mantigi
 
+## Confirmed Production Topology
+
+Bu yapi ekran goruntulerinden teyit edildi ve bundan sonra varsayilan production gercegi olarak ele alinmali:
+
+```text
+VPS
+ -> Coolify
+ -> Project: rugskilim-panel
+ -> Environment: production
+    -> Application: rugskilim-panel
+    -> Service Stack: supabase-rugskilim
+```
+
+Ek notlar:
+
+- Domain `panel.rugskilim.com`, Coolify proxy uzerinden `rugskilim-panel` uygulamasina yonlenir.
+- Supabase ayni sunucu icinde service stack olarak calisir.
+- Ayri bir external database, hosted Supabase veya ayri production worker application'i varsayilmamali.
+
 ## What Was Decided
 
 - Eski proje oldugu gibi korunacak
@@ -106,4 +129,4 @@ Yeni sohbette su sekilde devam etmek en sagliklisi:
 - `entegrator-hali` projesine dokunma
 - Yeni mimariyi `rugskilim-panel` icinde kur
 - Supabase self-host + Coolify + SaaS hedefiyle ilerle
-
+- Production mimarisini tek VPS uzerindeki `Coolify -> rugskilim-panel app + supabase-rugskilim stack` yapisi olarak kabul et

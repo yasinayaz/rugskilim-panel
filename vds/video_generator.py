@@ -3,11 +3,12 @@ video_generator.py — 10 saniyelik ürün videosu üretici
 Bağımlılıklar: opencv-python, numpy
 """
 
+import os
 import cv2
 import numpy as np
 from pathlib import Path
 
-_PREFERRED_CODECS = ["avc1", "mp4v"]
+_DEFAULT_CODECS = ["avc1", "mp4v"]
 
 _PAN_DIRECTIONS = [
     ( 0.00,  0.00),
@@ -22,15 +23,33 @@ _PAN_DIRECTIONS = [
 _TRANSITION_CYCLE = ["fade", "wipe_left", "zoom_in", "wipe_right", "slide_up"]
 
 
+def _preferred_codecs():
+    """
+    MP4 uzantisini korur, fakat Windows'ta OpenH264 gürültüsünü azaltmak için
+    daha uyumlu codec'i önce dener.
+    """
+    env_value = os.environ.get("VIDEO_CODECS", "").strip()
+    if env_value:
+        codecs = [c.strip() for c in env_value.split(",") if c.strip()]
+        if codecs:
+            return codecs
+
+    if os.name == "nt":
+        return ["mp4v", "avc1"]
+    return list(_DEFAULT_CODECS)
+
+
 def _open_writer(output_path, resolution, fps):
     w, h = resolution
-    for codec in _PREFERRED_CODECS:
+    codecs = _preferred_codecs()
+    for codec in codecs:
         fourcc = cv2.VideoWriter_fourcc(*codec)
         vw = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
         if vw.isOpened():
+            print(f"  [Video] Codec secildi: {codec} -> {Path(output_path).name}")
             return vw
         vw.release()
-    raise RuntimeError(f"VideoWriter acilamadi. Codec'ler: {_PREFERRED_CODECS}")
+    raise RuntimeError(f"VideoWriter acilamadi. Codec'ler: {codecs}")
 
 
 def _load_and_fit(path, resolution):

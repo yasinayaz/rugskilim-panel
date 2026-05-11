@@ -25,6 +25,10 @@
 - Hostinger VPS satin alindi
 - Coolify kuruldu
 - Coolify icinde proje olusturuldu: `rugskilim-panel`
+- Environment: `production`
+- Uygulama kaynagi: `rugskilim-panel`
+- Servis stack: `supabase-rugskilim`
+- Tum bilesenler ayni VPS icinde calisiyor, dis servis yok
 - Self-host Supabase Coolify icinde kuruldu
 - Supabase servisleri healthy durumda
 
@@ -77,6 +81,48 @@ pCloud'da depolanan halı fotoğraflarını seçip; Google Gemini AI ile SEO uyu
 ---
 
 ## Mimari
+
+### Guncel VPS / Production Topolojisi
+
+```text
+Internet
+   |
+   v
+panel.rugskilim.com
+   |
+   v
+Coolify Proxy (VPS icinde)
+   |
+   v
+Coolify
+   |
+   v
+Project: rugskilim-panel
+   |
+   v
+Environment: production
+   |
+   +-----------------------------+
+   |                             |
+   v                             v
+App: rugskilim-panel             Service Stack: supabase-rugskilim
+(Dockerfile ile deploy)          (ayni VPS icinde)
+   |                             |
+   |                             +--> PostgreSQL
+   |                             +--> Supabase Auth
+   |                             +--> Supabase API / REST
+   |                             +--> Storage
+   |                             +--> MinIO
+   |                             +--> Diger gerekli Supabase container'lari
+   |
+   +-----------> Uygulama ic agdan Supabase servislerine baglanir
+```
+
+Not:
+
+- Bu repo icin production varsayimi budur.
+- Ayri bir dis veritabani veya ayri bir barindirma katmani varsayilmamalidir.
+- Kod tabanindaki eski Google Sheets + Windows VDS akisi halen vardir, ancak hosting mimarisi yorumlanirken bu Coolify topolojisi esas alinmalidir.
 
 ```
 ┌──────────────────────────────────────┐
@@ -139,6 +185,14 @@ rugskilim-panel/
 | Yayınlama | Etsy Open API v3 (OAuth 2.0 PKCE) |
 | HTTP | httpx (async) · requests |
 | Diğer | gspread · google-auth · pandas · openpyxl |
+
+## Ajanlara Not
+
+Bu repoda gorev alan ajanlar ve kod asistanlari:
+
+- deployment, domain, env, network ve servis baglantilarini bu Coolify topolojisine gore yorumlamali
+- dis servis varsaymamalı
+- `rugskilim-panel` uygulamasi ile `supabase-rugskilim` stack'inin ayni VPS icinde oldugunu baz almalidir
 
 ---
 
