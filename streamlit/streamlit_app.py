@@ -2611,7 +2611,7 @@ with tab3:
                         on_select="rerun",
                         selection_mode="single-row",
                     )
-                    _secilen_satirlar = _secim.selection.get("rows", []) if _secim else []
+                    _secilen_satirlar = (_secim.selection.rows if _secim and hasattr(_secim, "selection") else [])
                     if _secilen_satirlar:
                         _secilen_idx = _secilen_satirlar[0]
                         _secilen_kod = satirlar[_secilen_idx]["Ürün Kodu"]
