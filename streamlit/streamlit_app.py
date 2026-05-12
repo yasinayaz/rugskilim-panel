@@ -431,6 +431,7 @@ for k, v in [
     ("tum_magaza_sekmeleri_hazir", False),
     ("urun_formu_acik", False),
     ("urun_alt_tab", "liste"),
+    ("_secim_limit_hatasi", None),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1833,10 +1834,11 @@ with tab1:
                 if basarili:
                     st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
                 for _item in st.session_state.secilen:
-                    _chk_key = f"chk{_item['id']}"
+                    _chk_key = f"chk_form_{_item['id']}"
                     if _chk_key in st.session_state:
-                        del st.session_state[_chk_key]
+                        st.session_state[_chk_key] = False
                 st.session_state.secilen = []
+                st.session_state["_secim_limit_hatasi"] = None
                 st.rerun(scope="app")
 
             def _secim_aksiyon_paneli(button_key: str, ustte: bool = False):
@@ -1876,6 +1878,26 @@ with tab1:
                     width="stretch",
                 ):
                     _ai_kuyruga_ekle()
+
+            def _secim_toggle(item, chk_key: str):
+                secimler = [
+                    s for s in st.session_state.secilen
+                    if str(s.get("id")) != str(item["id"])
+                ]
+
+                if st.session_state.get(chk_key):
+                    if _klasor_bloklu_mu(item.get("ad", "")):
+                        st.session_state[chk_key] = False
+                        return
+                    if len(secimler) >= 15:
+                        st.session_state[chk_key] = False
+                        st.session_state["_secim_limit_hatasi"] = "En fazla 15 ürün seçebilirsiniz. Lütfen bazı seçimleri kaldırın."
+                        st.session_state.secilen = secimler
+                        return
+                    secimler.append(item)
+
+                st.session_state["_secim_limit_hatasi"] = None
+                st.session_state.secilen = secimler
 
             # ── KAYNAK MAĞAZA SEÇİMİ ──────────────────────────────────────────
             if not st.session_state.magaza_id:
@@ -1957,17 +1979,8 @@ with tab1:
                     s for s in _diger_sayfalar
                     if not _klasor_bloklu_mu(s.get("ad", ""))
                 ]
-                st.session_state.secilen = _diger_sayfalar
-
-                _bu_sayfa_secimler = []
-                _secim_limiti = max(0, 15 - len(_diger_sayfalar))
-
                 st.session_state.secilen = [
-                    *st.session_state.secilen
-                ]
-                _eski_secim_sayisi = len(_mevcut_secimler)
-                st.session_state.secilen = [
-                    s for s in st.session_state.secilen
+                    s for s in _mevcut_secimler
                     if not _klasor_bloklu_mu(s.get("ad", ""))
                 ]
                 if len(st.session_state.secilen) < _eski_secim_sayisi:
@@ -2015,23 +2028,23 @@ with tab1:
 
                             _c_chk, _c_name, _c_prev = st.columns([0.7, 9, 0.9])
                             with _c_chk:
-                                with st.form(f"secim_form_{st.session_state.klasor_id}", border=False):
-                                    for _row in _satir_meta:
-                                        if _row["zaten_kuyrukta"]:
-                                            st.markdown(
-                                                f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>{_row['ikon']}</div>",
-                                                unsafe_allow_html=True,
-                                            )
-                                        else:
-                                            st.checkbox(
-                                                "seç",
-                                                value=_row["zaten_secili"],
-                                                key=_row["chk_key"],
-                                                disabled=_row["satilmis_global"],
-                                                label_visibility="hidden",
-                                            )
-                                    _apply_sel = st.form_submit_button("Seçimleri Uygula", width="stretch")
-                                    _submit_ai = st.form_submit_button("🤖 AI ile Kuyruğa Ekle", type="primary", width="stretch")
+                                for _row in _satir_meta:
+                                    if _row["zaten_kuyrukta"]:
+                                        st.markdown(
+                                            f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>{_row['ikon']}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        if _row["chk_key"] not in st.session_state:
+                                            st.session_state[_row["chk_key"]] = _row["zaten_secili"]
+                                        st.checkbox(
+                                            "seç",
+                                            key=_row["chk_key"],
+                                            disabled=_row["satilmis_global"],
+                                            label_visibility="hidden",
+                                            on_change=_secim_toggle,
+                                            args=(_row["item"], _row["chk_key"]),
+                                        )
 
                             with _c_name:
                                 for _row in _satir_meta:
@@ -2052,26 +2065,11 @@ with tab1:
                                         st.session_state._onizleme_klasor = k
                                         st.rerun(scope="app")
 
-                            if _apply_sel or _submit_ai:
-                                _yeni_bu_sayfa_secimler = [
-                                    _row["item"]
-                                    for _row in _satir_meta
-                                    if (not _row["zaten_kuyrukta"])
-                                    and (not _row["satilmis_global"])
-                                    and bool(st.session_state.get(_row["chk_key"], _row["zaten_secili"]))
-                                ]
-                                _yeni_toplam = len(_diger_sayfalar) + len(_yeni_bu_sayfa_secimler)
-                                if _yeni_toplam > 15:
-                                    st.error("En fazla 15 ürün seçebilirsiniz. Lütfen bazı seçimleri kaldırın.")
-                                else:
-                                    st.session_state.secilen = _diger_sayfalar + _yeni_bu_sayfa_secimler
-                                    if _submit_ai:
-                                        if st.session_state.secilen:
-                                            _ai_kuyruga_ekle()
-                                        else:
-                                            st.warning("Önce en az 1 ürün seçin.")
-                                    else:
-                                        st.rerun(scope="fragment")
+                            if st.session_state.get("_secim_limit_hatasi"):
+                                st.error(st.session_state["_secim_limit_hatasi"])
+
+                            if st.session_state.secilen:
+                                _secim_aksiyon_paneli("queue_selected_inline")
                         else:
                             with st.spinner("Fotoğraflar yükleniyor..."):
                                 _urls, _hata = _resimleri_getir(token, host, st.session_state.klasor_id)
@@ -2110,9 +2108,9 @@ with tab1:
                                 )
                                 if _sc.button("✕", key=f"sil{i}", help="Kaldır"):
                                     removed = st.session_state.secilen[i]
-                                    chk_key = f"chk{removed['id']}"
+                                    chk_key = f"chk_form_{removed['id']}"
                                     if chk_key in st.session_state:
-                                        del st.session_state[chk_key]
+                                        st.session_state[chk_key] = False
                                     st.session_state.secilen.pop(i)
                                     st.rerun()
                         else:
