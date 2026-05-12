@@ -2549,11 +2549,12 @@ with tab3:
                             st.rerun()
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-            _l1, _l2, _l3 = st.columns([4.2, 1.9, 1.2])
+            _l1, _l2, _l3, _l4 = st.columns([3.5, 1.9, 1.2, 1.8])
             filtre = _l1.text_input("Ara", placeholder="Ürün kodu veya not")
             kategori_opsiyonlari = ["Tümü", "Boş", "Doormat", "Area", "Runner"]
             kategori_filtre = _l2.selectbox("Kategori", kategori_opsiyonlari, index=0)
             sadece_aktif = _l3.toggle("Sadece aktif", value=True)
+            _edit_btn_col = _l4
 
             gosterilecek = aktifler if sadece_aktif else urunler
             if filtre.strip():
@@ -2604,22 +2605,27 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
-                    st.dataframe(pd.DataFrame(satirlar), use_container_width=True, hide_index=True)
-                    _sel_col, _btn_col = st.columns([5, 2])
-                    _sec_kod = _sel_col.selectbox(
-                        "düzenle",
-                        options=[""] + [s["Ürün Kodu"] for s in satirlar],
-                        format_func=lambda x: x or "— ürün seç —",
-                        label_visibility="collapsed",
-                        key="edit_urun_sec",
+                    _secim = st.dataframe(
+                        pd.DataFrame(satirlar),
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
                     )
-                    if _sec_kod and _btn_col.button("✏️ Düzenle", type="primary", use_container_width=True):
-                        st.session_state["_edit_urun"] = next(
-                            (u for u in urunler if u.get("product_code") == _sec_kod), None
-                        )
+                    _secilen_satirlar = _secim.selection.rows if _secim and hasattr(_secim, "selection") else []
+                    if _secilen_satirlar:
+                        _sec_kod = satirlar[_secilen_satirlar[0]]["Ürün Kodu"]
+                        if _edit_btn_col.button(f"✏️ {_sec_kod}", type="primary", use_container_width=True, key="duzenle_btn"):
+                            st.session_state["_edit_urun"] = next(
+                                (u for u in urunler if u.get("product_code") == _sec_kod), None
+                            )
+                    else:
+                        _edit_btn_col.button("✏️ Düzenle", disabled=True, use_container_width=True, key="duzenle_btn")
                 else:
+                    _secilen_satirlar = []
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
+                _secilen_satirlar = []
                 st.warning(f"Ürün listesi çizilemedi: {exc}")
 
             if st.session_state.get("_edit_urun"):
