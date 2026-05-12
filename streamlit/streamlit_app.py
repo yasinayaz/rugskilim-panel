@@ -2477,12 +2477,16 @@ with tab3:
             elif kategori_filtre != "Tümü":
                 gosterilecek = [u for u in gosterilecek if str(u.get("category", "")).strip() == kategori_filtre]
 
-            magaza_adlari = sorted({
-                magaza.strip()
-                for urun in urunler
-                for magaza in str(urun.get("loaded_stores", "")).split(",")
-                if magaza.strip()
-            })
+            try:
+                from shared.store_manager import tum_magazalar as _tum_mag_liste
+                magaza_adlari = sorted(m.get("store_id") or m.get("store_name") for m in _tum_mag_liste())
+            except Exception:
+                magaza_adlari = sorted({
+                    magaza.strip()
+                    for urun in urunler
+                    for magaza in str(urun.get("loaded_stores", "")).split(",")
+                    if magaza.strip()
+                })
 
             try:
                 import pandas as pd
@@ -2509,7 +2513,7 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
-                    st.dataframe(pd.DataFrame(satirlar), width="stretch", hide_index=True)
+                    st.dataframe(pd.DataFrame(satirlar), use_container_width=True, hide_index=True)
                 else:
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
