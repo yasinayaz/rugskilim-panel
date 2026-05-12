@@ -79,15 +79,23 @@ class ProductCatalog:
         if not _supabase_ready():
             return sorted(_json_load(), key=lambda x: _clean(x.get("product_code")))
         import requests
-        response = requests.get(
-            _rest_url(),
-            headers={**_headers(), "Accept": "application/json"},
-            params={"select": "*", "order": "product_code.asc"},
-            timeout=45,
-        )
-        if not response.ok:
-            raise RuntimeError(f"Supabase ürünleri okunamadı: {response.status_code} {response.text}")
-        products = response.json()
+        products = []
+        page_size = 1000
+        offset = 0
+        while True:
+            response = requests.get(
+                _rest_url(),
+                headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
+                params={"select": "*", "order": "product_code.asc"},
+                timeout=45,
+            )
+            if not response.ok:
+                raise RuntimeError(f"Supabase ürünleri okunamadı: {response.status_code} {response.text}")
+            page = response.json()
+            products.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
 
         # Mağaza bilgilerini product_store_status'tan ekle
         try:
