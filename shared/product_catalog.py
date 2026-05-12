@@ -6,15 +6,12 @@ Supabase uzerinden panel urun stok yonetimi.
 from __future__ import annotations
 
 import os
-import json
 from datetime import datetime
-from pathlib import Path
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SUPABASE_SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 SUPABASE_PRODUCTS_TABLE_ENV = "SUPABASE_PRODUCTS_TABLE"
 DEFAULT_PRODUCTS_TABLE = "products"
-LOCAL_PRODUCTS_DB = Path(__file__).resolve().parent.parent / ".runtime" / "streamlit" / "panel_products.json"
 
 
 def _env(name: str) -> str:
@@ -55,29 +52,8 @@ def _rest_url() -> str:
     return f"{_base_url()}/rest/v1/{_table_name()}"
 
 
-def _supabase_ready() -> bool:
-    return bool(_env(SUPABASE_URL_ENV) and _env(SUPABASE_SERVICE_KEY_ENV))
-
-
-def _json_load() -> list[dict]:
-    try:
-        if not LOCAL_PRODUCTS_DB.exists():
-            return []
-        data = json.loads(LOCAL_PRODUCTS_DB.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def _json_save(rows: list[dict]):
-    LOCAL_PRODUCTS_DB.parent.mkdir(parents=True, exist_ok=True)
-    LOCAL_PRODUCTS_DB.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 class ProductCatalog:
     def list_products(self) -> list[dict]:
-        if not _supabase_ready():
-            return sorted(_json_load(), key=lambda x: _clean(x.get("product_code")))
         import requests
         products = []
         page_size = 1000
@@ -132,38 +108,20 @@ class ProductCatalog:
         if not payload:
             return []
 
-        def _json_fallback(rows_to_merge: list[dict]) -> list[dict]:
-            existing = {
-                _clean(item.get("product_code")): dict(item)
-                for item in _json_load()
-                if _clean(item.get("product_code"))
-            }
-            for row in rows_to_merge:
-                existing[_clean(row.get("product_code"))] = row
-            rows = sorted(existing.values(), key=lambda x: _clean(x.get("product_code")))
-            _json_save(rows)
-            return rows
-
-        if not _supabase_ready():
-            return _json_fallback(payload)
-
-        try:
-            import requests
-            response = requests.post(
-                _rest_url(),
-                headers={
-                    **_headers(),
-                    "Prefer": "resolution=merge-duplicates,return=representation",
-                },
-                params={"on_conflict": "product_code"},
-                json=payload,
-                timeout=60,
-            )
-            if not response.ok:
-                raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
-            return response.json()
-        except ValueError:
-            return _json_fallback(payload)
+        import requests
+        response = requests.post(
+            _rest_url(),
+            headers={
+                **_headers(),
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            },
+            params={"on_conflict": "product_code"},
+            json=payload,
+            timeout=60,
+        )
+        if not response.ok:
+            raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
+        return response.json()
 
     def replace_from_source(self, source_products: list[dict]) -> list[dict]:
         existing = self.list_products()
@@ -217,19 +175,6 @@ class ProductCatalog:
         if not code:
             return None
 
-        if not _supabase_ready():
-            rows = _json_load()
-            updated = None
-            for row in rows:
-                if _clean(row.get("product_code")) == code:
-                    row["status"] = "sold"
-                    row["sold_at"] = _now_str()
-                    row["updated_at"] = _now_str()
-                    updated = row
-                    break
-            _json_save(rows)
-            return updated
-
         import requests
         response = requests.patch(
             _rest_url(),
@@ -266,8 +211,6 @@ class StoreCatalog:
         return f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}"
 
     def list_by_store(self, store_id: str | None = None) -> list[dict]:
-        if not _supabase_ready():
-            return []
         import requests
         params: dict = {"select": "*", "order": "product_code.asc"}
         if store_id:
@@ -278,7 +221,7 @@ class StoreCatalog:
         return r.json()
 
     def upsert(self, rows: list[dict]) -> None:
-        if not _supabase_ready() or not rows:
+        if not rows:
             return
         import requests
         r = requests.post(
@@ -292,7 +235,6 @@ class StoreCatalog:
             raise RuntimeError(f"store_status upsert başarısız: {r.status_code} {r.text}")
 
     def as_inventory_cache(self) -> dict:
-        """Supabase'den okunan veriyi store_inventory.json formatına çevirir."""
         rows = self.list_by_store()
         stores: dict = {}
         for row in rows:
