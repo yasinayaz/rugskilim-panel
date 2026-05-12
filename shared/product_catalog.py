@@ -6,6 +6,7 @@ Supabase uzerinden panel urun stok yonetimi.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
@@ -13,6 +14,8 @@ SUPABASE_SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 SUPABASE_PRODUCTS_TABLE_ENV = "SUPABASE_PRODUCTS_TABLE"
 DEFAULT_PRODUCTS_TABLE = "products"
 OPTIONAL_PRODUCT_FIELDS = {
+    "loaded_store_count",
+    "loaded_stores",
     "sold_site",
     "customer_name",
     "customer_phone",
@@ -61,6 +64,13 @@ def _rest_url() -> str:
 
 def _supabase_ready() -> bool:
     return bool(_env(SUPABASE_URL_ENV) and _env(SUPABASE_SERVICE_KEY_ENV))
+
+
+def _schema_missing_column(response_text: str) -> str | None:
+    match = re.search(r"'([^']+)' column", response_text or "")
+    if match:
+        return match.group(1)
+    return None
 
 
 class ProductCatalog:
@@ -131,33 +141,28 @@ class ProductCatalog:
             **_headers(),
             "Prefer": "resolution=merge-duplicates,return=representation",
         }
-        response = requests.post(
-            _rest_url(),
-            headers=headers,
-            params={"on_conflict": "product_code"},
-            json=payload,
-            timeout=60,
-        )
-        if response.ok:
-            return response.json()
-
-        body = (response.text or "").lower()
-        if any(field.lower() in body for field in OPTIONAL_PRODUCT_FIELDS):
-            fallback_payload = [
-                {k: v for k, v in row.items() if k not in OPTIONAL_PRODUCT_FIELDS}
+        dropped_fields = set()
+        while True:
+            request_payload = [
+                {k: v for k, v in row.items() if k not in dropped_fields}
                 for row in payload
             ]
-            fallback = requests.post(
+            response = requests.post(
                 _rest_url(),
                 headers=headers,
                 params={"on_conflict": "product_code"},
-                json=fallback_payload,
+                json=request_payload,
                 timeout=60,
             )
-            if fallback.ok:
-                return fallback.json()
+            if response.ok:
+                return response.json()
 
-        raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
+            missing_column = _schema_missing_column(response.text)
+            if missing_column and missing_column in OPTIONAL_PRODUCT_FIELDS and missing_column not in dropped_fields:
+                dropped_fields.add(missing_column)
+                continue
+
+            raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
 
     def replace_from_source(self, source_products: list[dict]) -> list[dict]:
         existing = self.list_products()
@@ -239,6 +244,31 @@ class ProductCatalog:
                 })
         if rows:
             StoreCatalog().upsert(rows)
+
+    def delete_products(self, product_codes: list[str]) -> int:
+        codes = sorted({_clean(code) for code in product_codes if _clean(code)})
+        if not codes:
+            return 0
+
+        import requests
+        deleted = 0
+        chunk_size = 200
+        for start in range(0, len(codes), chunk_size):
+            chunk = codes[start:start + chunk_size]
+            code_filter = ",".join(chunk)
+            response = requests.delete(
+                _rest_url(),
+                headers={**_headers(), "Prefer": "return=representation"},
+                params={"product_code": f"in.({code_filter})"},
+                timeout=60,
+            )
+            if not response.ok:
+                raise RuntimeError(f"Supabase ürün silme başarısız: {response.status_code} {response.text}")
+            try:
+                deleted += len(response.json() or [])
+            except Exception:
+                deleted += len(chunk)
+        return deleted
 
 
 SUPABASE_STORE_TABLE = "product_store_status"

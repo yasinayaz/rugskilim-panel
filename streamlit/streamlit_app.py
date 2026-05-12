@@ -10,6 +10,7 @@ import os
 import json
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 _APP_DIR = Path(__file__).resolve().parent
@@ -2887,6 +2888,19 @@ with tab3:
                         if parca.strip()
                     })
                 ]
+            def _satilan_siralama(urun: dict):
+                raw_dt = str(urun.get("sold_at", "")).strip()
+                if raw_dt:
+                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                        try:
+                            return (2, datetime.strptime(raw_dt, fmt).timestamp())
+                        except Exception:
+                            pass
+                try:
+                    return (1, int(str(urun.get("source_row", "")).strip() or 0))
+                except Exception:
+                    return (0, 0)
+            satilan_goster = sorted(satilan_goster, key=_satilan_siralama, reverse=True)
 
             try:
                 import pandas as pd
