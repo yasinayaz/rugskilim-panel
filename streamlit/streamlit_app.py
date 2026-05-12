@@ -100,6 +100,8 @@ section.main { background-color: var(--bg-0) !important; }
 
 /* ── Tabs — pill style ── */
 .stTabs [data-baseweb="tab-list"] {
+  display: inline-flex !important;
+  width: auto !important;
   gap: 2px;
   background: var(--bg-1);
   border: 1px solid var(--border);
@@ -108,11 +110,11 @@ section.main { background-color: var(--bg-0) !important; }
   border-bottom: none !important;
 }
 .stTabs [data-baseweb="tab"] {
-  height: 34px;
+  height: 40px;
   border-radius: var(--radius);
-  padding: 2px 20px;
-  font-weight: 500;
-  font-size: 0.9rem;
+  padding: 4px 22px;
+  font-weight: 600;
+  font-size: 0.96rem;
   color: var(--text-2);
   background: transparent;
   border: none !important;
@@ -121,11 +123,85 @@ section.main { background-color: var(--bg-0) !important; }
 .stTabs [aria-selected="true"] {
   background: var(--bg-3) !important;
   color: var(--text-1) !important;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.45);
+  border: 1px solid #4b5563 !important;
 }
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display:none !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 1rem !important; }
+
+.compact-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.compact-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #1b2230;
+  border: 1px solid #3b4556;
+  border-radius: 999px;
+  padding: 12px 18px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.22);
+}
+.compact-stat-label {
+  font-size: 0.9rem;
+  color: #cbd5e1;
+  font-weight: 600;
+}
+.compact-stat-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1;
+}
+
+.req-star {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.subtab-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 0;
+  flex-wrap: wrap;
+}
+.subtab-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 6px;
+}
+.subtab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 170px;
+  height: 48px;
+  padding: 0 18px;
+  border-radius: 14px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.subtab-btn-active {
+  background: var(--bg-3);
+  color: var(--text-1);
+  border-color: #4b5563;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+.subtab-btn-idle {
+  background: transparent;
+  color: var(--text-2);
+}
 
 /* ── Buttons ── */
 .stButton > button,
@@ -353,6 +429,8 @@ for k, v in [
     ("magaza_id", None), ("magaza_ad", None),
     ("hedef_magaza_id", "PatchArts"), ("kuyruk_magaza_id", None), ("ayar_magaza_id", None),
     ("tum_magaza_sekmeleri_hazir", False),
+    ("urun_formu_acik", False),
+    ("urun_alt_tab", "liste"),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -525,6 +603,168 @@ def _stok_dosya_yolu() -> Path:
     if _LEGACY_STOK_DOSYA.exists():
         return _LEGACY_STOK_DOSYA
     return _STOK_DOSYA
+
+
+def _decimal_str(value, digits: int = 2) -> str:
+    try:
+        num = float(str(value).replace(",", "."))
+    except Exception:
+        return ""
+    return f"{num:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _float_or_none(value):
+    try:
+        if value in ("", None):
+            return None
+        return float(str(value).replace(",", "."))
+    except Exception:
+        return None
+
+
+def _fmt_size(a, b, digits: int = 1) -> str:
+    left = _decimal_str(a, digits=digits)
+    right = _decimal_str(b, digits=digits)
+    if left and right:
+        return f"{left}x{right}"
+    return ""
+
+
+def _product_id_for_code(code: str) -> str:
+    clean = (_urun_kodu_normalize(code) or _urun_kodu_al(code) or _kod_normalize(code)).upper()
+    return f"PRD-{clean}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
+    _ = dosya_mtime
+    import pandas as pd
+    from shared.product_catalog import guess_category
+
+    satilanlar = _satilan_kodlar(dosya_yolu)
+    urunler = []
+    sheet_specs = [
+        ("VİNTAGE RUG", "Vintage"),
+        ("VINTAGE RUG", "Vintage"),
+        ("DOOR MAT RUGS", "Doormat"),
+    ]
+
+    for tab_adi, kaynak_etiketi in sheet_specs:
+        try:
+            df = pd.read_excel(dosya_yolu, sheet_name=tab_adi)
+        except Exception:
+            continue
+
+        for row_index, row in df.iterrows():
+            row_values = list(row.tolist())
+            if len(row_values) < 7:
+                continue
+
+            raw_code = row_values[0]
+            code = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+            if not code:
+                continue
+
+            width_cm = _float_or_none(row_values[1])
+            sold_marker = str(row_values[2] or "").strip().upper()
+            length_cm = _float_or_none(row_values[3])
+            area_m2 = _float_or_none(row_values[4])
+            width_ft = _float_or_none(row_values[5])
+            length_ft = _float_or_none(row_values[6])
+
+            if not any(v is not None for v in [width_cm, length_cm, area_m2, width_ft, length_ft]):
+                continue
+
+            status = "sold" if sold_marker == "X" or code in satilanlar else "active"
+            urunler.append({
+                "product_id": _product_id_for_code(code),
+                "product_code": code,
+                "category": guess_category(tab_adi),
+                "width_cm": _decimal_str(width_cm, digits=0),
+                "length_cm": _decimal_str(length_cm, digits=0),
+                "size_cm": _fmt_size(width_cm, length_cm, digits=0),
+                "area_m2": _decimal_str(area_m2, digits=2),
+                "width_ft": _decimal_str(width_ft, digits=1),
+                "length_ft": _decimal_str(length_ft, digits=1),
+                "size_ft": _fmt_size(width_ft, length_ft, digits=1),
+                "status": status,
+                "source_tab": tab_adi,
+                "source_row": str(int(row_index) + 2),
+                "loaded_store_count": "",
+                "loaded_stores": "",
+                "sold_at": "",
+                "note": "",
+                "updated_at": "",
+                "_kaynak": kaynak_etiketi,
+            })
+    return urunler
+
+
+def _urunleri_yukle(force_source_sync: bool = False):
+    from shared.product_catalog import ProductCatalog
+
+    try:
+        catalog = ProductCatalog()
+        mevcut = catalog.list_products()
+    except Exception:
+        mevcut = _panel_urunleri_yerden_yukle()
+
+    stok = _stok_dosya_yolu()
+    if stok.exists():
+        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok.stat().st_mtime)
+        if force_source_sync:
+            try:
+                merged = catalog.replace_from_source(kaynak)
+            except Exception:
+                mevcut_map = {
+                    str(item.get("product_code") or "").strip(): dict(item)
+                    for item in mevcut
+                    if str(item.get("product_code") or "").strip()
+                }
+                for item in kaynak:
+                    kod = str(item.get("product_code") or "").strip()
+                    if not kod:
+                        continue
+                    onceki = mevcut_map.get(kod, {})
+                    yeni = dict(item)
+                    yeni["category"] = onceki.get("category") or item.get("category") or ""
+                    yeni["loaded_store_count"] = onceki.get("loaded_store_count", 0)
+                    yeni["loaded_stores"] = onceki.get("loaded_stores", "")
+                    yeni["sold_at"] = onceki.get("sold_at", "")
+                    yeni["note"] = onceki.get("note", "")
+                    yeni["status"] = "sold" if str(onceki.get("status", "")).lower() == "sold" else "active"
+                    mevcut_map[kod] = yeni
+                merged = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
+                _json_kaydet(_RUNTIME_DIR / "panel_products.json", merged)
+        else:
+            merged = mevcut
+    else:
+        merged = mevcut
+
+    return merged
+
+
+def _urunleri_kaydet(products: list[dict]):
+    from shared.product_catalog import ProductCatalog, _supabase_ready
+
+    ProductCatalog().upsert_products(products)
+    if not _supabase_ready():
+        st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _tum_magaza_kod_haritasi(token: str, host: str):
+    _, magazalar = _magazalari_otomatik_bul(token, host)
+    sonuc = {}
+    for magaza in magazalar:
+        kodlar = _magaza_tum_kodlar(token, host, magaza["id"])
+        temiz = set()
+        for kod in kodlar:
+            norm = _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
+            if norm:
+                temiz.add(norm)
+        sonuc[magaza["ad"]] = temiz
+    return sonuc
 
 
 def _stok_son_guncelleme_ts() -> float:
@@ -875,7 +1115,21 @@ def _json_kaydet(path: Path, veri):
         pass
 
 
+def _panel_urunleri_yerden_yukle() -> list[dict]:
+    return _json_yukle(_RUNTIME_DIR / "panel_products.json", [])
+
+
+def _zorunlu_label(text: str) -> str:
+    return f"{text} <span class='req-star'>*</span>"
+
+
 def _envanter_cache_yukle():
+    from shared.product_catalog import StoreCatalog, _supabase_ready
+    if _supabase_ready():
+        try:
+            return StoreCatalog().as_inventory_cache()
+        except Exception:
+            pass
     return _json_yukle(_STORE_INVENTORY_DB, {"updated_at": 0, "stores": {}, "errors": {}})
 
 
@@ -957,6 +1211,24 @@ def _magaza_envanterini_topla(force: bool = False):
 
     if yeni_cache["stores"]:
         _json_kaydet(_STORE_INVENTORY_DB, yeni_cache)
+        try:
+            from shared.product_catalog import StoreCatalog, _supabase_ready
+            if _supabase_ready():
+                rows = []
+                for sid, sdata in yeni_cache["stores"].items():
+                    for code, urun in sdata.get("urunler", {}).items():
+                        rows.append({
+                            "product_code": str(code).strip(),
+                            "store_id": sid,
+                            "status": urun.get("status", ""),
+                            "renk": urun.get("renk", ""),
+                            "etsy_draft_url": urun.get("etsy_draft_url", ""),
+                            "islem_tarihi": urun.get("islem_tarihi", ""),
+                        })
+                if rows:
+                    StoreCatalog().upsert(rows)
+        except Exception:
+            pass
         return yeni_cache
     return cache if cache.get("stores") else yeni_cache
 
@@ -1311,7 +1583,14 @@ if _okunmamis_not_sayisi:
     )
 
 _notlar_etiketi = f"📝  Notlar ({_okunmamis_not_sayisi})" if _okunmamis_not_sayisi else "📝  Notlar"
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📦  Ürün Seç", "📋  Kuyruk", "⚙️  Ayarlar", "🔍  Ölçü Ara", _notlar_etiketi])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📦  Ürün Seç",
+    "📋  Kuyruk",
+    "🗂️  Ürünler",
+    "⚙️  Ayarlar",
+    "🔍  Ölçü Ara",
+    _notlar_etiketi,
+])
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 with tab1:
@@ -1704,62 +1983,95 @@ with tab1:
                                 unsafe_allow_html=True
                             )
                             secilen_ids = {s["id"] for s in st.session_state.secilen}
-
+                            _satir_meta = []
                             for k in klasorler:
-                                _chk_key = f"chk{k['id']}"
+                                _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
                                 urun_kodu = _klasor_urun_kodu_al(k["ad"])
                                 satilmis_global = _klasor_bloklu_mu(k["ad"])
-
                                 kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
                                 sheet_renk = _sheet_renk_durumu_klasor(k["id"], k["ad"])
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
-
-                                c_chk, c_name, c_prev = st.columns([0.5, 9, 0.7])
-
-                                if zaten_kuyrukta:
-                                    if sheet_renk == "red":
-                                        _ikon = "🔴"
-                                    elif sheet_renk == "green" or kuyruk_status == "done":
-                                        _ikon = "✅"
-                                    elif sheet_renk == "yellow":
-                                        _ikon = "🟡"
-                                    elif kuyruk_status == "error":
-                                        _ikon = "❌"
-                                    else:
-                                        _ikon = "🔵"
-                                    c_chk.markdown(
-                                        f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>"
-                                        + _ikon
-                                        + "</div>", unsafe_allow_html=True
-                                    )
+                                if sheet_renk == "red":
+                                    _ikon = "🔴"
+                                elif sheet_renk == "green" or kuyruk_status == "done":
+                                    _ikon = "✅"
+                                elif sheet_renk == "yellow":
+                                    _ikon = "🟡"
+                                elif kuyruk_status == "error":
+                                    _ikon = "❌"
+                                elif zaten_kuyrukta:
+                                    _ikon = "🔵"
                                 else:
-                                    chk = c_chk.checkbox(
-                                        "seç", value=zaten_secili,
-                                        key=_chk_key,
-                                        disabled=satilmis_global or (not zaten_secili and len(_bu_sayfa_secimler) + len(_diger_sayfalar) >= 15),
-                                        label_visibility="hidden",
-                                    )
-                                    if chk:
-                                        if len(_bu_sayfa_secimler) < _secim_limiti:
-                                            _bu_sayfa_secimler.append(k)
+                                    _ikon = ""
+                                _satir_meta.append({
+                                    "item": k,
+                                    "chk_key": _chk_key,
+                                    "zaten_secili": zaten_secili,
+                                    "satilmis_global": satilmis_global,
+                                    "zaten_kuyrukta": zaten_kuyrukta,
+                                    "ikon": _ikon,
+                                })
+
+                            _c_chk, _c_name, _c_prev = st.columns([0.7, 9, 0.9])
+                            with _c_chk:
+                                with st.form(f"secim_form_{st.session_state.klasor_id}", border=False):
+                                    for _row in _satir_meta:
+                                        if _row["zaten_kuyrukta"]:
+                                            st.markdown(
+                                                f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>{_row['ikon']}</div>",
+                                                unsafe_allow_html=True,
+                                            )
                                         else:
-                                            st.session_state[_chk_key] = False
+                                            st.checkbox(
+                                                "seç",
+                                                value=_row["zaten_secili"],
+                                                key=_row["chk_key"],
+                                                disabled=_row["satilmis_global"],
+                                                label_visibility="hidden",
+                                            )
+                                    _apply_sel = st.form_submit_button("Seçimleri Uygula", width="stretch")
+                                    _submit_ai = st.form_submit_button("🤖 AI ile Kuyruğa Ekle", type="primary", width="stretch")
 
-                                if c_name.button(
-                                    f"📁  {k['ad']}",
-                                    key=f"open_folder_{k['id']}",
-                                    width="stretch",
-                                    help="Klasoru ac",
-                                ):
-                                    _klasoru_ac(k["id"], k["ad"])
-                                    st.rerun(scope="fragment")
+                            with _c_name:
+                                for _row in _satir_meta:
+                                    k = _row["item"]
+                                    if st.button(
+                                        f"📁  {k['ad']}",
+                                        key=f"open_folder_{k['id']}",
+                                        width="stretch",
+                                        help="Klasoru ac",
+                                    ):
+                                        _klasoru_ac(k["id"], k["ad"])
+                                        st.rerun(scope="fragment")
 
-                                if c_prev.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
-                                    st.session_state._onizleme_klasor = k
-                                    st.rerun(scope="app")
+                            with _c_prev:
+                                for _row in _satir_meta:
+                                    k = _row["item"]
+                                    if st.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
+                                        st.session_state._onizleme_klasor = k
+                                        st.rerun(scope="app")
 
-                            st.session_state.secilen = _diger_sayfalar + _bu_sayfa_secimler
+                            if _apply_sel or _submit_ai:
+                                _yeni_bu_sayfa_secimler = [
+                                    _row["item"]
+                                    for _row in _satir_meta
+                                    if (not _row["zaten_kuyrukta"])
+                                    and (not _row["satilmis_global"])
+                                    and bool(st.session_state.get(_row["chk_key"], _row["zaten_secili"]))
+                                ]
+                                _yeni_toplam = len(_diger_sayfalar) + len(_yeni_bu_sayfa_secimler)
+                                if _yeni_toplam > 15:
+                                    st.error("En fazla 15 ürün seçebilirsiniz. Lütfen bazı seçimleri kaldırın.")
+                                else:
+                                    st.session_state.secilen = _diger_sayfalar + _yeni_bu_sayfa_secimler
+                                    if _submit_ai:
+                                        if st.session_state.secilen:
+                                            _ai_kuyruga_ekle()
+                                        else:
+                                            st.warning("Önce en az 1 ürün seçin.")
+                                    else:
+                                        st.rerun(scope="fragment")
                         else:
                             with st.spinner("Fotoğraflar yükleniyor..."):
                                 _urls, _hata = _resimleri_getir(token, host, st.session_state.klasor_id)
@@ -1982,6 +2294,400 @@ with tab2:
 
 # ══ TAB 3 ════════════════════════════════════════════════════════════════════
 with tab3:
+    @st.fragment
+    def _tab3_urunler():
+        try:
+            urunler = _urunleri_yukle(force_source_sync=False)
+        except Exception as exc:
+            urunler = _panel_urunleri_yerden_yukle()
+            if urunler:
+                st.warning(f"Canlı katalog okunamadı, yerel stok gösteriliyor: {exc}")
+            else:
+                st.error(f"Ürün verisi yüklenemedi: {exc}")
+                return
+
+        aktifler = [u for u in urunler if str(u.get("status", "")).lower() != "sold"]
+        satilanlar = [u for u in urunler if str(u.get("status", "")).lower() == "sold"]
+
+        _liste_aktif = st.session_state.urun_alt_tab == "liste"
+        _satilan_aktif = st.session_state.urun_alt_tab == "satilan"
+        _b1, _b2, _sp, _stats_col, _btn_col = st.columns(
+            [1.6, 1.7, 3.5, 2.5, 1.8], vertical_alignment="center"
+        )
+        if _b1.button(
+            "Ürün Listesi",
+            key="urun_alt_tab_liste",
+            width="stretch",
+            type="primary" if _liste_aktif else "secondary",
+        ):
+            st.session_state.urun_alt_tab = "liste"
+            st.rerun(scope="fragment")
+        if _b2.button(
+            "Satılan Ürünler",
+            key="urun_alt_tab_satilan",
+            width="stretch",
+            type="primary" if _satilan_aktif else "secondary",
+        ):
+            st.session_state.urun_alt_tab = "satilan"
+            st.rerun(scope="fragment")
+        with _stats_col:
+            st.markdown(
+                "<div class='compact-stats' style='justify-content:flex-end; margin:0;'>"
+                f"<div class='compact-stat'><span class='compact-stat-label'>Aktif</span>"
+                f"<span class='compact-stat-value'>{len(aktifler)}</span></div>"
+                f"<div class='compact-stat'><span class='compact-stat-label'>Satılan</span>"
+                f"<span class='compact-stat-value'>{len(satilanlar)}</span></div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        with _btn_col:
+            if _liste_aktif:
+                if st.button(
+                    "➕ Yeni Ürün Ekle" if not st.session_state.urun_formu_acik else "✖ Kapat",
+                    width="stretch",
+                    key="urun_form_toggle_btn",
+                ):
+                    st.session_state.urun_formu_acik = not st.session_state.urun_formu_acik
+                    st.rerun(scope="fragment")
+
+        if st.session_state.urun_alt_tab == "liste":
+            if st.session_state.urun_formu_acik:
+                _NUF = {
+                    "nuf_kod": "", "nuf_kategori": "Seçiniz",
+                    "nuf_cm_gen": 0.0, "nuf_cm_uz": 0.0,
+                    "nuf_ft_gen": 0.0, "nuf_ft_uz": 0.0,
+                    "nuf_not": "",
+                }
+                for _k, _dv in _NUF.items():
+                    if _k not in st.session_state:
+                        st.session_state[_k] = _dv
+
+                _cm_g = float(st.session_state.get("nuf_cm_gen") or 0)
+                _cm_u = float(st.session_state.get("nuf_cm_uz") or 0)
+                _yeni_m2_raw = (_cm_g * _cm_u) / 10000 if _cm_g > 0 and _cm_u > 0 else None
+
+                with st.container(border=True):
+                    _fhdr, _fclr = st.columns([6, 1])
+                    _fhdr.markdown("##### Yeni Ürün Ekle")
+                    if _fclr.button("🗑 Temizle", key="nuf_temizle_btn", use_container_width=True):
+                        for _k, _dv in _NUF.items():
+                            st.session_state[_k] = _dv
+                        st.rerun(scope="fragment")
+
+                    _f1, _f2, _f3, _f4 = st.columns(4)
+                    _f1.markdown(_zorunlu_label("Ürün kodu"), unsafe_allow_html=True)
+                    _f1.text_input("Ürün kodu", key="nuf_kod", label_visibility="collapsed")
+                    _f2.markdown(_zorunlu_label("Kategori"), unsafe_allow_html=True)
+                    _f2.selectbox("Kategori", ["Seçiniz", "Area", "Runner", "DoorMat"], key="nuf_kategori", label_visibility="collapsed")
+                    _f3.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
+                    _f3.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
+                    _f4.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
+                    _f4.number_input("Uzunluk cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_uz", label_visibility="collapsed")
+                    _f5, _f6, _f7 = st.columns(3)
+                    _f5.markdown(_zorunlu_label("Genişlik ft"), unsafe_allow_html=True)
+                    _f5.number_input("Genişlik ft", min_value=0.0, step=0.1, format="%.1f", key="nuf_ft_gen", label_visibility="collapsed")
+                    _f6.markdown(_zorunlu_label("Uzunluk ft"), unsafe_allow_html=True)
+                    _f6.number_input("Uzunluk ft", min_value=0.0, step=0.1, format="%.1f", key="nuf_ft_uz", label_visibility="collapsed")
+                    _f7.text_input("Not", key="nuf_not")
+
+                    if _yeni_m2_raw is not None:
+                        st.caption(f"Otomatik m²: **{_yeni_m2_raw:.4f}** m²  ·  ({_yeni_m2_raw:.2f} yuvarlanmış)")
+                    else:
+                        st.caption("Otomatik m²: cm ölçüleri girilince otomatik hesaplanır")
+
+                    if st.button("➕ Ürün Ekle", type="primary", use_container_width=True, key="nuf_ekle_btn"):
+                        _nuf_kod = st.session_state.nuf_kod
+                        _nuf_kat = st.session_state.nuf_kategori
+                        _nuf_cmg = float(st.session_state.nuf_cm_gen or 0)
+                        _nuf_cmu = float(st.session_state.nuf_cm_uz or 0)
+                        _nuf_ftg = float(st.session_state.nuf_ft_gen or 0)
+                        _nuf_ftu = float(st.session_state.nuf_ft_uz or 0)
+                        _nuf_not = str(st.session_state.nuf_not or "").strip()
+                        _nuf_m2 = (_nuf_cmg * _nuf_cmu) / 10000 if _nuf_cmg > 0 and _nuf_cmu > 0 else None
+                        kod = _urun_kodu_normalize(_nuf_kod) or _urun_kodu_al(_nuf_kod)
+                        mevcut_kodlar = {
+                            str(u.get("product_code") or "").strip().lower()
+                            for u in urunler
+                            if str(u.get("product_code") or "").strip()
+                        }
+                        if not kod:
+                            st.error("Ürün Kodu zorunlu.")
+                        elif str(kod).strip().lower() in mevcut_kodlar:
+                            st.error(f"{kod} ürün kodu zaten mevcut, tekrar eklenemez.")
+                        elif _nuf_kat == "Seçiniz":
+                            st.error("Kategori zorunlu.")
+                        elif _nuf_cmg <= 0 or _nuf_cmu <= 0:
+                            st.error("cm ölçüleri zorunlu.")
+                        elif _nuf_ftg <= 0 or _nuf_ftu <= 0:
+                            st.error("ft ölçüleri zorunlu.")
+                        elif _nuf_m2 is None or _nuf_m2 <= 0:
+                            st.error("m² hesaplanamadı; cm ölçülerini kontrol edin.")
+                        else:
+                            eklenen = dict(
+                                product_id=_product_id_for_code(kod),
+                                product_code=kod,
+                                category=_nuf_kat,
+                                width_cm=_decimal_str(_nuf_cmg, digits=0),
+                                length_cm=_decimal_str(_nuf_cmu, digits=0),
+                                size_cm=_fmt_size(_nuf_cmg, _nuf_cmu, digits=0),
+                                area_m2=_decimal_str(round(_nuf_m2, 2), digits=2),
+                                width_ft=_decimal_str(_nuf_ftg, digits=1),
+                                length_ft=_decimal_str(_nuf_ftu, digits=1),
+                                size_ft=_fmt_size(_nuf_ftg, _nuf_ftu, digits=1),
+                                status="active",
+                                source_tab="manual",
+                                source_row="",
+                                loaded_store_count="",
+                                loaded_stores="",
+                                sold_at="",
+                                sold_site="",
+                                customer_name="",
+                                customer_phone="",
+                                customer_address="",
+                                customer_contact_country="",
+                                note=_nuf_not,
+                                updated_at=_time.strftime("%Y-%m-%d %H:%M"),
+                            )
+                            _urunleri_kaydet([*urunler, eklenen])
+                            for _k, _dv in _NUF.items():
+                                st.session_state[_k] = _dv
+                            st.session_state.urun_formu_acik = False
+                            st.success(f"{kod} eklendi.")
+                            st.rerun()
+
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            _l1, _l2, _l3 = st.columns([4.2, 1.9, 1.2])
+            filtre = _l1.text_input("Ara", placeholder="Ürün kodu veya not")
+            kategori_opsiyonlari = ["Tümü", "Boş", "Doormat", "Area", "Runner"]
+            kategori_filtre = _l2.selectbox("Kategori", kategori_opsiyonlari, index=0)
+            sadece_aktif = _l3.toggle("Sadece aktif", value=True)
+
+            gosterilecek = aktifler if sadece_aktif else urunler
+            if filtre.strip():
+                needle = filtre.strip().lower()
+                gosterilecek = [
+                    u for u in gosterilecek
+                    if needle in str(u.get("product_code", "")).lower()
+                    or needle in str(u.get("note", "")).lower()
+                    or needle in str(u.get("category", "")).lower()
+                ]
+
+            if kategori_filtre == "Boş":
+                gosterilecek = [u for u in gosterilecek if not str(u.get("category", "")).strip()]
+            elif kategori_filtre != "Tümü":
+                gosterilecek = [u for u in gosterilecek if str(u.get("category", "")).strip() == kategori_filtre]
+
+            magaza_adlari = sorted({
+                magaza.strip()
+                for urun in urunler
+                for magaza in str(urun.get("loaded_stores", "")).split(",")
+                if magaza.strip()
+            })
+
+            try:
+                import pandas as pd
+
+                satirlar = []
+                for urun in gosterilecek:
+                    stores = {
+                        s.strip()
+                        for s in str(urun.get("loaded_stores", "")).split(",")
+                        if s.strip()
+                    }
+                    satir = {
+                        "Ürün Kodu": urun.get("product_code", ""),
+                        "kategori": urun.get("category", ""),
+                        "cm": urun.get("size_cm", ""),
+                        "ft": urun.get("size_ft", ""),
+                        "m2": urun.get("area_m2", ""),
+                        "durum": "satıldı" if str(urun.get("status", "")).lower() == "sold" else "aktif",
+                        "yüklü": int(urun.get("loaded_store_count") or 0),
+                        "not": urun.get("note", ""),
+                    }
+                    for magaza in magaza_adlari:
+                        satir[magaza] = "🟢" if magaza in stores else "⚪"
+                    satirlar.append(satir)
+
+                if satirlar:
+                    st.dataframe(pd.DataFrame(satirlar), width="stretch", hide_index=True)
+                else:
+                    st.info("Gösterilecek ürün bulunamadı.")
+            except Exception as exc:
+                st.warning(f"Ürün listesi çizilemedi: {exc}")
+
+        if st.session_state.urun_alt_tab == "satilan":
+            try:
+                from shared.store_manager import tum_magazalar as _tum_satilan_magazalar
+                satilan_site_opsiyonlari = [m.get("store_name") or m.get("store_id") for m in _tum_satilan_magazalar()]
+            except Exception:
+                satilan_site_opsiyonlari = []
+
+            with st.container(border=True):
+                st.markdown("##### Satılan Ürün Ekle")
+                aktif_opsiyonlar = [
+                    f"{u.get('product_code')}  |  {u.get('category') or 'Boş'}  |  {u.get('size_ft') or u.get('size_cm')}"
+                    for u in aktifler
+                ]
+                with st.form("satilan_urun_form", clear_on_submit=False):
+                    st.markdown(_zorunlu_label("Ürün seç"), unsafe_allow_html=True)
+                    secili = st.selectbox(
+                        "Ürün seç",
+                        options=aktif_opsiyonlar,
+                        index=None,
+                        placeholder="Bir aktif ürün seçin...",
+                        key="satilan_urun_form_secimi",
+                        label_visibility="collapsed",
+                    )
+                    _s1, _s2, _s3 = st.columns(3)
+                    _s1.markdown(_zorunlu_label("Satılan site"), unsafe_allow_html=True)
+                    satilan_site = _s1.multiselect(
+                        "Satılan site",
+                        options=satilan_site_opsiyonlari,
+                        placeholder="Bir veya daha fazla mağaza seçin...",
+                        label_visibility="collapsed",
+                    )
+                    musteri_adi = _s2.text_input("Müşteri adı")
+                    satilan_tarih = _s3.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
+                    _s4, _s5 = st.columns(2)
+                    musteri_telefon = _s4.text_input("Telefon")
+                    iletisim_ulke = _s5.text_input("İletişim & ülke")
+                    musteri_adres = st.text_area("Adres", height=90)
+                    satilan_not = st.text_input("Not")
+                    submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
+
+                if submit_sold:
+                    kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
+                    if not kod:
+                        st.error("Ürün seçimi zorunlu.")
+                    elif not satilan_site:
+                        st.error("Satılan site zorunlu.")
+                    else:
+                        yeni_liste = []
+                        secili_urun = None
+                        for urun in urunler:
+                            if str(urun.get("product_code")) == kod:
+                                copy = dict(urun)
+                                copy["status"] = "sold"
+                                copy["sold_at"] = satilan_tarih.strip() or _time.strftime("%Y-%m-%d %H:%M")
+                                copy["sold_site"] = ", ".join(satilan_site)
+                                copy["customer_name"] = musteri_adi.strip()
+                                copy["customer_phone"] = musteri_telefon.strip()
+                                copy["customer_address"] = musteri_adres.strip()
+                                copy["customer_contact_country"] = iletisim_ulke.strip()
+                                if satilan_not.strip():
+                                    copy["note"] = satilan_not.strip()
+                                copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
+                                secili_urun = copy
+                                yeni_liste.append(copy)
+                            else:
+                                yeni_liste.append(urun)
+                        if secili_urun:
+                            _urunleri_kaydet(yeni_liste)
+                            yuklu = secili_urun.get("loaded_stores") or "Yüklü mağaza bulunamadı."
+                            st.success(f"{kod} satılan ürünlere eklendi.")
+                            st.info(f"Yüklü mağazalar: {yuklu}")
+                            st.rerun()
+
+            st.markdown("##### Satılan Ürünler")
+            try:
+                from shared.store_manager import tum_magazalar as _tum_filtre_magazalar
+                _tum_magaza_kayitlari = _tum_filtre_magazalar()
+                _satilan_magaza_ops = [
+                    str(m.get("store_name") or m.get("store_id") or "").strip()
+                    for m in _tum_magaza_kayitlari
+                    if str(m.get("store_name") or m.get("store_id") or "").strip()
+                ]
+                _magaza_alias_map = {
+                    str(m.get("store_name") or m.get("store_id") or "").strip(): {
+                        str(m.get("store_name") or "").strip(),
+                        str(m.get("store_id") or "").strip(),
+                    }
+                    for m in _tum_magaza_kayitlari
+                    if str(m.get("store_name") or m.get("store_id") or "").strip()
+                }
+            except Exception:
+                _satilan_magaza_ops = sorted({
+                    parca.strip()
+                    for urun in satilanlar
+                    for parca in str(urun.get("sold_site", "")).split(",")
+                    if parca.strip()
+                })
+                _magaza_alias_map = {
+                    magaza: {magaza}
+                    for magaza in _satilan_magaza_ops
+                }
+            _ss1, _ss2, _ss3 = st.columns([3, 1.4, 1.8])
+            satilan_ara = _ss1.text_input("Satılanlarda ara", placeholder="Kod, müşteri adı, site...")
+            satilan_kategori = _ss2.selectbox("Kategori filtresi", ["Tümü", "Boş", "Doormat", "Area", "Runner"], index=0)
+            satilan_magazalar = _ss3.multiselect(
+                "Mağaza filtresi",
+                options=_satilan_magaza_ops,
+                placeholder="Tümü",
+            )
+
+            satilan_goster = list(satilanlar)
+            if satilan_ara.strip():
+                needle = satilan_ara.strip().lower()
+                satilan_goster = [
+                    u for u in satilan_goster
+                    if needle in str(u.get("product_code", "")).lower()
+                    or needle in str(u.get("customer_name", "")).lower()
+                    or needle in str(u.get("sold_site", "")).lower()
+                    or needle in str(u.get("customer_phone", "")).lower()
+                ]
+            if satilan_kategori == "Boş":
+                satilan_goster = [u for u in satilan_goster if not str(u.get("category", "")).strip()]
+            elif satilan_kategori != "Tümü":
+                satilan_goster = [u for u in satilan_goster if str(u.get("category", "")).strip() == satilan_kategori]
+            if satilan_magazalar:
+                _secili_magazalar = {
+                    alias.strip()
+                    for magaza in satilan_magazalar
+                    for alias in _magaza_alias_map.get(magaza, {magaza})
+                    if alias.strip()
+                }
+                satilan_goster = [
+                    u for u in satilan_goster
+                    if _secili_magazalar.intersection({
+                        parca.strip()
+                        for parca in str(u.get("sold_site", "")).split(",")
+                        if parca.strip()
+                    })
+                ]
+
+            try:
+                import pandas as pd
+
+                satilan_satirlar = []
+                for urun in satilan_goster:
+                    satilan_satirlar.append({
+                        "Ürün Kodu": urun.get("product_code", ""),
+                        "kategori": urun.get("category", ""),
+                        "satılan_tarih": urun.get("sold_at", ""),
+                        "site": urun.get("sold_site", ""),
+                        "müşteri": urun.get("customer_name", ""),
+                        "telefon": urun.get("customer_phone", ""),
+                        "iletişim_ülke": urun.get("customer_contact_country", ""),
+                        "adres": urun.get("customer_address", ""),
+                        "cm": urun.get("size_cm", ""),
+                        "ft": urun.get("size_ft", ""),
+                        "m2": urun.get("area_m2", ""),
+                        "yüklü_mağazalar": urun.get("loaded_stores", ""),
+                        "not": urun.get("note", ""),
+                    })
+
+                if satilan_satirlar:
+                    st.dataframe(pd.DataFrame(satilan_satirlar), width="stretch", hide_index=True)
+                else:
+                    st.info("Satılan ürün bulunamadı.")
+            except Exception as exc:
+                st.warning(f"Satılan ürün listesi çizilemedi: {exc}")
+
+    _tab3_urunler()
+
+
+# ══ TAB 4 ════════════════════════════════════════════════════════════════════
+with tab4:
     _store_tab, _api_tab = st.tabs(["Mağaza Yönetimi", "API"])
 
     with _api_tab:
@@ -1989,20 +2695,43 @@ with tab3:
         with st.form("env_form"):
             gemini = st.text_input("GEMINI_API_KEY", value=os.environ.get("GEMINI_API_KEY", ""), type="password")
             sheet = st.text_input("GOOGLE_SHEET_ID", value=os.environ.get("GOOGLE_SHEET_ID", ""))
+            supabase_url = st.text_input("SUPABASE_URL", value=os.environ.get("SUPABASE_URL", ""))
+            supabase_key = st.text_input(
+                "SUPABASE_SERVICE_ROLE_KEY",
+                value=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+                type="password",
+            )
+            supabase_table = st.text_input("SUPABASE_PRODUCTS_TABLE", value=os.environ.get("SUPABASE_PRODUCTS_TABLE", "products"))
             creds = st.text_input("GOOGLE_CREDS_JSON", value=os.environ.get("GOOGLE_CREDS_JSON", ""),
                                   placeholder="/Users/.../credentials.json")
             if st.form_submit_button("💾 Kaydet", type="primary"):
                 satirlar = []
-                for k, v in [("GEMINI_API_KEY", gemini), ("GOOGLE_SHEET_ID", sheet), ("GOOGLE_CREDS_JSON", creds)]:
+                for k, v in [
+                    ("GEMINI_API_KEY", gemini),
+                    ("GOOGLE_SHEET_ID", sheet),
+                    ("SUPABASE_URL", supabase_url),
+                    ("SUPABASE_SERVICE_ROLE_KEY", supabase_key),
+                    ("SUPABASE_PRODUCTS_TABLE", supabase_table),
+                    ("GOOGLE_CREDS_JSON", creds),
+                ]:
                     if v:
                         os.environ[k] = v
                         satirlar.append(f"{k}={v}")
+                    else:
+                        os.environ.pop(k, None)
                 _env_path.write_text("\n".join(satirlar))
                 st.success("✅ Kaydedildi!")
                 st.rerun()
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-        for key in ["GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_CREDS_JSON"]:
+        for key in [
+            "GEMINI_API_KEY",
+            "GOOGLE_SHEET_ID",
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_PRODUCTS_TABLE",
+            "GOOGLE_CREDS_JSON",
+        ]:
             val = os.environ.get(key, "")
             if val:
                 st.markdown(
@@ -2548,10 +3277,10 @@ with tab3:
             st.error(f"Mağaza yönetimi yüklenemedi: {_e3}")
 
 
-# ══ TAB 4 ════════════════════════════════════════════════════════════════════
-with tab4:
+# ══ TAB 5 ════════════════════════════════════════════════════════════════════
+with tab5:
     @st.fragment
-    def _tab4_ara():
+    def _tab5_ara():
         STOK_DOSYA = _stok_dosya_yolu()
 
         @st.cache_data(ttl=600, show_spinner=False)
@@ -2723,13 +3452,13 @@ with tab4:
                 elif ara_btn:
                     st.warning("Eşleşen halı bulunamadı.")
 
-    _tab4_ara()
+    _tab5_ara()
 
 
-# ══ TAB 5 ════════════════════════════════════════════════════════════════════
-with tab5:
+# ══ TAB 6 ════════════════════════════════════════════════════════════════════
+with tab6:
     @st.fragment
-    def _tab5_notlar():
+    def _tab6_notlar():
         st.markdown("#### Satılan Ürün Notları")
         st.caption("SATILANLAR tabındaki ürünler ile mağaza envanteri eşleştirilir. Sadece `green` olan ürünler mağazada yüklü kabul edilir.")
         st.caption("Bu tab üstte seçilen `Hedef Mağaza` filtresinden bağımsız çalışır; tüm mağazalar birlikte kontrol edilir.")
@@ -2840,4 +3569,4 @@ with tab5:
         except Exception as exc:
             st.error(f"Notlar tabı hazırlanamadı: {exc}")
 
-    _tab5_notlar()
+    _tab6_notlar()
