@@ -10,7 +10,6 @@ outputs
 streamlit/.env
 vds/.env
 vds/token.json
-streamlit/stok.xlsx
 streamlit/stok_indir.log
 temp
 etsy_temp

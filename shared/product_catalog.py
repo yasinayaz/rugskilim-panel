@@ -12,6 +12,13 @@ SUPABASE_URL_ENV = "SUPABASE_URL"
 SUPABASE_SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 SUPABASE_PRODUCTS_TABLE_ENV = "SUPABASE_PRODUCTS_TABLE"
 DEFAULT_PRODUCTS_TABLE = "products"
+OPTIONAL_PRODUCT_FIELDS = {
+    "sold_site",
+    "customer_name",
+    "customer_phone",
+    "customer_address",
+    "customer_contact_country",
+}
 
 
 def _env(name: str) -> str:
@@ -120,19 +127,37 @@ class ProductCatalog:
             return []
 
         import requests
+        headers = {
+            **_headers(),
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        }
         response = requests.post(
             _rest_url(),
-            headers={
-                **_headers(),
-                "Prefer": "resolution=merge-duplicates,return=representation",
-            },
+            headers=headers,
             params={"on_conflict": "product_code"},
             json=payload,
             timeout=60,
         )
-        if not response.ok:
-            raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
-        return response.json()
+        if response.ok:
+            return response.json()
+
+        body = (response.text or "").lower()
+        if any(field.lower() in body for field in OPTIONAL_PRODUCT_FIELDS):
+            fallback_payload = [
+                {k: v for k, v in row.items() if k not in OPTIONAL_PRODUCT_FIELDS}
+                for row in payload
+            ]
+            fallback = requests.post(
+                _rest_url(),
+                headers=headers,
+                params={"on_conflict": "product_code"},
+                json=fallback_payload,
+                timeout=60,
+            )
+            if fallback.ok:
+                return fallback.json()
+
+        raise RuntimeError(f"Supabase ürün upsert başarısız: {response.status_code} {response.text}")
 
     def replace_from_source(self, source_products: list[dict]) -> list[dict]:
         existing = self.list_products()
