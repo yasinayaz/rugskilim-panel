@@ -73,14 +73,21 @@ class ProductCatalog:
                 break
             offset += page_size
 
-        # Mağaza bilgilerini product_store_status'tan ekle
+        # Mağaza bilgilerini product_store_status'tan ekle (sayfalama ile)
         try:
-            store_rows = requests.get(
-                f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}",
-                headers={**_headers(), "Accept": "application/json"},
-                params={"select": "product_code,store_id,status,renk"},
-                timeout=30,
-            ).json()
+            store_rows = []
+            s_offset = 0
+            while True:
+                page = requests.get(
+                    f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}",
+                    headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{s_offset}-{s_offset + 999}"},
+                    params={"select": "product_code,store_id,status,renk"},
+                    timeout=30,
+                ).json()
+                store_rows.extend(page)
+                if len(page) < 1000:
+                    break
+                s_offset += 1000
             store_map: dict[str, list[str]] = {}
             for row in store_rows:
                 if row.get("renk") == "green" or row.get("status") == "done":
