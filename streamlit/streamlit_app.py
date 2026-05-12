@@ -3553,11 +3553,6 @@ with tab5:
                 "tur": _kategori_etiketi(category),
                 "loaded_store_count": int(urun.get("loaded_store_count") or 0),
                 "loaded_stores": str(urun.get("loaded_stores") or "").strip(),
-                "loaded_store_ids": [
-                    magaza.strip()
-                    for magaza in str(urun.get("loaded_stores") or "").split(",")
-                    if magaza.strip()
-                ],
                 "note": str(urun.get("note") or "").strip(),
             })
 
@@ -3611,8 +3606,7 @@ with tab5:
                         "FT": f"{g:.2f} x {u:.2f}",
                         "Tür": row["tur"],
                         "Yüklü": row["loaded_store_count"],
-                        "Yüklü Mağazalar": row["loaded_stores"] or "—",
-                        "_store_ids": row["loaded_store_ids"],
+                        "Mağazalar": row["loaded_stores"],
                         "Not": row["note"],
                         "Δ (ft)": round(fark, 2),
                     })
@@ -3638,70 +3632,65 @@ with tab5:
                         "FT": st.column_config.TextColumn("FT", width="medium"),
                         "Tür": st.column_config.TextColumn("Tür", width="small"),
                         "Yüklü": st.column_config.NumberColumn("Yüklü", format="%d", width="small"),
-                        "Yüklü Mağazalar": st.column_config.TextColumn("Yüklü Mağazalar", width="medium"),
+                        "Mağazalar": st.column_config.TextColumn("Mağazalar", width="medium"),
                         "Not": st.column_config.TextColumn("Not", width="medium"),
                         "Δ (ft)": st.column_config.NumberColumn("Δ ft", format="%.2f", width="small"),
                     },
                 )
 
-                try:
-                    from shared.store_manager import tum_magazalar as _tum_mag_tab5
-                    _magaza_kayitlari = _tum_mag_tab5()
-                except Exception:
-                    _magaza_kayitlari = []
-
-                if _magaza_kayitlari:
+                if st.session_state.pcloud_token:
                     st.divider()
                     st.markdown("#### 🏪 Mağazada Kontrol Et")
-                    _magaza_etiketleri = [
-                        f"{m.get('store_name') or m.get('store_id')} ({m.get('store_id')})"
-                        for m in _magaza_kayitlari
-                    ]
-                    _magaza_id_haritasi = {
-                        f"{m.get('store_name') or m.get('store_id')} ({m.get('store_id')})": str(m.get("store_id") or "").strip()
-                        for m in _magaza_kayitlari
-                    }
+                    token_t4 = st.session_state.pcloud_token
+                    host_t4 = st.session_state.get("pcloud_host", "https://api.pcloud.com")
 
-                    _mt4c1, _mt4c2 = st.columns([5, 1])
-                    secilen_magaza_etiketi = _mt4c1.selectbox(
-                        "Mağaza seç",
-                        options=_magaza_etiketleri,
-                        index=None,
-                        placeholder="Bir mağaza seçin...",
-                        key="magaza_sec",
-                    )
-                    magaza_ara_btn = _mt4c2.button(
-                        "🔍 Ara",
-                        key="magaza_ara_btn",
-                        type="primary",
-                        width="stretch",
-                        disabled=not secilen_magaza_etiketi,
-                    )
+                    with st.spinner("Mağazalar yükleniyor..."):
+                        _, magazalar = _magazalari_otomatik_bul(token_t4, host_t4)
 
-                    if magaza_ara_btn and secilen_magaza_etiketi:
-                        secilen_store_id = _magaza_id_haritasi.get(secilen_magaza_etiketi, "")
-                        kontrol = []
-                        for eslesme in eslesmeler:
-                            store_ids = {
-                                str(sid).strip()
-                                for sid in eslesme.get("_store_ids", [])
-                                if str(sid).strip()
-                            }
-                            kontrol.append({
-                                **eslesme,
-                                "Seçili Mağaza Durumu": "✅ Mevcut" if secilen_store_id in store_ids else "❌ Bu mağazada yok",
-                            })
+                    mag_root_id = st.session_state.get("magazalar_root_id")
+                    if mag_root_id and not magazalar:
+                        with st.spinner("Manuel köke bakılıyor..."):
+                            _, magazalar = _klasorleri_getir(token_t4, host_t4, mag_root_id)
 
-                        var_sayisi = sum(1 for s in kontrol if "✅" in s["Seçili Mağaza Durumu"])
-                        st.success(f"**{secilen_magaza_etiketi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
-                        st.dataframe(
-                            pd.DataFrame([
-                                {k: v for k, v in satir.items() if not str(k).startswith("_")}
-                                for satir in kontrol
-                            ]),
-                            width="stretch",
-                            hide_index=True,
+                    if not magazalar:
+                        st.warning("Mağaza klasörleri bulunamadı.")
+                        st.caption("Tab 1'de 01-VİNTAGE RUG klasörüne gidin → **📌** butonuna basın.")
+                    else:
+                        _mt4c1, _mt4c2 = st.columns([5, 1])
+                        secilen_magaza_adi = _mt4c1.selectbox(
+                            "Mağaza seç",
+                            options=[m["ad"] for m in magazalar],
+                            index=None,
+                            placeholder="Bir mağaza seçin...",
+                            key="magaza_sec",
                         )
+                        magaza_ara_btn = _mt4c2.button(
+                            "🔍 Ara",
+                            key="magaza_ara_btn",
+                            type="primary",
+                            width="stretch",
+                            disabled=not secilen_magaza_adi,
+                        )
+
+                        if magaza_ara_btn and secilen_magaza_adi:
+                            magaza_id = next(m["id"] for m in magazalar if m["ad"] == secilen_magaza_adi)
+                            with st.spinner(f"{secilen_magaza_adi} taranıyor..."):
+                                magaza_kodlar = _magaza_tum_kodlar(token_t4, host_t4, magaza_id)
+
+                            if not magaza_kodlar:
+                                st.warning(f"{secilen_magaza_adi} içinde ürün bulunamadı.")
+                            else:
+                                kontrol = [
+                                    {**e, "Mağazada": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
+                                    for e in eslesmeler
+                                ]
+                                var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağazada"])
+                                st.success(f"**{secilen_magaza_adi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
+                                st.dataframe(
+                                    pd.DataFrame(kontrol),
+                                    width="stretch",
+                                    hide_index=True,
+                                )
         elif ara_btn:
             st.warning("Eşleşen ürün bulunamadı.")
 
