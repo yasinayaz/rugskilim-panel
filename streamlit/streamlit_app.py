@@ -3606,7 +3606,7 @@ with tab5:
                         "FT": f"{g:.2f} x {u:.2f}",
                         "Tür": row["tur"],
                         "Yüklü": row["loaded_store_count"],
-                        "Mağazalar": row["loaded_stores"],
+                        "Yüklü Mağazalar": row["loaded_stores"],
                         "Not": row["note"],
                         "Δ (ft)": round(fark, 2),
                     })
@@ -3632,7 +3632,7 @@ with tab5:
                         "FT": st.column_config.TextColumn("FT", width="medium"),
                         "Tür": st.column_config.TextColumn("Tür", width="small"),
                         "Yüklü": st.column_config.NumberColumn("Yüklü", format="%d", width="small"),
-                        "Mağazalar": st.column_config.TextColumn("Mağazalar", width="medium"),
+                        "Yüklü Mağazalar": st.column_config.TextColumn("Yüklü Mağazalar", width="medium"),
                         "Not": st.column_config.TextColumn("Not", width="medium"),
                         "Δ (ft)": st.column_config.NumberColumn("Δ ft", format="%.2f", width="small"),
                     },
@@ -3681,10 +3681,10 @@ with tab5:
                                 st.warning(f"{secilen_magaza_adi} içinde ürün bulunamadı.")
                             else:
                                 kontrol = [
-                                    {**e, "Mağazada": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
+                                    {**e, "Mağaza Durumu": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
                                     for e in eslesmeler
                                 ]
-                                var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağazada"])
+                                var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağaza Durumu"])
                                 st.success(f"**{secilen_magaza_adi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
                                 st.dataframe(
                                     pd.DataFrame(kontrol),
