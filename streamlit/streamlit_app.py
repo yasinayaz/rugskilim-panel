@@ -2036,9 +2036,11 @@ with tab1:
                                     "ikon": _ikon,
                                 })
 
-                            _c_chk, _c_name, _c_prev = st.columns([0.7, 9, 0.9])
-                            with _c_chk:
-                                for _row in _satir_meta:
+                            for _row in _satir_meta:
+                                k = _row["item"]
+                                _c_chk, _c_name, _c_prev = st.columns([0.7, 9, 0.9], vertical_alignment="center")
+
+                                with _c_chk:
                                     if _row["zaten_kuyrukta"]:
                                         st.markdown(
                                             f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>{_row['ikon']}</div>",
@@ -2056,9 +2058,7 @@ with tab1:
                                             args=(_row["item"], _row["chk_key"]),
                                         )
 
-                            with _c_name:
-                                for _row in _satir_meta:
-                                    k = _row["item"]
+                                with _c_name:
                                     if st.button(
                                         f"📁  {k['ad']}",
                                         key=f"open_folder_{k['id']}",
@@ -2068,9 +2068,7 @@ with tab1:
                                         _klasoru_ac(k["id"], k["ad"])
                                         st.rerun(scope="fragment")
 
-                            with _c_prev:
-                                for _row in _satir_meta:
-                                    k = _row["item"]
+                                with _c_prev:
                                     if st.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
                                         st.session_state._onizleme_klasor = k
                                         st.rerun(scope="app")
