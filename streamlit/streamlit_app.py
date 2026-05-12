@@ -432,6 +432,7 @@ for k, v in [
     ("urun_formu_acik", False),
     ("urun_alt_tab", "liste"),
     ("_secim_limit_hatasi", None),
+    ("_kaldirilacak_secim_id", None),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1968,6 +1969,15 @@ with tab1:
                 yeni_host, klasorler = _klasorleri_getir(token, host, st.session_state.klasor_id)
                 st.session_state["pcloud_host"] = yeni_host
 
+                _kaldirilacak_secim_id = st.session_state.get("_kaldirilacak_secim_id")
+                if _kaldirilacak_secim_id is not None:
+                    st.session_state.secilen = [
+                        s for s in st.session_state.secilen
+                        if str(s.get("id")) != str(_kaldirilacak_secim_id)
+                    ]
+                    st.session_state.pop(f"chk_form_{_kaldirilacak_secim_id}", None)
+                    st.session_state["_kaldirilacak_secim_id"] = None
+
                 _mevcut_secimler = list(st.session_state.secilen)
                 _bu_sayfa_ids = {str(k["id"]) for k in klasorler}
                 _diger_sayfalar = [
@@ -2108,10 +2118,7 @@ with tab1:
                                 )
                                 if _sc.button("✕", key=f"sil{i}", help="Kaldır"):
                                     removed = st.session_state.secilen[i]
-                                    chk_key = f"chk_form_{removed['id']}"
-                                    if chk_key in st.session_state:
-                                        st.session_state[chk_key] = False
-                                    st.session_state.secilen.pop(i)
+                                    st.session_state["_kaldirilacak_secim_id"] = removed["id"]
                                     st.rerun()
                         else:
                             st.caption("Soldaki listeden ürün seçin. Bu panelde seçilen ürünler ve AI kuyruğa gönder butonu görünecek.")
