@@ -2294,6 +2294,99 @@ with tab2:
 
 # ══ TAB 3 ════════════════════════════════════════════════════════════════════
 with tab3:
+    @st.dialog("Ürün Düzenle", width="large")
+    def _urun_edit_dialog(urun: dict):
+        import time as _t
+
+        def _to_f(v):
+            try:
+                return float(str(v or "").replace(",", "."))
+            except Exception:
+                return 0.0
+
+        st.markdown(f"**{urun.get('product_code', '')}**")
+        _ef1, _ef2 = st.columns(2)
+        _yeni_kod = _ef1.text_input("Ürün Kodu", value=urun.get("product_code", ""))
+        _kat_ops = ["", "Area Rug", "Runner", "Doormat"]
+        _mevcut_kat = urun.get("category", "") or ""
+        _yeni_kat = _ef2.selectbox(
+            "Kategori", _kat_ops,
+            index=_kat_ops.index(_mevcut_kat) if _mevcut_kat in _kat_ops else 0,
+            format_func=lambda x: x or "— seçiniz —",
+        )
+        st.caption("cm ölçüleri")
+        _ec1, _ec2 = st.columns(2)
+        _cm_gen = _ec1.number_input("Genişlik (cm)", value=_to_f(urun.get("width_cm")), min_value=0.0, step=1.0, format="%.0f")
+        _cm_uz = _ec2.number_input("Uzunluk (cm)", value=_to_f(urun.get("length_cm")), min_value=0.0, step=1.0, format="%.0f")
+        st.caption("ft ölçüleri")
+        _ef3, _ef4 = st.columns(2)
+        _ft_gen = _ef3.number_input("Genişlik (ft)", value=_to_f(urun.get("width_ft")), min_value=0.0, step=0.1, format="%.1f")
+        _ft_uz = _ef4.number_input("Uzunluk (ft)", value=_to_f(urun.get("length_ft")), min_value=0.0, step=0.1, format="%.1f")
+        _not_txt = st.text_area("Not", value=urun.get("note", "") or "")
+
+        _es1, _es2, _es3 = st.columns([2, 2, 1])
+        if _es1.button("Kaydet", type="primary", use_container_width=True):
+            from shared.product_catalog import ProductCatalog as _PC
+            import requests as _req, os as _os
+            _updated = {
+                **urun,
+                "category": _yeni_kat,
+                "width_cm": str(int(_cm_gen)) if _cm_gen else "",
+                "length_cm": str(int(_cm_uz)) if _cm_uz else "",
+                "size_cm": _fmt_size(_cm_gen or None, _cm_uz or None, digits=0),
+                "area_m2": f"{_cm_gen * _cm_uz / 10000:.2f}" if _cm_gen and _cm_uz else urun.get("area_m2", ""),
+                "width_ft": _decimal_str(_ft_gen, digits=1) if _ft_gen else "",
+                "length_ft": _decimal_str(_ft_uz, digits=1) if _ft_uz else "",
+                "size_ft": _fmt_size(_ft_gen or None, _ft_uz or None, digits=1),
+                "note": _not_txt.strip(),
+                "updated_at": _t.strftime("%Y-%m-%d %H:%M"),
+            }
+            _old_code = urun.get("product_code", "")
+            _new_code = _yeni_kod.strip()
+            if _new_code and _new_code != _old_code:
+                _supa_url = _os.environ.get("SUPABASE_URL", "").rstrip("/")
+                _supa_key = _os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                _req.patch(
+                    f"{_supa_url}/rest/v1/products",
+                    headers={"apikey": _supa_key, "Authorization": f"Bearer {_supa_key}",
+                             "Content-Type": "application/json", "Prefer": "return=minimal"},
+                    params={"product_code": f"eq.{_old_code}"},
+                    json={"product_code": _new_code},
+                    timeout=30,
+                )
+                _updated["product_code"] = _new_code
+            _PC().upsert_products([_updated])
+            st.success("Kaydedildi.")
+            st.rerun()
+        if _es2.button("İptal", use_container_width=True):
+            st.rerun()
+
+        # ── Silme ───────────────────────────────────────────────────────────
+        st.divider()
+        if not st.session_state.get("_sil_onay"):
+            if _es3.button("🗑️ Sil", use_container_width=True):
+                st.session_state["_sil_onay"] = True
+                st.rerun()
+        else:
+            st.warning(f"**{urun.get('product_code')}** silinecek. Emin misiniz?")
+            _so1, _so2 = st.columns(2)
+            if _so1.button("Evet, sil", type="primary", use_container_width=True):
+                import requests as _req2, os as _os2
+                _supa_url2 = _os2.environ.get("SUPABASE_URL", "").rstrip("/")
+                _supa_key2 = _os2.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                _req2.delete(
+                    f"{_supa_url2}/rest/v1/products",
+                    headers={"apikey": _supa_key2, "Authorization": f"Bearer {_supa_key2}"},
+                    params={"product_code": f"eq.{urun.get('product_code')}"},
+                    timeout=30,
+                )
+                st.session_state.pop("_sil_onay", None)
+                st.success("Silindi.")
+                st.rerun()
+            if _so2.button("Vazgeç", use_container_width=True):
+                st.session_state.pop("_sil_onay", None)
+                st.rerun()
+
     @st.fragment
     def _tab3_urunler():
         try:
@@ -2504,9 +2597,7 @@ with tab3:
                         "cm": urun.get("size_cm", ""),
                         "ft": urun.get("size_ft", ""),
                         "m2": urun.get("area_m2", ""),
-                        "durum": "satıldı" if str(urun.get("status", "")).lower() == "sold" else "aktif",
                         "yüklü": int(urun.get("loaded_store_count") or 0),
-                        "not": urun.get("note", ""),
                     }
                     for magaza in magaza_adlari:
                         satir[magaza] = "🟢" if magaza in stores else "⚪"
@@ -2518,6 +2609,42 @@ with tab3:
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
                 st.warning(f"Ürün listesi çizilemedi: {exc}")
+
+            # ── Çift tıklama ile ürün düzenleme ─────────────────────────────
+            import streamlit.components.v1 as _cv1
+            _dbl = _cv1.html("""<script>
+window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:componentReady",apiVersion:1},"*");
+(function(){
+  function bind(){
+    var tbls=window.parent.document.querySelectorAll('[data-testid="stDataFrame"] table');
+    tbls.forEach(function(t){
+      if(t._dbl)return; t._dbl=true;
+      t.addEventListener('dblclick',function(e){
+        var row=e.target.closest('tr'); if(!row)return;
+        var cells=row.querySelectorAll('td');
+        for(var i=0;i<cells.length;i++){
+          var v=cells[i].innerText.trim();
+          if(v&&v!=='🟢'&&v!=='⚪'){
+            window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:setComponentValue",value:v},"*");
+            break;
+          }
+        }
+      });
+    });
+  }
+  setTimeout(bind,500);setTimeout(bind,1500);setInterval(bind,5000);
+})();
+</script>""", height=0)
+
+            if _dbl and _dbl != st.session_state.get("_dbl_prev"):
+                st.session_state["_dbl_prev"] = _dbl
+                st.session_state["_edit_urun"] = next(
+                    (u for u in urunler if u.get("product_code") == _dbl), None
+                )
+
+            if st.session_state.get("_edit_urun"):
+                _edit_data = st.session_state.pop("_edit_urun")
+                _urun_edit_dialog(_edit_data)
 
         if st.session_state.urun_alt_tab == "satilan":
             try:

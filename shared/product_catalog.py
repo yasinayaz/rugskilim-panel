@@ -262,3 +262,19 @@ def guess_category(source_tab: str) -> str:
     if tab.startswith("DOOR"):
         return "Doormat"
     return ""
+
+
+def guess_category_by_size(size: str) -> str:
+    """'2,3x7' veya '2.3x7' gibi WxL formatından Runner/Area Rug döndürür."""
+    size = _clean(size).replace(",", ".")
+    if "x" not in size:
+        return ""
+    parts = size.lower().split("x", 1)
+    try:
+        width = float(parts[0])
+        length = float(parts[1])
+    except (ValueError, IndexError):
+        return ""
+    if width <= 0:
+        return ""
+    return "Runner" if (length / width) >= 3 else "Area Rug"
