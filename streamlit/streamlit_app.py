@@ -2604,43 +2604,26 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
-                    st.dataframe(pd.DataFrame(satirlar), use_container_width=True, hide_index=True)
+                    _secim = st.dataframe(
+                        pd.DataFrame(satirlar),
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                    )
+                    _secilen_satirlar = _secim.selection.get("rows", []) if _secim else []
+                    if _secilen_satirlar:
+                        _secilen_idx = _secilen_satirlar[0]
+                        _secilen_kod = satirlar[_secilen_idx]["Ürün Kodu"]
+                        _edit_col, _ = st.columns([2, 6])
+                        if _edit_col.button(f"✏️ Düzenle: {_secilen_kod}", type="primary", use_container_width=True):
+                            st.session_state["_edit_urun"] = next(
+                                (u for u in urunler if u.get("product_code") == _secilen_kod), None
+                            )
                 else:
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
                 st.warning(f"Ürün listesi çizilemedi: {exc}")
-
-            # ── Çift tıklama ile ürün düzenleme ─────────────────────────────
-            import streamlit.components.v1 as _cv1
-            _dbl = _cv1.html("""<script>
-window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:componentReady",apiVersion:1},"*");
-(function(){
-  function bind(){
-    var tbls=window.parent.document.querySelectorAll('[data-testid="stDataFrame"] table');
-    tbls.forEach(function(t){
-      if(t._dbl)return; t._dbl=true;
-      t.addEventListener('dblclick',function(e){
-        var row=e.target.closest('tr'); if(!row)return;
-        var cells=row.querySelectorAll('td');
-        for(var i=0;i<cells.length;i++){
-          var v=cells[i].innerText.trim();
-          if(v&&v!=='🟢'&&v!=='⚪'){
-            window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:setComponentValue",value:v},"*");
-            break;
-          }
-        }
-      });
-    });
-  }
-  setTimeout(bind,500);setTimeout(bind,1500);setInterval(bind,5000);
-})();
-</script>""", height=0)
-
-            if _dbl and _dbl != st.session_state.get("_dbl_prev"):
-                st.session_state["_dbl_prev"] = _dbl
-                st.session_state["_edit_urun"] = next(
-                    (u for u in urunler if u.get("product_code") == _dbl), None
-                )
 
             if st.session_state.get("_edit_urun"):
                 _edit_data = st.session_state.pop("_edit_urun")
