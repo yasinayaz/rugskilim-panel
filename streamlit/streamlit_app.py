@@ -2604,22 +2604,19 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
-                    _secim = st.dataframe(
-                        pd.DataFrame(satirlar),
-                        use_container_width=True,
-                        hide_index=True,
-                        on_select="rerun",
-                        selection_mode="single-row",
+                    st.dataframe(pd.DataFrame(satirlar), use_container_width=True, hide_index=True)
+                    _sel_col, _btn_col = st.columns([5, 2])
+                    _sec_kod = _sel_col.selectbox(
+                        "düzenle",
+                        options=[""] + [s["Ürün Kodu"] for s in satirlar],
+                        format_func=lambda x: x or "— ürün seç —",
+                        label_visibility="collapsed",
+                        key="edit_urun_sec",
                     )
-                    _secilen_satirlar = (_secim.selection.rows if _secim and hasattr(_secim, "selection") else [])
-                    if _secilen_satirlar:
-                        _secilen_idx = _secilen_satirlar[0]
-                        _secilen_kod = satirlar[_secilen_idx]["Ürün Kodu"]
-                        _edit_col, _ = st.columns([2, 6])
-                        if _edit_col.button(f"✏️ Düzenle: {_secilen_kod}", type="primary", use_container_width=True):
-                            st.session_state["_edit_urun"] = next(
-                                (u for u in urunler if u.get("product_code") == _secilen_kod), None
-                            )
+                    if _sec_kod and _btn_col.button("✏️ Düzenle", type="primary", use_container_width=True):
+                        st.session_state["_edit_urun"] = next(
+                            (u for u in urunler if u.get("product_code") == _sec_kod), None
+                        )
                 else:
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
