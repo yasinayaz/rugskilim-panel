@@ -557,6 +557,7 @@ _STOK_INDIR_BEKLEME_SN = 90
 _STORE_INVENTORY_DB = _RUNTIME_DIR / "store_inventory.json"
 _SOLD_NOTES_DB = _RUNTIME_DIR / "sold_notes.json"
 _GLOBAL_KIRMIZI_DB = _RUNTIME_DIR / "global_kirmizi.json"
+_PRODUCT_SOURCE_SYNC_DB = _RUNTIME_DIR / "product_source_sync.json"
 _STORE_INVENTORY_TTL_SN = 1800
 
 
@@ -632,6 +633,11 @@ def _fmt_size(a, b, digits: int = 1) -> str:
     return ""
 
 
+def _kategori_etiketi(value: str) -> str:
+    temiz = str(value or "").strip()
+    return temiz or "Boş"
+
+
 def _product_id_for_code(code: str) -> str:
     clean = (_urun_kodu_normalize(code) or _urun_kodu_al(code) or _kod_normalize(code)).upper()
     return f"PRD-{clean}"
@@ -641,14 +647,75 @@ def _product_id_for_code(code: str) -> str:
 def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
     _ = dosya_mtime
     import pandas as pd
-    from shared.product_catalog import guess_category
+    from shared.product_catalog import guess_category, guess_category_by_size
 
-    satilanlar = _satilan_kodlar(dosya_yolu)
+    satilan_kayitlari = {}
+    try:
+        sold_df = pd.read_excel(dosya_yolu, sheet_name="SATILANLAR")
+        for row_index, row in sold_df.iterrows():
+            row_values = list(row.tolist())
+            if not row_values:
+                continue
+
+            raw_code = row_values[0] if len(row_values) > 0 else ""
+            code = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+            if not code:
+                continue
+
+            width_cm = _float_or_none(row_values[1]) if len(row_values) > 1 else None
+            sold_marker = str(row_values[2] or "").strip().upper() if len(row_values) > 2 else ""
+            length_cm = _float_or_none(row_values[3]) if len(row_values) > 3 else None
+            area_m2 = _float_or_none(row_values[4]) if len(row_values) > 4 else None
+            width_ft = _float_or_none(row_values[5]) if len(row_values) > 5 else None
+            length_ft = _float_or_none(row_values[6]) if len(row_values) > 6 else None
+            sold_site = str(row_values[7] or "").strip() if len(row_values) > 7 else ""
+            customer_name = str(row_values[8] or "").strip() if len(row_values) > 8 else ""
+            customer_contact_country = str(row_values[9] or "").strip() if len(row_values) > 9 else ""
+            note = str(row_values[10] or "").strip() if len(row_values) > 10 else ""
+
+            if not any(v is not None for v in [width_cm, length_cm, area_m2, width_ft, length_ft]) and not (
+                sold_marker == "X" or sold_site or customer_name or customer_contact_country or note
+            ):
+                continue
+
+            category = guess_category_by_size(_fmt_size(width_ft, length_ft, digits=1))
+            satilan_kayitlari[code] = {
+                "product_id": _product_id_for_code(code),
+                "product_code": code,
+                "category": category or "",
+                "width_cm": _decimal_str(width_cm, digits=0),
+                "length_cm": _decimal_str(length_cm, digits=0),
+                "size_cm": _fmt_size(width_cm, length_cm, digits=0),
+                "area_m2": _decimal_str(area_m2, digits=2),
+                "width_ft": _decimal_str(width_ft, digits=1),
+                "length_ft": _decimal_str(length_ft, digits=1),
+                "size_ft": _fmt_size(width_ft, length_ft, digits=1),
+                "status": "sold",
+                "source_tab": "SATILANLAR",
+                "source_row": str(int(row_index) + 2),
+                "loaded_store_count": "",
+                "loaded_stores": "",
+                "sold_at": "",
+                "sold_site": sold_site,
+                "customer_name": customer_name,
+                "customer_phone": "",
+                "customer_address": "",
+                "customer_contact_country": customer_contact_country,
+                "note": note,
+                "updated_at": "",
+                "_kaynak": "Satilanlar",
+            }
+    except Exception:
+        pass
+
+    satilanlar = set(satilan_kayitlari) | _satilan_kodlar(dosya_yolu)
     urunler = []
+    eklenen_kodlar = set()
     sheet_specs = [
         ("VİNTAGE RUG", "Vintage"),
         ("VINTAGE RUG", "Vintage"),
         ("DOOR MAT RUGS", "Doormat"),
+        ("KILIM RUG", "Kilim"),
     ]
 
     for tab_adi, kaynak_etiketi in sheet_specs:
@@ -678,79 +745,125 @@ def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
                 continue
 
             status = "sold" if sold_marker == "X" or code in satilanlar else "active"
+            size_ft = _fmt_size(width_ft, length_ft, digits=1)
+            satilan_bilgi = satilan_kayitlari.get(code, {})
             urunler.append({
                 "product_id": _product_id_for_code(code),
                 "product_code": code,
-                "category": guess_category(tab_adi),
+                "category": guess_category_by_size(size_ft) or guess_category(tab_adi),
                 "width_cm": _decimal_str(width_cm, digits=0),
                 "length_cm": _decimal_str(length_cm, digits=0),
                 "size_cm": _fmt_size(width_cm, length_cm, digits=0),
                 "area_m2": _decimal_str(area_m2, digits=2),
                 "width_ft": _decimal_str(width_ft, digits=1),
                 "length_ft": _decimal_str(length_ft, digits=1),
-                "size_ft": _fmt_size(width_ft, length_ft, digits=1),
+                "size_ft": size_ft,
                 "status": status,
                 "source_tab": tab_adi,
                 "source_row": str(int(row_index) + 2),
                 "loaded_store_count": "",
                 "loaded_stores": "",
-                "sold_at": "",
-                "note": "",
+                "sold_at": satilan_bilgi.get("sold_at", ""),
+                "sold_site": satilan_bilgi.get("sold_site", ""),
+                "customer_name": satilan_bilgi.get("customer_name", ""),
+                "customer_phone": satilan_bilgi.get("customer_phone", ""),
+                "customer_address": satilan_bilgi.get("customer_address", ""),
+                "customer_contact_country": satilan_bilgi.get("customer_contact_country", ""),
+                "note": satilan_bilgi.get("note", ""),
                 "updated_at": "",
                 "_kaynak": kaynak_etiketi,
             })
+            eklenen_kodlar.add(code)
+
+    for code, satilan_urun in satilan_kayitlari.items():
+        if code in eklenen_kodlar:
+            continue
+        urunler.append(dict(satilan_urun))
     return urunler
 
 
+def _urun_kaynak_sync_bilgisi():
+    return _json_yukle(_PRODUCT_SOURCE_SYNC_DB, {"stok_mtime": 0, "updated_at": 0, "source_count": 0})
+
+
+def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | None = None):
+    from shared.product_catalog import ProductCatalog, _supabase_ready
+
+    if not _supabase_ready():
+        return False
+
+    stok = _stok_dosya_yolu()
+    if not stok.exists():
+        return False
+
+    stok_mtime = float(stok.stat().st_mtime)
+    sync_bilgi = _urun_kaynak_sync_bilgisi()
+    if not force and float(sync_bilgi.get("stok_mtime") or 0) == stok_mtime:
+        return False
+
+    kaynak = kaynak_urunler or _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
+    ProductCatalog().replace_from_source(kaynak)
+    _json_kaydet(
+        _PRODUCT_SOURCE_SYNC_DB,
+        {"stok_mtime": stok_mtime, "updated_at": _time.time(), "source_count": len(kaynak)},
+    )
+    return True
+
+
 def _urunleri_yukle(force_source_sync: bool = False):
-    from shared.product_catalog import ProductCatalog
+    from shared.product_catalog import ProductCatalog, _supabase_ready
+    stok = _stok_dosya_yolu()
+    kaynak = []
+    if stok.exists():
+        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok.stat().st_mtime)
+        if _supabase_ready():
+            try:
+                _urun_katalogunu_esitle(force=force_source_sync, kaynak_urunler=kaynak)
+            except Exception:
+                pass
 
     try:
-        catalog = ProductCatalog()
-        mevcut = catalog.list_products()
+        mevcut = ProductCatalog().list_products() if _supabase_ready() else _panel_urunleri_yerden_yukle()
     except Exception:
         mevcut = _panel_urunleri_yerden_yukle()
 
-    stok = _stok_dosya_yolu()
-    if stok.exists():
-        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok.stat().st_mtime)
-        if force_source_sync:
-            try:
-                merged = catalog.replace_from_source(kaynak)
-            except Exception:
-                mevcut_map = {
-                    str(item.get("product_code") or "").strip(): dict(item)
-                    for item in mevcut
-                    if str(item.get("product_code") or "").strip()
-                }
-                for item in kaynak:
-                    kod = str(item.get("product_code") or "").strip()
-                    if not kod:
-                        continue
-                    onceki = mevcut_map.get(kod, {})
-                    yeni = dict(item)
-                    yeni["category"] = onceki.get("category") or item.get("category") or ""
-                    yeni["loaded_store_count"] = onceki.get("loaded_store_count", 0)
-                    yeni["loaded_stores"] = onceki.get("loaded_stores", "")
-                    yeni["sold_at"] = onceki.get("sold_at", "")
-                    yeni["note"] = onceki.get("note", "")
-                    yeni["status"] = "sold" if str(onceki.get("status", "")).lower() == "sold" else "active"
-                    mevcut_map[kod] = yeni
-                merged = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
-                _json_kaydet(_RUNTIME_DIR / "panel_products.json", merged)
-        else:
-            merged = mevcut
-    else:
-        merged = mevcut
+    if force_source_sync and stok.exists() and (not _supabase_ready() or not mevcut):
+        mevcut_map = {
+            str(item.get("product_code") or "").strip(): dict(item)
+            for item in mevcut
+            if str(item.get("product_code") or "").strip()
+        }
+        for item in kaynak:
+            kod = str(item.get("product_code") or "").strip()
+            if not kod:
+                continue
+            onceki = mevcut_map.get(kod, {})
+            yeni = dict(item)
+            yeni["category"] = item.get("category") or onceki.get("category") or ""
+            yeni["loaded_store_count"] = onceki.get("loaded_store_count", 0)
+            yeni["loaded_stores"] = onceki.get("loaded_stores", "")
+            yeni["sold_at"] = item.get("sold_at") or onceki.get("sold_at", "")
+            yeni["sold_site"] = item.get("sold_site") or onceki.get("sold_site", "")
+            yeni["customer_name"] = item.get("customer_name") or onceki.get("customer_name", "")
+            yeni["customer_phone"] = item.get("customer_phone") or onceki.get("customer_phone", "")
+            yeni["customer_address"] = item.get("customer_address") or onceki.get("customer_address", "")
+            yeni["customer_contact_country"] = item.get("customer_contact_country") or onceki.get("customer_contact_country", "")
+            yeni["note"] = item.get("note") or onceki.get("note", "")
+            yeni["status"] = "sold" if str(item.get("status", "")).lower() == "sold" else str(onceki.get("status", "")).lower() or "active"
+            mevcut_map[kod] = yeni
+        mevcut = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
+        _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
 
-    return merged
+    return mevcut
 
 
 def _urunleri_kaydet(products: list[dict]):
     from shared.product_catalog import ProductCatalog, _supabase_ready
 
-    ProductCatalog().upsert_products(products)
-    if not _supabase_ready():
+    if _supabase_ready():
+        ProductCatalog().upsert_products(products)
+    else:
+        _json_kaydet(_RUNTIME_DIR / "panel_products.json", products)
         st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
 
 
@@ -3401,176 +3514,185 @@ with tab4:
 with tab5:
     @st.fragment
     def _tab5_ara():
-        STOK_DOSYA = _stok_dosya_yolu()
+        import pandas as pd
+        from shared.product_catalog import guess_category_by_size
 
-        @st.cache_data(ttl=600, show_spinner=False)
-        def _stok_yukle(dosya_yolu: str, dosya_mtime: float):
-            import pandas as pd
-            satirlar = []
-            for tab, tur in [("VİNTAGE RUG", "Vintage"), ("DOOR MAT RUGS", "Door Mat"), ("KILIM RUG", "Kilim")]:
-                try:
-                    df = pd.read_excel(dosya_yolu, sheet_name=tab)
-                    for col in ["ft1", "ft2", "cm1", "cm2"]:
-                        excel_col = {"ft1": "FT1", "ft2": "FT2", "cm1": "CM1", "cm2": "CM2"}[col]
-                        df[col] = pd.to_numeric(df.get(excel_col, pd.Series(dtype=float)), errors="coerce")
-                    df["kod"] = df["KOD"].astype(str).str.strip()
-                    df["tur"] = tur
-                    df = df.dropna(subset=["ft1", "ft2"])
-                    satirlar.append(df[["kod","cm1","cm2","ft1","ft2","tur"]])
-                except Exception: continue
-            if not satirlar: return None
-            return pd.concat(satirlar, ignore_index=True)
+        _gc1, _gc2, _ = st.columns([2, 3, 3])
+        if _gc1.button("🔄 Ürünleri Yenile"):
+            st.session_state.ara_sonuclari = []
+            st.rerun()
+        _gc2.caption("Kaynak: Supabase `products` tablosundaki aktif ürünler")
 
-        if not STOK_DOSYA.exists():
-            st.error(f"Stok dosyası bulunamadı: `{_STOK_DOSYA}`")
-            st.info(
-                "Downloads'tan `Anatolian Rugs Excel.xlsx` dosyasını yükleyin; "
-                f"uygulama bunu `{_STOK_DOSYA}` konumuna kaydeder."
+        try:
+            katalog_urunleri = _urunleri_yukle(force_source_sync=False)
+        except Exception as exc:
+            st.error(f"Ürün kataloğu yüklenemedi: {exc}")
+            return
+
+        arama_kaynaklari = []
+        atlanan_ft = 0
+        for urun in katalog_urunleri:
+            if str(urun.get("status", "")).strip().lower() == "sold":
+                continue
+
+            width_ft = _float_or_none(urun.get("width_ft"))
+            length_ft = _float_or_none(urun.get("length_ft"))
+            if width_ft is None or length_ft is None:
+                atlanan_ft += 1
+                continue
+
+            category = str(urun.get("category") or "").strip() or guess_category_by_size(
+                urun.get("size_ft") or _fmt_size(width_ft, length_ft, digits=1)
             )
-        else:
-            _gc1, _, _gc2 = st.columns([2, 4, 3])
-            if _gc1.button("🔄 Stoku Güncelle"):
-                _stok_yukle.clear()
-                _stok_indirmeyi_baslat(force=True)
-                st.rerun()
-            yuklenen = _gc2.file_uploader("Yeni Excel", type=["xlsx"], label_visibility="collapsed")
-            if yuklenen:
-                with open(_STOK_DOSYA, "wb") as f:
-                    f.write(yuklenen.read())
-                _stok_log_yaz("OK", "manual-upload")
-                _stok_yukle.clear()
-                st.success("✅ Stok güncellendi!")
-                STOK_DOSYA = _stok_dosya_yolu()
+            arama_kaynaklari.append({
+                "kod": str(urun.get("product_code") or "").strip(),
+                "cm": str(urun.get("size_cm") or "").strip(),
+                "ft": str(urun.get("size_ft") or _fmt_size(width_ft, length_ft, digits=1)).strip(),
+                "ft1": width_ft,
+                "ft2": length_ft,
+                "tur": _kategori_etiketi(category),
+                "loaded_store_count": int(urun.get("loaded_store_count") or 0),
+                "loaded_stores": str(urun.get("loaded_stores") or "").strip(),
+                "note": str(urun.get("note") or "").strip(),
+            })
 
-            df_stok = _stok_yukle(str(STOK_DOSYA), STOK_DOSYA.stat().st_mtime)
-            if df_stok is None:
-                st.error("Excel okunamadı.")
-            else:
-                _log_bilgi = _stok_log_oku()
-                _log_durum2 = _stok_log_durumu()
-                _dosya_ts = STOK_DOSYA.stat().st_mtime
-                _son_guncelleme = _time.strftime("%d.%m.%Y %H:%M:%S", _time.localtime(_dosya_ts))
-                _son_indirme = (
-                    _time.strftime("%d.%m.%Y %H:%M:%S", _time.localtime(_log_bilgi["ts"]))
-                    if _log_bilgi.get("ts") else "bilinmiyor"
+        if not arama_kaynaklari:
+            st.warning("Ölçü arama için kullanılabilir aktif ürün bulunamadı.")
+            return
+
+        kategori_opsiyonlari = ["Tümü"] + sorted({
+            satir["tur"] for satir in arama_kaynaklari if satir["tur"]
+        })
+        kategori_sayimlari = {}
+        for satir in arama_kaynaklari:
+            kategori_sayimlari[satir["tur"]] = kategori_sayimlari.get(satir["tur"], 0) + 1
+
+        st.caption(
+            f"Aktif ürün: **{len(arama_kaynaklari)}**"
+            f"  |  Toplam katalog: {len(katalog_urunleri)}"
+            f"  |  Satılan: {sum(1 for urun in katalog_urunleri if str(urun.get('status', '')).strip().lower() == 'sold')}"
+            f"  |  Ft ölçüsü eksik olduğu için atlanan: {atlanan_ft}"
+        )
+        st.caption(
+            "  |  ".join(
+                [f"{kategori}: {kategori_sayimlari[kategori]}" for kategori in sorted(kategori_sayimlari)]
+            )
+        )
+        st.divider()
+
+        _fa, _fb, _fc, _fd, _fe = st.columns([2, 2, 2, 2, 1])
+        hedef_g = _fa.number_input("Genişlik (ft)", min_value=0.1, max_value=30.0, value=2.0, step=0.1, format="%.1f")
+        hedef_u = _fb.number_input("Uzunluk (ft)", min_value=0.1, max_value=50.0, value=3.0, step=0.1, format="%.1f")
+        tolerans = _fc.slider("Tolerans (±ft)", min_value=0.1, max_value=2.0, value=0.3, step=0.1)
+        tur_sec = _fd.selectbox("Kategori", kategori_opsiyonlari)
+        ara_btn = _fe.button("🔍 Ara", type="primary", width="stretch")
+
+        if ara_btn:
+            filtre = [
+                satir for satir in arama_kaynaklari
+                if tur_sec == "Tümü" or satir["tur"] == tur_sec
+            ]
+            eslesmeler = []
+            for row in filtre:
+                g, u = float(row["ft1"]), float(row["ft2"])
+                fark = min(
+                    ((g - hedef_g) ** 2 + (u - hedef_u) ** 2) ** 0.5,
+                    ((g - hedef_u) ** 2 + (u - hedef_g) ** 2) ** 0.5,
                 )
-                if _log_durum2 == "indiriliyor":
-                    st.info(f"⏳ Stok güncelleniyor… Son deneme: {_son_indirme}")
-                elif _log_durum2.startswith("HATA:"):
-                    st.caption(f"⚠️ Otomatik güncelleme başarısız ({_son_indirme}) — mevcut stok kullanılıyor.")
+                if fark <= tolerans * 1.41:
+                    eslesmeler.append({
+                        "KOD": row["kod"],
+                        "CM": row["cm"],
+                        "FT": f"{g:.2f} x {u:.2f}",
+                        "Tür": row["tur"],
+                        "Yüklü": row["loaded_store_count"],
+                        "Mağazalar": row["loaded_stores"],
+                        "Not": row["note"],
+                        "Δ (ft)": round(fark, 2),
+                    })
+            eslesmeler.sort(key=lambda x: x["Δ (ft)"])
+            st.session_state.ara_sonuclari = eslesmeler
+
+        if st.session_state.ara_sonuclari:
+            eslesmeler = st.session_state.ara_sonuclari
+            if ara_btn:
+                if eslesmeler:
+                    st.success(f"**{len(eslesmeler)} sonuç** — {hedef_g}x{hedef_u} ft, ±{tolerans} ft")
                 else:
-                    st.caption(f"Son başarılı indirme: {_son_indirme}")
+                    st.warning("Eşleşen ürün bulunamadı. Toleransı artırın.")
 
-                st.caption(
-                    f"Stokta **{len(df_stok)}** ürün  —  "
-                    f"Vintage: {len(df_stok[df_stok.tur=='Vintage'])}  |  "
-                    f"Door Mat: {len(df_stok[df_stok.tur=='Door Mat'])}  |  "
-                    f"Kilim: {len(df_stok[df_stok.tur=='Kilim'])}  —  "
-                    f"📅 Dosya güncellenme: {_son_guncelleme}"
+            if eslesmeler:
+                st.dataframe(
+                    pd.DataFrame(eslesmeler),
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "KOD": st.column_config.TextColumn("KOD", width="small"),
+                        "CM": st.column_config.TextColumn("CM", width="small"),
+                        "FT": st.column_config.TextColumn("FT", width="medium"),
+                        "Tür": st.column_config.TextColumn("Tür", width="small"),
+                        "Yüklü": st.column_config.NumberColumn("Yüklü", format="%d", width="small"),
+                        "Mağazalar": st.column_config.TextColumn("Mağazalar", width="medium"),
+                        "Not": st.column_config.TextColumn("Not", width="medium"),
+                        "Δ (ft)": st.column_config.NumberColumn("Δ ft", format="%.2f", width="small"),
+                    },
                 )
-                st.divider()
 
-                _fa, _fb, _fc, _fd, _fe = st.columns([2, 2, 2, 2, 1])
-                hedef_g  = _fa.number_input("Genişlik (ft)", min_value=0.1, max_value=30.0, value=2.0, step=0.1, format="%.1f")
-                hedef_u  = _fb.number_input("Uzunluk (ft)",  min_value=0.1, max_value=50.0, value=3.0, step=0.1, format="%.1f")
-                tolerans = _fc.slider("Tolerans (±ft)", min_value=0.1, max_value=2.0, value=0.3, step=0.1)
-                tur_sec  = _fd.selectbox("Kategori", ["Tümü", "Vintage", "Door Mat", "Kilim"])
-                ara_btn  = _fe.button("🔍 Ara", type="primary", width="stretch")
+                if st.session_state.pcloud_token:
+                    st.divider()
+                    st.markdown("#### 🏪 Mağazada Kontrol Et")
+                    token_t4 = st.session_state.pcloud_token
+                    host_t4 = st.session_state.get("pcloud_host", "https://api.pcloud.com")
 
-                if ara_btn:
-                    filtre = df_stok if tur_sec == "Tümü" else df_stok[df_stok.tur == tur_sec]
-                    eslesmeler = []
-                    for _, row in filtre.iterrows():
-                        g, u = float(row.ft1), float(row.ft2)
-                        fark = min(
-                            ((g-hedef_g)**2 + (u-hedef_u)**2)**0.5,
-                            ((g-hedef_u)**2 + (u-hedef_g)**2)**0.5
+                    with st.spinner("Mağazalar yükleniyor..."):
+                        _, magazalar = _magazalari_otomatik_bul(token_t4, host_t4)
+
+                    mag_root_id = st.session_state.get("magazalar_root_id")
+                    if mag_root_id and not magazalar:
+                        with st.spinner("Manuel köke bakılıyor..."):
+                            _, magazalar = _klasorleri_getir(token_t4, host_t4, mag_root_id)
+
+                    if not magazalar:
+                        st.warning("Mağaza klasörleri bulunamadı.")
+                        st.caption("Tab 1'de 01-VİNTAGE RUG klasörüne gidin → **📌** butonuna basın.")
+                    else:
+                        _mt4c1, _mt4c2 = st.columns([5, 1])
+                        secilen_magaza_adi = _mt4c1.selectbox(
+                            "Mağaza seç",
+                            options=[m["ad"] for m in magazalar],
+                            index=None,
+                            placeholder="Bir mağaza seçin...",
+                            key="magaza_sec",
                         )
-                        if fark <= tolerans * 1.41:
-                            eslesmeler.append({
-                                "KOD": str(row.kod),
-                                "CM":  f"{int(row.cm1)}x{int(row.cm2)}" if row.cm1 and row.cm2 else "",
-                                "FT":  f"{row.ft1:.2f} x {row.ft2:.2f}",
-                                "Tür": row.tur,
-                                "Δ (ft)": round(fark, 2),
-                            })
-                    eslesmeler.sort(key=lambda x: x["Δ (ft)"])
-                    st.session_state.ara_sonuclari = eslesmeler
-
-                import pandas as pd
-                if st.session_state.ara_sonuclari:
-                    eslesmeler = st.session_state.ara_sonuclari
-                    if ara_btn:
-                        if eslesmeler:
-                            st.success(f"**{len(eslesmeler)} sonuç** — {hedef_g}x{hedef_u} ft, ±{tolerans} ft")
-                        else:
-                            st.warning("Eşleşen halı bulunamadı. Toleransı artırın.")
-
-                    if eslesmeler:
-                        st.dataframe(
-                            pd.DataFrame(eslesmeler),
+                        magaza_ara_btn = _mt4c2.button(
+                            "🔍 Ara",
+                            key="magaza_ara_btn",
+                            type="primary",
                             width="stretch",
-                            hide_index=True,
-                            column_config={
-                                "KOD":    st.column_config.TextColumn("KOD", width="small"),
-                                "CM":     st.column_config.TextColumn("CM", width="small"),
-                                "FT":     st.column_config.TextColumn("FT", width="medium"),
-                                "Tür":    st.column_config.TextColumn("Tür", width="small"),
-                                "Δ (ft)": st.column_config.NumberColumn("Δ ft", format="%.2f", width="small"),
-                            }
+                            disabled=not secilen_magaza_adi,
                         )
 
-                        if st.session_state.pcloud_token:
-                            st.divider()
-                            st.markdown("#### 🏪 Mağazada Kontrol Et")
-                            token_t4 = st.session_state.pcloud_token
-                            host_t4  = st.session_state.get("pcloud_host", "https://api.pcloud.com")
+                        if magaza_ara_btn and secilen_magaza_adi:
+                            magaza_id = next(m["id"] for m in magazalar if m["ad"] == secilen_magaza_adi)
+                            with st.spinner(f"{secilen_magaza_adi} taranıyor..."):
+                                magaza_kodlar = _magaza_tum_kodlar(token_t4, host_t4, magaza_id)
 
-                            with st.spinner("Mağazalar yükleniyor..."):
-                                _, magazalar = _magazalari_otomatik_bul(token_t4, host_t4)
-
-                            mag_root_id = st.session_state.get("magazalar_root_id")
-                            if mag_root_id and not magazalar:
-                                with st.spinner("Manuel köke bakılıyor..."):
-                                    _, magazalar = _klasorleri_getir(token_t4, host_t4, mag_root_id)
-
-                            if not magazalar:
-                                st.warning("Mağaza klasörleri bulunamadı.")
-                                st.caption("Tab 1'de 01-VİNTAGE RUG klasörüne gidin → **📌** butonuna basın.")
+                            if not magaza_kodlar:
+                                st.warning(f"{secilen_magaza_adi} içinde ürün bulunamadı.")
                             else:
-                                _mt4c1, _mt4c2 = st.columns([5, 1])
-                                secilen_magaza_adi = _mt4c1.selectbox(
-                                    "Mağaza seç",
-                                    options=[m["ad"] for m in magazalar],
-                                    index=None,
-                                    placeholder="Bir mağaza seçin...",
-                                    key="magaza_sec"
+                                kontrol = [
+                                    {**e, "Mağazada": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
+                                    for e in eslesmeler
+                                ]
+                                var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağazada"])
+                                st.success(f"**{secilen_magaza_adi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
+                                st.dataframe(
+                                    pd.DataFrame(kontrol),
+                                    width="stretch",
+                                    hide_index=True,
                                 )
-                                magaza_ara_btn = _mt4c2.button(
-                                    "🔍 Ara", key="magaza_ara_btn",
-                                    type="primary", width="stretch",
-                                    disabled=not secilen_magaza_adi
-                                )
-
-                                if magaza_ara_btn and secilen_magaza_adi:
-                                    magaza_id = next(m["id"] for m in magazalar if m["ad"] == secilen_magaza_adi)
-                                    with st.spinner(f"{secilen_magaza_adi} taranıyor..."):
-                                        magaza_kodlar = _magaza_tum_kodlar(token_t4, host_t4, magaza_id)
-
-                                    if not magaza_kodlar:
-                                        st.warning(f"{secilen_magaza_adi} içinde ürün bulunamadı.")
-                                    else:
-                                        kontrol = [{**e, "Mağazada": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
-                                                   for e in eslesmeler]
-                                        var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağazada"])
-                                        st.success(f"**{secilen_magaza_adi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
-                                        st.dataframe(
-                                            pd.DataFrame(kontrol),
-                                            width="stretch",
-                                            hide_index=True,
-                                        )
-                elif ara_btn:
-                    st.warning("Eşleşen halı bulunamadı.")
+        elif ara_btn:
+            st.warning("Eşleşen ürün bulunamadı.")
 
     _tab5_ara()
 

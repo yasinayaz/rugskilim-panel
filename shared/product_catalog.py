@@ -52,6 +52,10 @@ def _rest_url() -> str:
     return f"{_base_url()}/rest/v1/{_table_name()}"
 
 
+def _supabase_ready() -> bool:
+    return bool(_env(SUPABASE_URL_ENV) and _env(SUPABASE_SERVICE_KEY_ENV))
+
+
 class ProductCatalog:
     def list_products(self) -> list[dict]:
         import requests
@@ -138,16 +142,18 @@ class ProductCatalog:
             if _clean(item.get("product_code"))
         }
         merged = []
+        merged_codes: set[str] = set()
 
         for source in source_products:
             code = _clean(source.get("product_code"))
             if not code:
                 continue
             current = existing_map.get(code, {})
+            merged_codes.add(code)
             merged.append({
                 "product_id": current.get("product_id") or source.get("product_id"),
                 "product_code": code,
-                "category": current.get("category") or source.get("category") or "",
+                "category": source.get("category") or current.get("category") or "",
                 "width_cm": source.get("width_cm") or "",
                 "length_cm": source.get("length_cm") or "",
                 "size_cm": source.get("size_cm") or "",
@@ -158,18 +164,18 @@ class ProductCatalog:
                 "status": "sold" if _clean(source.get("status")).lower() == "sold" else _clean(current.get("status")) or "active",
                 "source_tab": source.get("source_tab") or "",
                 "source_row": source.get("source_row") or "",
-                "sold_at": current.get("sold_at") or "",
-                "sold_site": current.get("sold_site") or "",
-                "customer_name": current.get("customer_name") or "",
-                "customer_phone": current.get("customer_phone") or "",
-                "customer_address": current.get("customer_address") or "",
-                "customer_contact_country": current.get("customer_contact_country") or "",
-                "note": current.get("note") or source.get("note") or "",
+                "sold_at": source.get("sold_at") or current.get("sold_at") or "",
+                "sold_site": source.get("sold_site") or current.get("sold_site") or "",
+                "customer_name": source.get("customer_name") or current.get("customer_name") or "",
+                "customer_phone": source.get("customer_phone") or current.get("customer_phone") or "",
+                "customer_address": source.get("customer_address") or current.get("customer_address") or "",
+                "customer_contact_country": source.get("customer_contact_country") or current.get("customer_contact_country") or "",
+                "note": source.get("note") or current.get("note") or "",
                 "updated_at": _now_str(),
             })
 
         for code, current in existing_map.items():
-            if code in {_clean(p.get("product_code")) for p in merged}:
+            if code in merged_codes:
                 continue
             if _clean(current.get("source_tab")).lower() == "manual" or _clean(current.get("status")).lower() == "sold":
                 current["updated_at"] = _now_str()
