@@ -56,6 +56,9 @@ RENK_TANIMLARI = {
     "none": None,
 }
 
+QUEUE_SHEET_MIN_ROWS = 5000
+QUEUE_SHEET_MIN_COLS = 37
+
 # Kolon indeksleri (1-tabanlı, gspread için)
 KOL = {
     "urun_id":          1,
@@ -396,8 +399,8 @@ class SheetsKatmani:
                             "Worksheet oluşturma",
                             self._sp.add_worksheet,
                             title=self.sheet_tab,
-                            rows=1000,
-                            cols=max(len(BASLIK_SATIRI), 37),
+                            rows=QUEUE_SHEET_MIN_ROWS,
+                            cols=max(len(BASLIK_SATIRI), QUEUE_SHEET_MIN_COLS),
                         )
                         _yeniden_dene("Başlık satırını yazma", self._sheet.update, [BASLIK_SATIRI], "A1")
                         print(f"[Sheets:{self.store_id}] ✓ Eksik sekme otomatik oluşturuldu: {self.sheet_tab}")
@@ -417,6 +420,43 @@ class SheetsKatmani:
 
     def _satir_haritasini_gecersiz_kil(self):
         self._satir_map_cache = None
+
+    def _worksheet_kapasitesini_guvenceye_al(
+        self,
+        ws,
+        hedef_satir: int | None = None,
+        hedef_kolon: int | None = None,
+        satir_bufferi: int = 200,
+    ):
+        """
+        Hedef yazma araligi mevcut grid'i asiyorsa worksheet'i onceden buyutur.
+        Google Sheets 1000 satirlik varsayilan limitte takilmasin diye yazmadan once cagrilir.
+        """
+        yeni_satir_sayisi = ws.row_count
+        yeni_kolon_sayisi = ws.col_count
+        degisti = False
+
+        if hedef_satir and hedef_satir > ws.row_count:
+            yeni_satir_sayisi = max(hedef_satir + satir_bufferi, ws.row_count + satir_bufferi)
+            degisti = True
+
+        if hedef_kolon and hedef_kolon > ws.col_count:
+            yeni_kolon_sayisi = hedef_kolon
+            degisti = True
+
+        if not degisti:
+            return
+
+        _yeniden_dene(
+            "Worksheet kapasitesini buyutme",
+            ws.resize,
+            rows=yeni_satir_sayisi,
+            cols=yeni_kolon_sayisi,
+        )
+        print(
+            f"[Sheets:{self.store_id}] ✓ Worksheet buyutuldu: "
+            f"rows={ws.row_count}->{yeni_satir_sayisi}, cols={ws.col_count}->{yeni_kolon_sayisi}"
+        )
 
     def _satir_yuksekliklerini_sabitle(self, satir_nolari: list[int], pixel_size: int = 21):
         """Verilen satırların yüksekliğini PatchArts görünümüyle aynı olacak şekilde sabitler."""
@@ -597,6 +637,11 @@ class SheetsKatmani:
         # Bunun yerine: tüm satırları çek → son satır + 1 = hedef → update() ile doğrudan yaz.
         tum = _yeniden_dene("Yeni satır için son indeks okuma", ws.get_all_values)
         satir_no = len(tum) + 1
+        self._worksheet_kapasitesini_guvenceye_al(
+            ws,
+            hedef_satir=satir_no,
+            hedef_kolon=len(satir),
+        )
         _yeniden_dene("Yeni ürün satırı yazma", ws.update, [satir], f"A{satir_no}")
         self._satir_haritasini_gecersiz_kil()
 
@@ -838,6 +883,12 @@ class SheetsKatmani:
         if yeni_satirlar:
             tum = _yeniden_dene("CSV yeni satırlar için son indeks okuma", ws.get_all_values)
             baslangic_satiri = len(tum) + 1
+            bitis_satiri = baslangic_satiri + len(yeni_satirlar) - 1
+            self._worksheet_kapasitesini_guvenceye_al(
+                ws,
+                hedef_satir=bitis_satiri,
+                hedef_kolon=len(yeni_satirlar[0]) if yeni_satirlar else len(BASLIK_SATIRI),
+            )
             _yeniden_dene("CSV yeni satırları yazma", ws.update, yeni_satirlar, f"A{baslangic_satiri}")
             eklenen = len(yeni_satirlar)
             self._satir_haritasini_gecersiz_kil()
@@ -924,6 +975,13 @@ class SheetsKatmani:
                 print(f"[Sheets:{self.store_id}] ✓ Eksik kolonlar eklendi: {eksik}")
             else:
                 print(f"[Sheets:{self.store_id}] Başlık zaten güncel.")
+
+        self._worksheet_kapasitesini_guvenceye_al(
+            ws,
+            hedef_satir=QUEUE_SHEET_MIN_ROWS,
+            hedef_kolon=max(len(BASLIK_SATIRI), QUEUE_SHEET_MIN_COLS),
+            satir_bufferi=0,
+        )
         self._kolon_formatlarini_normallestir()
 
 
