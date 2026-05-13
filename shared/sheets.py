@@ -238,6 +238,26 @@ def _tum_satirlar_al(ws) -> list:
     return [dict(zip(temiz, satir)) for satir in degerler[1:] if any(satir)]
 
 
+def _satirda_veri_var_mi(satir) -> bool:
+    return any(str(hucre or "").strip() for hucre in (satir or []))
+
+
+def _son_dolu_satir_no(ws) -> int:
+    """
+    Başlık satırı dahil worksheet'teki son gerçekten dolu satırı döndürür.
+    Sadece biçimlendirilmiş ya da formülden boş string dönen satırlar dolu sayılmaz.
+    """
+    tum = _yeniden_dene("Son dolu satır için tüm satırları okuma", ws.get_all_values)
+    for idx in range(len(tum) - 1, -1, -1):
+        if _satirda_veri_var_mi(tum[idx]):
+            return idx + 1
+    return 1
+
+
+def _siradaki_yazilabilir_satir_no(ws) -> int:
+    return max(_son_dolu_satir_no(ws) + 1, 2)
+
+
 def _basliklar_al(ws) -> list:
     return _yeniden_dene("Başlık satırını okuma", ws.row_values, 1)
 
@@ -634,9 +654,8 @@ class SheetsKatmani:
                 satir[kolon - 1] = deger
 
         # append_row table-detection'ı bozuk olduğunda yanlış kolona yazıyor.
-        # Bunun yerine: tüm satırları çek → son satır + 1 = hedef → update() ile doğrudan yaz.
-        tum = _yeniden_dene("Yeni satır için son indeks okuma", ws.get_all_values)
-        satir_no = len(tum) + 1
+        # Bunun yerine ilk gerçekten boş satırı bulup update() ile doğrudan yaz.
+        satir_no = _siradaki_yazilabilir_satir_no(ws)
         self._worksheet_kapasitesini_guvenceye_al(
             ws,
             hedef_satir=satir_no,
@@ -881,8 +900,7 @@ class SheetsKatmani:
 
         eklenen = 0
         if yeni_satirlar:
-            tum = _yeniden_dene("CSV yeni satırlar için son indeks okuma", ws.get_all_values)
-            baslangic_satiri = len(tum) + 1
+            baslangic_satiri = _siradaki_yazilabilir_satir_no(ws)
             bitis_satiri = baslangic_satiri + len(yeni_satirlar) - 1
             self._worksheet_kapasitesini_guvenceye_al(
                 ws,

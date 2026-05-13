@@ -53,6 +53,12 @@ if _env_path.exists():
             # .env, ayni terminal oturumunda kalmis eski env degerlerini ezsin.
             os.environ[_k.strip()] = _v.strip()
 
+try:
+    from shared.product_sheet_sync import start_product_sheet_sync_worker as _start_product_sheet_sync_worker
+    _start_product_sheet_sync_worker(interval_seconds=30)
+except Exception:
+    pass
+
 st.set_page_config(
     page_title="RugsKilim Panel",
     page_icon="🪄",
@@ -858,6 +864,7 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
 
 def _urunleri_yukle(force_source_sync: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
+    from shared.product_sheet_sync import start_product_sheet_sync_worker, sync_product_sheet
     stok = _stok_dosya_yolu()
     kaynak = []
     if stok.exists():
@@ -870,6 +877,12 @@ def _urunleri_yukle(force_source_sync: bool = False):
 
     try:
         mevcut = ProductCatalog().list_products() if _supabase_ready() else _panel_urunleri_yerden_yukle()
+        if _supabase_ready():
+            start_product_sheet_sync_worker(interval_seconds=30)
+            try:
+                sync_product_sheet(products=mevcut, throttle_seconds=45)
+            except Exception:
+                pass
     except Exception:
         mevcut = _panel_urunleri_yerden_yukle()
 
@@ -905,9 +918,11 @@ def _urunleri_yukle(force_source_sync: bool = False):
 
 def _urunleri_kaydet(products: list[dict]):
     from shared.product_catalog import ProductCatalog, _supabase_ready
+    from shared.product_sheet_sync import sync_product_sheet
 
     if _supabase_ready():
         ProductCatalog().upsert_products(products)
+        sync_product_sheet(force=True)
     else:
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", products)
         st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
@@ -1145,6 +1160,8 @@ def _sheet_renk_durumu(klasor_adi: str):
         return None
     if kod in _manuel_kirmizi_kodlar():
         return "red"
+    if kod in _magaza_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
+        return "green"
     return st.session_state.sheet_renk_durumlari.get(kod)
 
 
@@ -1154,6 +1171,8 @@ def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str):
     kod = _klasor_urun_kodu_al(klasor_adi)
     if kod and kod in _manuel_kirmizi_kodlar():
         return "red"
+    if kod and kod in _magaza_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
+        return "green"
     kid = str(klasor_id or "").strip()
     if kid and kid in st.session_state.klasor_id_durumlari:
         return st.session_state.klasor_id_durumlari.get(kid)
@@ -1196,6 +1215,12 @@ def _klasor_bloklu_mu(klasor_adi: str) -> bool:
     return bool(kod and kod in _manuel_kirmizi_kodlar())
 
 
+def _secili_item_bloklu_mu(item: dict) -> bool:
+    if not item.get("is_product_folder", True):
+        return False
+    return _klasor_bloklu_mu(item.get("ad", ""))
+
+
 def _global_kirmizi_kodlari_yenile():
     try:
         from shared.store_manager import tum_magazalar as _tum_magazalar
@@ -1232,6 +1257,43 @@ def _global_kirmizi_cache_bayatti(ttl_sn: int = 300) -> bool:
         return True
 
 
+def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False) -> set[str]:
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return set()
+
+    cache_key = f"loaded_codes::{store_id}"
+    ts_key = f"{cache_key}::ts"
+    if not force:
+        try:
+            son_okuma = float(st.session_state.get(ts_key) or 0)
+        except Exception:
+            son_okuma = 0
+        if son_okuma and (_time.time() - son_okuma) <= 60:
+            return set(st.session_state.get(cache_key) or [])
+
+    try:
+        envanter = _envanter_cache_yukle()
+    except Exception:
+        envanter = {"stores": {}}
+
+    store_data = (envanter.get("stores") or {}).get(store_id) or {}
+    urunler = store_data.get("urunler") or {}
+    yuklu_kodlar = set()
+    for raw_code, urun in urunler.items():
+        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+        if not kod or _urun_kodu_bloklu_mu(kod):
+            continue
+        renk = str((urun or {}).get("renk", "")).strip().lower()
+        durum = str((urun or {}).get("status", "")).strip().lower()
+        if renk == "green" or durum == "done":
+            yuklu_kodlar.add(kod)
+
+    st.session_state[cache_key] = sorted(yuklu_kodlar)
+    st.session_state[ts_key] = _time.time()
+    return yuklu_kodlar
+
+
 def _magaza_renk_cache_yenile(store_id: str):
     from shared.sheets import SheetsKatmani as _SK_REFRESH
 
@@ -1248,6 +1310,7 @@ def _magaza_renk_cache_yenile(store_id: str):
         and _renkler_refresh.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
     }
     st.session_state.sheet_renk_cache_ts = _time.time()
+    _magaza_yuklu_kodlari_al(store_id, force=True)
     if _global_kirmizi_cache_bayatti():
         _global_kirmizi_kodlari_yenile()
     return _satirlar_refresh, _renkler_refresh
@@ -1656,8 +1719,32 @@ def _magaza_tum_kodlar(token, host, magaza_id):
         except: continue
     return set()
 
-@st.cache_data(ttl=3600, show_spinner=False)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _klasor_urun_klasoru_mu(token, host, klasor_id):
+    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
+        try:
+            r = httpx.get(
+                f"{h}/listfolder",
+                params={"auth": token, "folderid": klasor_id},
+                timeout=15,
+            )
+            d = r.json()
+            if d.get("result") != 0:
+                continue
+            contents = d.get("metadata", {}).get("contents", []) or []
+            has_subfolders = any(i.get("isfolder") for i in contents)
+            has_files = any(not i.get("isfolder") for i in contents)
+            if has_subfolders:
+                return False
+            return has_files
+        except Exception:
+            continue
+    return False
+
 def _resimleri_getir(token, host, klasor_id):
+    # pCloud getfilelink gecici URL uretir; bunlari cache'lemek bir sure sonra
+    # kirik gorsellere neden olur. Onizleme her acildiginda taze link aliyoruz.
     try:
         r = httpx.get(f"{host}/listfolder",
                       params={"auth": token, "folderid": klasor_id},
@@ -1838,12 +1925,12 @@ with tab1:
             def _ai_kuyruga_ekle():
                 bloklu_secimler = [
                     k for k in st.session_state.secilen
-                    if _klasor_bloklu_mu(k.get("ad", ""))
+                    if _secili_item_bloklu_mu(k)
                 ]
                 if bloklu_secimler:
                     st.session_state.secilen = [
                         k for k in st.session_state.secilen
-                        if not _klasor_bloklu_mu(k.get("ad", ""))
+                        if not _secili_item_bloklu_mu(k)
                     ]
                     st.error("SATILANLAR veya silindi olarak işaretli ürünler AI kuyruğuna gönderilemez.")
                     st.rerun()
@@ -1993,10 +2080,9 @@ with tab1:
                 st.session_state.son_islem_raporu = islem_raporu
                 if basarili:
                     st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
-                for _item in st.session_state.secilen:
-                    _chk_key = f"chk_form_{_item['id']}"
-                    if _chk_key in st.session_state:
-                        st.session_state[_chk_key] = False
+                st.session_state["_reset_checkbox_ids"] = [
+                    str(_item["id"]) for _item in st.session_state.secilen
+                ]
                 st.session_state.secilen = []
                 st.session_state["_secim_limit_hatasi"] = None
                 st.rerun(scope="app")
@@ -2046,7 +2132,7 @@ with tab1:
                 ]
 
                 if st.session_state.get(chk_key):
-                    if _klasor_bloklu_mu(item.get("ad", "")):
+                    if _secili_item_bloklu_mu(item):
                         st.session_state[chk_key] = False
                         return
                     if len(secimler) >= 15:
@@ -2139,6 +2225,9 @@ with tab1:
 
                 _mevcut_secimler = list(st.session_state.secilen)
                 _bu_sayfa_ids = {str(k["id"]) for k in klasorler}
+                _reset_checkbox_ids = {
+                    str(_id) for _id in st.session_state.pop("_reset_checkbox_ids", [])
+                }
                 _diger_sayfalar = [
                     s for s in _mevcut_secimler
                     if str(s.get("id")) not in _bu_sayfa_ids
@@ -2146,11 +2235,11 @@ with tab1:
                 _eski_secim_sayisi = len(_mevcut_secimler)
                 _diger_sayfalar = [
                     s for s in _diger_sayfalar
-                    if not _klasor_bloklu_mu(s.get("ad", ""))
+                    if not _secili_item_bloklu_mu(s)
                 ]
                 st.session_state.secilen = [
                     s for s in _mevcut_secimler
-                    if not _klasor_bloklu_mu(s.get("ad", ""))
+                    if not _secili_item_bloklu_mu(s)
                 ]
                 if len(st.session_state.secilen) < _eski_secim_sayisi:
                     st.warning("SATILANLAR listesinde olan ürünler seçimden çıkarıldı ve AI kuyruğuna gönderilmez.")
@@ -2167,12 +2256,14 @@ with tab1:
                             secilen_ids = {s["id"] for s in st.session_state.secilen}
                             _satir_meta = []
                             for k in klasorler:
+                                is_product_folder = _klasor_urun_klasoru_mu(token, host, k["id"])
+                                row_item = {**k, "is_product_folder": is_product_folder}
                                 _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
                                 urun_kodu = _klasor_urun_kodu_al(k["ad"])
-                                satilmis_global = _klasor_bloklu_mu(k["ad"])
-                                kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
-                                sheet_renk = _sheet_renk_durumu_klasor(k["id"], k["ad"])
+                                satilmis_global = is_product_folder and _klasor_bloklu_mu(k["ad"])
+                                kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu) if is_product_folder else None
+                                sheet_renk = _sheet_renk_durumu_klasor(k["id"], k["ad"]) if is_product_folder else None
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
                                 if sheet_renk == "red":
                                     _ikon = "🔴"
@@ -2187,7 +2278,7 @@ with tab1:
                                 else:
                                     _ikon = ""
                                 _satir_meta.append({
-                                    "item": k,
+                                    "item": row_item,
                                     "chk_key": _chk_key,
                                     "zaten_secili": zaten_secili,
                                     "satilmis_global": satilmis_global,
@@ -2206,6 +2297,8 @@ with tab1:
                                             unsafe_allow_html=True,
                                         )
                                     else:
+                                        if str(k["id"]) in _reset_checkbox_ids:
+                                            st.session_state[_row["chk_key"]] = False
                                         if _row["chk_key"] not in st.session_state:
                                             st.session_state[_row["chk_key"]] = _row["zaten_secili"]
                                         st.checkbox(
@@ -2344,6 +2437,7 @@ with tab2:
             from shared.sheets import SheetsKatmani as _SK2
             _sk2 = _SK2(st.session_state.hedef_magaza_id)
             satirlar = _sk2.tum_satirlar_al()
+            _yuklu_kodlar = _magaza_yuklu_kodlari_al(st.session_state.hedef_magaza_id)
             _renk_durumlari = {
                 (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
                 for k, v in (st.session_state.get("sheet_renk_durumlari") or _sk2.urun_renk_durumlari_al()).items()
@@ -2363,6 +2457,8 @@ with tab2:
                         renk = _renk_durumlari.get(kod)
                         if _urun_kodu_bloklu_mu(kod):
                             return "deleted"
+                        if kod in _yuklu_kodlar:
+                            return "done"
                         if renk == "green":
                             return "done"
                         if renk == "yellow":
@@ -2469,7 +2565,7 @@ with tab3:
         st.markdown(f"**{urun.get('product_code', '')}**")
         _ef1, _ef2 = st.columns(2)
         _yeni_kod = _ef1.text_input("Ürün Kodu", value=urun.get("product_code", ""))
-        _kat_ops = ["", "Area Rug", "Runner", "Doormat"]
+        _kat_ops = ["", "Area", "Runner", "Doormat"]
         _mevcut_kat = urun.get("category", "") or ""
         _yeni_kat = _ef2.selectbox(
             "Kategori", _kat_ops,
@@ -2489,6 +2585,7 @@ with tab3:
         _es1, _es2, _es3 = st.columns([2, 2, 1])
         if _es1.button("Kaydet", type="primary", use_container_width=True):
             from shared.product_catalog import ProductCatalog as _PC
+            from shared.product_sheet_sync import sync_product_sheet as _sync_product_sheet
             import requests as _req, os as _os
             _updated = {
                 **urun,
@@ -2508,7 +2605,7 @@ with tab3:
             if _new_code and _new_code != _old_code:
                 _supa_url = _os.environ.get("SUPABASE_URL", "").rstrip("/")
                 _supa_key = _os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-                _req.patch(
+                _rename_resp = _req.patch(
                     f"{_supa_url}/rest/v1/products",
                     headers={"apikey": _supa_key, "Authorization": f"Bearer {_supa_key}",
                              "Content-Type": "application/json", "Prefer": "return=minimal"},
@@ -2516,8 +2613,10 @@ with tab3:
                     json={"product_code": _new_code},
                     timeout=30,
                 )
+                _rename_resp.raise_for_status()
                 _updated["product_code"] = _new_code
             _PC().upsert_products([_updated])
+            _sync_product_sheet(force=True)
             st.success("Kaydedildi.")
             st.rerun()
         if _es2.button("İptal", use_container_width=True):
@@ -2533,15 +2632,18 @@ with tab3:
             st.warning(f"**{urun.get('product_code')}** silinecek. Emin misiniz?")
             _so1, _so2 = st.columns(2)
             if _so1.button("Evet, sil", type="primary", use_container_width=True):
+                from shared.product_sheet_sync import sync_product_sheet as _sync_product_sheet
                 import requests as _req2, os as _os2
                 _supa_url2 = _os2.environ.get("SUPABASE_URL", "").rstrip("/")
                 _supa_key2 = _os2.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-                _req2.delete(
+                _delete_resp = _req2.delete(
                     f"{_supa_url2}/rest/v1/products",
                     headers={"apikey": _supa_key2, "Authorization": f"Bearer {_supa_key2}"},
                     params={"product_code": f"eq.{urun.get('product_code')}"},
                     timeout=30,
                 )
+                _delete_resp.raise_for_status()
+                _sync_product_sheet(force=True)
                 st.session_state.pop("_sil_onay", None)
                 st.success("Silindi.")
                 st.rerun()
@@ -2633,7 +2735,7 @@ with tab3:
                     _f1.markdown(_zorunlu_label("Ürün kodu"), unsafe_allow_html=True)
                     _f1.text_input("Ürün kodu", key="nuf_kod", label_visibility="collapsed")
                     _f2.markdown(_zorunlu_label("Kategori"), unsafe_allow_html=True)
-                    _f2.selectbox("Kategori", ["Seçiniz", "Area", "Runner", "DoorMat"], key="nuf_kategori", label_visibility="collapsed")
+                    _f2.selectbox("Kategori", ["Seçiniz", "Area", "Runner", "Doormat"], key="nuf_kategori", label_visibility="collapsed")
                     _f3.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
                     _f3.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
                     _f4.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
@@ -3353,14 +3455,19 @@ with tab4:
                                             "template": _nt2,
                                             "active": _na2,
                                         })
-                                        from shared.sheets import _client as _gc_fn, BASLIK_SATIRI as _BS
+                                        from shared.sheets import (
+                                            _client as _gc_fn,
+                                            BASLIK_SATIRI as _BS,
+                                            QUEUE_SHEET_MIN_COLS as _QSMC,
+                                            QUEUE_SHEET_MIN_ROWS as _QSMR,
+                                        )
                                         _gc2 = _gc_fn()
                                         _sheet_key = (_ngsid.strip() or _kaynak_magaza.get("google_sheet_id")
                                                       or os.environ.get("GOOGLE_SHEET_ID", ""))
                                         _sp2 = _gc2.open_by_key(_sheet_key)
                                         _mevcut_tab = [w.title for w in _sp2.worksheets()]
                                         if _nid_clean not in _mevcut_tab:
-                                            _ws_new = _sp2.add_worksheet(title=_nid_clean, rows=1000, cols=37)
+                                            _ws_new = _sp2.add_worksheet(title=_nid_clean, rows=_QSMR, cols=_QSMC)
                                             _ws_new.append_row(_BS)
                                         st.success(f"✅ '{_nid_clean}' eklendi.")
                                         st.session_state.ayar_magaza_id = _nid_clean
