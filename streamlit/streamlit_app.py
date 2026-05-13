@@ -240,13 +240,57 @@ button[kind="primary"]:hover {
 }
 
 /* ── Inputs ── */
-.stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] > div {
+.stTextInput input,
+.stNumberInput input,
+.stTextArea textarea,
+.stSelectbox div[data-baseweb="select"] > div,
+.stMultiSelect div[data-baseweb="select"] > div {
   background: var(--bg-1) !important;
   border-color: var(--border) !important;
   color: var(--text-1) !important;
   border-radius: var(--radius) !important;
 }
-.stTextInput input:focus, .stNumberInput input:focus { border-color: var(--accent) !important; }
+.stTextInput input,
+.stNumberInput input,
+.stTextArea textarea {
+  min-height: 42px !important;
+}
+.stTextArea textarea {
+  line-height: 1.45 !important;
+}
+.stSelectbox div[data-baseweb="select"] > div,
+.stMultiSelect div[data-baseweb="select"] > div {
+  min-height: 42px !important;
+  box-shadow: none !important;
+}
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stTextArea textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: none !important;
+}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder,
+.stNumberInput input::placeholder,
+.stSelectbox [data-baseweb="select"] input::placeholder,
+.stMultiSelect [data-baseweb="select"] input::placeholder {
+  color: var(--text-2) !important;
+  -webkit-text-fill-color: var(--text-2) !important;
+}
+.stSelectbox [data-baseweb="select"] span,
+.stMultiSelect [data-baseweb="select"] span,
+.stSelectbox [data-baseweb="select"] div,
+.stMultiSelect [data-baseweb="select"] div {
+  color: var(--text-1) !important;
+}
+.stMultiSelect [data-baseweb="tag"] {
+  background: var(--bg-2) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-1) !important;
+}
+[data-testid="stWidgetLabel"] p {
+  color: var(--text-1) !important;
+}
 
 /* ── Containers / Cards ── */
 [data-testid="stVerticalBlockBorderWrapper"] > div {
@@ -431,6 +475,7 @@ for k, v in [
     ("hedef_magaza_id", "PatchArts"), ("kuyruk_magaza_id", None), ("ayar_magaza_id", None),
     ("tum_magaza_sekmeleri_hazir", False),
     ("urun_formu_acik", False),
+    ("satilan_urun_formu_acik", False),
     ("urun_alt_tab", "liste"),
     ("_secim_limit_hatasi", None),
     ("_kaldirilacak_secim_id", None),
@@ -2757,70 +2802,87 @@ with tab3:
                 satilan_site_opsiyonlari = []
 
             with st.container(border=True):
-                st.markdown("##### Satılan Ürün Ekle")
-                aktif_opsiyonlar = [
-                    f"{u.get('product_code')}  |  {u.get('category') or 'Boş'}  |  {u.get('size_ft') or u.get('size_cm')}"
-                    for u in aktifler
-                ]
-                with st.form("satilan_urun_form", clear_on_submit=False):
-                    st.markdown(_zorunlu_label("Ürün seç"), unsafe_allow_html=True)
-                    secili = st.selectbox(
-                        "Ürün seç",
-                        options=aktif_opsiyonlar,
-                        index=None,
-                        placeholder="Bir aktif ürün seçin...",
-                        key="satilan_urun_form_secimi",
-                        label_visibility="collapsed",
-                    )
-                    _s1, _s2, _s3 = st.columns(3)
-                    _s1.markdown(_zorunlu_label("Satılan site"), unsafe_allow_html=True)
-                    satilan_site = _s1.multiselect(
-                        "Satılan site",
-                        options=satilan_site_opsiyonlari,
-                        placeholder="Bir veya daha fazla mağaza seçin...",
-                        label_visibility="collapsed",
-                    )
-                    musteri_adi = _s2.text_input("Müşteri adı")
-                    satilan_tarih = _s3.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
-                    _s4, _s5 = st.columns(2)
-                    musteri_telefon = _s4.text_input("Telefon")
-                    iletisim_ulke = _s5.text_input("İletişim & ülke")
-                    musteri_adres = st.text_area("Adres", height=90)
-                    satilan_not = st.text_input("Not")
-                    submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
+                _sold_hdr, _sold_btn = st.columns([6, 1.4], vertical_alignment="center")
+                _sold_hdr.markdown("##### Satılan Ürün Ekle")
+                _sold_hdr.caption(
+                    "Kapalıyken yer kaplamaz, gerektiğinde açıp kayıt girebilirsiniz."
+                    if not st.session_state.satilan_urun_formu_acik
+                    else "Form açık. Kaydettikten sonra otomatik kapanır."
+                )
+                if _sold_btn.button(
+                    "Aç" if not st.session_state.satilan_urun_formu_acik else "Kapat",
+                    key="satilan_urun_form_toggle_btn",
+                    use_container_width=True,
+                ):
+                    st.session_state.satilan_urun_formu_acik = not st.session_state.satilan_urun_formu_acik
+                    st.rerun(scope="fragment")
 
-                if submit_sold:
-                    kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
-                    if not kod:
-                        st.error("Ürün seçimi zorunlu.")
-                    elif not satilan_site:
-                        st.error("Satılan site zorunlu.")
-                    else:
-                        yeni_liste = []
-                        secili_urun = None
-                        for urun in urunler:
-                            if str(urun.get("product_code")) == kod:
-                                copy = dict(urun)
-                                copy["status"] = "sold"
-                                copy["sold_at"] = satilan_tarih.strip() or _time.strftime("%Y-%m-%d %H:%M")
-                                copy["sold_site"] = ", ".join(satilan_site)
-                                copy["customer_name"] = musteri_adi.strip()
-                                copy["customer_phone"] = musteri_telefon.strip()
-                                copy["customer_address"] = musteri_adres.strip()
-                                copy["customer_contact_country"] = iletisim_ulke.strip()
-                                if satilan_not.strip():
-                                    copy["note"] = satilan_not.strip()
-                                copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
-                                secili_urun = copy
-                                yeni_liste.append(copy)
-                            else:
-                                yeni_liste.append(urun)
-                        if secili_urun:
-                            _urunleri_kaydet(yeni_liste)
-                            yuklu = secili_urun.get("loaded_stores") or "Yüklü mağaza bulunamadı."
-                            st.success(f"{kod} satılan ürünlere eklendi.")
-                            st.info(f"Yüklü mağazalar: {yuklu}")
-                            st.rerun()
+                if st.session_state.satilan_urun_formu_acik:
+                    st.divider()
+                    aktif_opsiyonlar = [
+                        f"{u.get('product_code')}  |  {u.get('category') or 'Boş'}  |  {u.get('size_ft') or u.get('size_cm')}"
+                        for u in aktifler
+                    ]
+                    with st.form("satilan_urun_form", clear_on_submit=False):
+                        st.markdown(_zorunlu_label("Ürün seç"), unsafe_allow_html=True)
+                        secili = st.selectbox(
+                            "Ürün seç",
+                            options=aktif_opsiyonlar,
+                            index=None,
+                            placeholder="Bir aktif ürün seçin...",
+                            key="satilan_urun_form_secimi",
+                            label_visibility="collapsed",
+                        )
+                        _s1, _s2, _s3 = st.columns(3)
+                        _s1.markdown(_zorunlu_label("Satılan site"), unsafe_allow_html=True)
+                        satilan_site = _s1.multiselect(
+                            "Satılan site",
+                            options=satilan_site_opsiyonlari,
+                            placeholder="Bir veya daha fazla mağaza seçin...",
+                            label_visibility="collapsed",
+                        )
+                        musteri_adi = _s2.text_input("Müşteri adı")
+                        satilan_tarih = _s3.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
+                        _s4, _s5 = st.columns(2)
+                        musteri_telefon = _s4.text_input("Telefon")
+                        iletisim_ulke = _s5.text_input("İletişim & ülke")
+                        musteri_adres = st.text_area("Adres", height=90)
+                        satilan_not = st.text_input("Not")
+                        submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
+
+                    if submit_sold:
+                        kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
+                        if not kod:
+                            st.error("Ürün seçimi zorunlu.")
+                        elif not satilan_site:
+                            st.error("Satılan site zorunlu.")
+                        else:
+                            yeni_liste = []
+                            secili_urun = None
+                            for urun in urunler:
+                                if str(urun.get("product_code")) == kod:
+                                    copy = dict(urun)
+                                    copy["status"] = "sold"
+                                    copy["sold_at"] = satilan_tarih.strip() or _time.strftime("%Y-%m-%d %H:%M")
+                                    copy["sold_site"] = ", ".join(satilan_site)
+                                    copy["customer_name"] = musteri_adi.strip()
+                                    copy["customer_phone"] = musteri_telefon.strip()
+                                    copy["customer_address"] = musteri_adres.strip()
+                                    copy["customer_contact_country"] = iletisim_ulke.strip()
+                                    if satilan_not.strip():
+                                        copy["note"] = satilan_not.strip()
+                                    copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
+                                    secili_urun = copy
+                                    yeni_liste.append(copy)
+                                else:
+                                    yeni_liste.append(urun)
+                            if secili_urun:
+                                _urunleri_kaydet(yeni_liste)
+                                st.session_state.satilan_urun_formu_acik = False
+                                yuklu = secili_urun.get("loaded_stores") or "Yüklü mağaza bulunamadı."
+                                st.success(f"{kod} satılan ürünlere eklendi.")
+                                st.info(f"Yüklü mağazalar: {yuklu}")
+                                st.rerun()
 
             st.markdown("##### Satılan Ürünler")
             try:
