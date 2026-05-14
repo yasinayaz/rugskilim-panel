@@ -13,6 +13,9 @@ SUPABASE_URL_ENV = "SUPABASE_URL"
 SUPABASE_SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
 SUPABASE_PRODUCTS_TABLE_ENV = "SUPABASE_PRODUCTS_TABLE"
 DEFAULT_PRODUCTS_TABLE = "products"
+CATEGORY_DOORMAT_MAX_AREA_M2 = 0.59
+CATEGORY_RUNNER_RATIO = 3.0
+CM_PER_FOOT = 30.48
 OPTIONAL_PRODUCT_FIELDS = {
     "loaded_store_count",
     "loaded_stores",
@@ -34,6 +37,80 @@ def _now_str() -> str:
 
 def _clean(value) -> str:
     return str(value or "").strip()
+
+
+def _to_float(value):
+    try:
+        if value in ("", None):
+            return None
+        return float(str(value).replace(",", "."))
+    except Exception:
+        return None
+
+
+def _size_parts(size: str) -> tuple[float | None, float | None]:
+    text = _clean(size).replace(",", ".").lower()
+    if "x" not in text:
+        return None, None
+    left, right = text.split("x", 1)
+    return _to_float(left), _to_float(right)
+
+
+def cm_to_ft_value(cm) -> float | None:
+    value = _to_float(cm)
+    if value is None or value <= 0:
+        return None
+    return value / CM_PER_FOOT
+
+
+def derive_category(width_ft=None, length_ft=None, area_m2=None, source_tab: str = "") -> str:
+    tab = _clean(source_tab).upper()
+    area_value = _to_float(area_m2)
+    if area_value is not None and area_value < CATEGORY_DOORMAT_MAX_AREA_M2:
+        return "Doormat"
+    if tab.startswith("DOOR"):
+        return "Doormat"
+
+    short_edge = min(v for v in [_to_float(width_ft), _to_float(length_ft)] if v and v > 0) if any(
+        v and v > 0 for v in [_to_float(width_ft), _to_float(length_ft)]
+    ) else None
+    long_edge = max(v for v in [_to_float(width_ft), _to_float(length_ft)] if v and v > 0) if any(
+        v and v > 0 for v in [_to_float(width_ft), _to_float(length_ft)]
+    ) else None
+    if short_edge and long_edge and (long_edge / short_edge) >= CATEGORY_RUNNER_RATIO:
+        return "Runner"
+    if short_edge and long_edge:
+        return "Area"
+    return ""
+
+
+def derive_category_from_dimensions(
+    width_cm=None,
+    length_cm=None,
+    width_ft=None,
+    length_ft=None,
+    area_m2=None,
+    source_tab: str = "",
+) -> str:
+    width_ft_value = _to_float(width_ft)
+    length_ft_value = _to_float(length_ft)
+    if width_ft_value is None:
+        width_ft_value = cm_to_ft_value(width_cm)
+    if length_ft_value is None:
+        length_ft_value = cm_to_ft_value(length_cm)
+
+    area_value = _to_float(area_m2)
+    width_cm_value = _to_float(width_cm)
+    length_cm_value = _to_float(length_cm)
+    if area_value is None and width_cm_value and length_cm_value:
+        area_value = (width_cm_value * length_cm_value) / 10000
+
+    return derive_category(
+        width_ft=width_ft_value,
+        length_ft=length_ft_value,
+        area_m2=area_value,
+        source_tab=source_tab,
+    )
 
 
 def _headers() -> dict:
@@ -393,16 +470,6 @@ def guess_category(source_tab: str) -> str:
 
 
 def guess_category_by_size(size: str) -> str:
-    """'2,3x7' veya '2.3x7' gibi WxL formatından Runner/Area Rug döndürür."""
-    size = _clean(size).replace(",", ".")
-    if "x" not in size:
-        return ""
-    parts = size.lower().split("x", 1)
-    try:
-        width = float(parts[0])
-        length = float(parts[1])
-    except (ValueError, IndexError):
-        return ""
-    if width <= 0:
-        return ""
-    return "Runner" if (length / width) >= 3 else "Area Rug"
+    """'2,3x7' veya '2.3x7' gibi WxL formatından Runner/Area döndürür."""
+    width, length = _size_parts(size)
+    return derive_category(width_ft=width, length_ft=length)

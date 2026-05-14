@@ -630,6 +630,20 @@ def _site_label(raw: str) -> str:
     return ", ".join(_SOLD_SITE_LABELS.get(p.lower(), p) for p in parts)
 
 
+def _tablo_kopyalama_metni(df, kolonlar: list[str]) -> str:
+    if df is None or getattr(df, "empty", True):
+        return ""
+
+    mevcut_kolonlar = [kolon for kolon in kolonlar if kolon in df.columns]
+    if not mevcut_kolonlar:
+        return ""
+
+    satirlar = ["\t".join(mevcut_kolonlar)]
+    for _, row in df[mevcut_kolonlar].fillna("").astype(str).iterrows():
+        satirlar.append("\t".join(str(row[kolon]) for kolon in mevcut_kolonlar))
+    return "\n".join(satirlar)
+
+
 def _stok_log_yaz(durum: str, detay: str = ""):
     ts = str(int(_time.time()))
     satir = f"{durum}|{ts}"
@@ -702,6 +716,34 @@ def _fmt_size(a, b, digits: int = 1) -> str:
     return ""
 
 
+def _derived_product_fields(width_cm, length_cm) -> dict:
+    from shared.product_catalog import cm_to_ft_value, derive_category_from_dimensions
+
+    width_cm_value = _float_or_none(width_cm)
+    length_cm_value = _float_or_none(length_cm)
+    area_m2 = None
+    if width_cm_value and length_cm_value:
+        area_m2 = (width_cm_value * length_cm_value) / 10000
+    width_ft = cm_to_ft_value(width_cm_value)
+    length_ft = cm_to_ft_value(length_cm_value)
+    return {
+        "width_cm": _decimal_str(width_cm_value, digits=0) if width_cm_value else "",
+        "length_cm": _decimal_str(length_cm_value, digits=0) if length_cm_value else "",
+        "size_cm": _fmt_size(width_cm_value, length_cm_value, digits=0),
+        "area_m2": _decimal_str(area_m2, digits=2) if area_m2 else "",
+        "width_ft": _decimal_str(width_ft, digits=1) if width_ft else "",
+        "length_ft": _decimal_str(length_ft, digits=1) if length_ft else "",
+        "size_ft": _fmt_size(width_ft, length_ft, digits=1),
+        "category": derive_category_from_dimensions(
+            width_cm=width_cm_value,
+            length_cm=length_cm_value,
+            width_ft=width_ft,
+            length_ft=length_ft,
+            area_m2=area_m2,
+        ),
+    }
+
+
 def _kategori_etiketi(value: str) -> str:
     temiz = str(value or "").strip()
     return temiz or "Boş"
@@ -716,7 +758,7 @@ def _product_id_for_code(code: str) -> str:
 def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
     _ = dosya_mtime
     import pandas as pd
-    from shared.product_catalog import guess_category, guess_category_by_size
+    from shared.product_catalog import derive_category_from_dimensions
 
     satilan_kayitlari = {}
     try:
@@ -747,7 +789,14 @@ def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
             ):
                 continue
 
-            category = guess_category_by_size(_fmt_size(width_ft, length_ft, digits=1))
+            category = derive_category_from_dimensions(
+                width_cm=width_cm,
+                length_cm=length_cm,
+                width_ft=width_ft,
+                length_ft=length_ft,
+                area_m2=area_m2,
+                source_tab="SATILANLAR",
+            )
             satilan_kayitlari[code] = {
                 "product_id": _product_id_for_code(code),
                 "product_code": code,
@@ -819,7 +868,14 @@ def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
             urunler.append({
                 "product_id": _product_id_for_code(code),
                 "product_code": code,
-                "category": guess_category_by_size(size_ft) or guess_category(tab_adi),
+                "category": derive_category_from_dimensions(
+                    width_cm=width_cm,
+                    length_cm=length_cm,
+                    width_ft=width_ft,
+                    length_ft=length_ft,
+                    area_m2=area_m2,
+                    source_tab=tab_adi,
+                ),
                 "width_cm": _decimal_str(width_cm, digits=0),
                 "length_cm": _decimal_str(length_cm, digits=0),
                 "size_cm": _fmt_size(width_cm, length_cm, digits=0),
@@ -899,6 +955,12 @@ def _urunleri_yukle(force_source_sync: bool = False):
     if stok.exists():
         kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
         if _supabase_ready():
+            try:
+                hedef_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+                if hedef_magaza:
+                    _magaza_envanterini_topla(force=False, store_ids=[hedef_magaza])
+            except Exception:
+                pass
             try:
                 _urun_katalogunu_esitle(force=force_source_sync, kaynak_urunler=kaynak)
             except Exception:
@@ -1394,6 +1456,10 @@ def _envanter_cache_yukle():
     return _json_yukle(_STORE_INVENTORY_DB, {"updated_at": 0, "stores": {}, "errors": {}})
 
 
+def _envanter_cache_dosyadan_yukle():
+    return _json_yukle(_STORE_INVENTORY_DB, {"updated_at": 0, "stores": {}, "errors": {}})
+
+
 def _notlar_db_yukle():
     return _json_yukle(_SOLD_NOTES_DB, {"updated_at": 0, "notes": {}})
 
@@ -1426,6 +1492,49 @@ def _envanter_cache_stale_mi(cache: dict, ttl_sn: int = _STORE_INVENTORY_TTL_SN)
     return (_time.time() - updated_at) > ttl_sn
 
 
+def _magaza_cache_stale_mi(cache: dict, store_id: str, ttl_sn: int = 120) -> bool:
+    try:
+        store_cache = ((cache or {}).get("stores") or {}).get(store_id) or {}
+        updated_at = float(store_cache.get("updated_at") or cache.get("updated_at") or 0)
+    except Exception:
+        updated_at = 0
+    if not updated_at:
+        return True
+    return (_time.time() - updated_at) > ttl_sn
+
+
+def _sheetten_magaza_envanteri_oku(store_id: str, store_name: str) -> dict:
+    from shared.sheets import SheetsKatmani as _SK_NOTLAR
+
+    sk = _SK_NOTLAR(store_id)
+    satirlar = sk.tum_satirlar_al()
+    renkler = {
+        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
+        for k, v in sk.urun_renk_durumlari_al().items()
+        if (_urun_kodu_normalize(k) or _urun_kodu_al(k))
+    }
+
+    urunler = {}
+    for satir in satirlar:
+        kod = _urun_kodu_normalize(satir.get("urun_id", "")) or _urun_kodu_al(satir.get("urun_id", ""))
+        if not kod or renkler.get(kod) != "green":
+            continue
+        urunler[kod] = {
+            "urun_id": str(satir.get("urun_id", "")).strip(),
+            "status": str(satir.get("status", "")).strip(),
+            "etsy_draft_url": str(satir.get("etsy_draft_url", "")).strip(),
+            "islem_tarihi": str(satir.get("islem_tarihi", "")).strip(),
+            "renk": "green",
+        }
+
+    return {
+        "store_name": store_name or store_id,
+        "count": len(urunler),
+        "urunler": urunler,
+        "updated_at": _time.time(),
+    }
+
+
 def _supabase_kuyruk_satirlari(store_id: str):
     from shared.product_catalog import StoreCatalog, _supabase_ready
 
@@ -1435,6 +1544,11 @@ def _supabase_kuyruk_satirlari(store_id: str):
     store_id = str(store_id or "").strip()
     if not store_id:
         return []
+
+    try:
+        _magaza_envanterini_topla(force=False, store_ids=[store_id])
+    except Exception:
+        pass
 
     store_rows = StoreCatalog().list_by_store(store_id)
     product_map = {
@@ -1517,72 +1631,90 @@ def _supabase_kuyruk_satirlari(store_id: str):
     return satirlar
 
 
-def _magaza_envanterini_topla(force: bool = False):
-    cache = _envanter_cache_yukle()
-    if not force and not _envanter_cache_stale_mi(cache):
-        return cache
+def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None = None):
+    dosya_cache = _envanter_cache_dosyadan_yukle()
+    hedef_store_ids = [str(s or "").strip() for s in (store_ids or []) if str(s or "").strip()]
 
-    yeni_cache = {"updated_at": _time.time(), "stores": {}, "errors": {}}
+    if hedef_store_ids:
+        if not force and all(not _magaza_cache_stale_mi(dosya_cache, sid) for sid in hedef_store_ids):
+            return _envanter_cache_yukle()
+    elif not force and not _envanter_cache_stale_mi(dosya_cache):
+        return _envanter_cache_yukle()
+
+    yeni_cache = {
+        "updated_at": _time.time(),
+        "stores": dict((dosya_cache or {}).get("stores") or {}),
+        "errors": dict((dosya_cache or {}).get("errors") or {}),
+    }
     try:
         from shared.store_manager import tum_magazalar as _tum_magazalar
-        from shared.sheets import SheetsKatmani as _SK_NOTLAR
+        from shared.product_catalog import StoreCatalog, _supabase_ready
     except Exception as exc:
         yeni_cache["errors"]["global"] = str(exc)
-        return cache if cache.get("stores") else yeni_cache
+        return dosya_cache if dosya_cache.get("stores") else yeni_cache
 
-    for magaza in _tum_magazalar():
-        store_id = str(magaza.get("store_id") or "").strip()
-        if not store_id:
+    tum_magazalar = {
+        str(magaza.get("store_id") or "").strip(): magaza
+        for magaza in _tum_magazalar()
+        if str(magaza.get("store_id") or "").strip()
+    }
+    islenecek_store_ids = hedef_store_ids or list(tum_magazalar)
+
+    for store_id in islenecek_store_ids:
+        magaza = tum_magazalar.get(store_id)
+        if not magaza:
+            yeni_cache["errors"][store_id] = "Magaza bulunamadi."
             continue
+        store_name = str(magaza.get("store_name") or store_id)
+        store_id = str(magaza.get("store_id") or "").strip()
         try:
-            sk = _SK_NOTLAR(store_id)
-            satirlar = sk.tum_satirlar_al()
-            renkler = {
-                (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v for k, v in sk.urun_renk_durumlari_al().items()
-            }
-            urunler = {}
-            for satir in satirlar:
-                kod = _urun_kodu_normalize(satir.get("urun_id", "")) or _urun_kodu_al(satir.get("urun_id", ""))
-                if not kod or renkler.get(kod) != "green":
-                    continue
-                urunler[kod] = {
-                    "urun_id": str(satir.get("urun_id", "")).strip(),
-                    "status": str(satir.get("status", "")).strip(),
-                    "etsy_draft_url": str(satir.get("etsy_draft_url", "")).strip(),
-                    "islem_tarihi": str(satir.get("islem_tarihi", "")).strip(),
-                    "renk": "green",
-                }
-            yeni_cache["stores"][store_id] = {
-                "store_name": str(magaza.get("store_name") or store_id),
-                "count": len(urunler),
-                "urunler": urunler,
-                "updated_at": yeni_cache["updated_at"],
-            }
+            yeni_cache["stores"][store_id] = _sheetten_magaza_envanteri_oku(store_id, store_name)
+            yeni_cache["errors"].pop(store_id, None)
         except Exception as exc:
             yeni_cache["errors"][store_id] = str(exc)
 
-    if yeni_cache["stores"]:
-        _json_kaydet(_STORE_INVENTORY_DB, yeni_cache)
-        try:
-            from shared.product_catalog import StoreCatalog, _supabase_ready
-            if _supabase_ready():
+    _json_kaydet(_STORE_INVENTORY_DB, yeni_cache)
+
+    try:
+        if _supabase_ready():
+            store_catalog = StoreCatalog()
+            for sid in islenecek_store_ids:
+                sdata = (yeni_cache.get("stores") or {}).get(sid) or {}
+                current_codes = {
+                    str(code).strip()
+                    for code in (sdata.get("urunler") or {}).keys()
+                    if str(code).strip()
+                }
+                existing_codes = {
+                    str(row.get("product_code") or "").strip()
+                    for row in store_catalog.list_by_store(sid)
+                    if str(row.get("product_code") or "").strip()
+                }
+                silinecek = sorted(existing_codes - current_codes)
+                if silinecek:
+                    store_catalog.delete(sid, silinecek)
+
                 rows = []
-                for sid, sdata in yeni_cache["stores"].items():
-                    for code, urun in sdata.get("urunler", {}).items():
-                        rows.append({
-                            "product_code": str(code).strip(),
-                            "store_id": sid,
-                            "status": urun.get("status", ""),
-                            "renk": urun.get("renk", ""),
-                            "etsy_draft_url": urun.get("etsy_draft_url", ""),
-                            "islem_tarihi": urun.get("islem_tarihi", ""),
-                        })
+                for code, urun in (sdata.get("urunler") or {}).items():
+                    code = str(code).strip()
+                    if not code:
+                        continue
+                    rows.append({
+                        "product_code": code,
+                        "store_id": sid,
+                        "status": urun.get("status", ""),
+                        "renk": urun.get("renk", ""),
+                        "etsy_draft_url": urun.get("etsy_draft_url", ""),
+                        "islem_tarihi": urun.get("islem_tarihi", ""),
+                    })
                 if rows:
-                    StoreCatalog().upsert(rows)
-        except Exception:
-            pass
+                    store_catalog.upsert(rows)
+    except Exception:
+        pass
+
+    if yeni_cache.get("stores"):
         return yeni_cache
-    return cache if cache.get("stores") else yeni_cache
+    return dosya_cache if dosya_cache.get("stores") else yeni_cache
 
 
 def _satilan_notlarini_uret(force_refresh: bool = False):
@@ -2703,52 +2835,35 @@ with tab3:
     def _urun_edit_dialog(urun: dict):
         import time as _t
 
-        def _to_f(v):
-            try:
-                return float(str(v or "").replace(",", "."))
-            except Exception:
-                return 0.0
-
         st.markdown(f"**{urun.get('product_code', '')}**")
-        _ef1, _ef2 = st.columns(2)
+        _ef1, _ef2, _ef3 = st.columns(3)
         _yeni_kod = _ef1.text_input("Ürün Kodu", value=urun.get("product_code", ""))
-        _kat_ops = ["", "Area", "Runner", "Doormat"]
-        _mevcut_kat = urun.get("category", "") or ""
-        _yeni_kat = _ef2.selectbox(
-            "Kategori", _kat_ops,
-            index=_kat_ops.index(_mevcut_kat) if _mevcut_kat in _kat_ops else 0,
-            format_func=lambda x: x or "— seçiniz —",
-        )
-        st.caption("cm ölçüleri")
-        _ec1, _ec2 = st.columns(2)
-        _cm_gen = _ec1.number_input("Genişlik (cm)", value=_to_f(urun.get("width_cm")), min_value=0.0, step=1.0, format="%.0f")
-        _cm_uz = _ec2.number_input("Uzunluk (cm)", value=_to_f(urun.get("length_cm")), min_value=0.0, step=1.0, format="%.0f")
-        st.caption("ft ölçüleri")
-        _ef3, _ef4 = st.columns(2)
-        _ft_gen = _ef3.number_input("Genişlik (ft)", value=_to_f(urun.get("width_ft")), min_value=0.0, step=0.1, format="%.1f")
-        _ft_uz = _ef4.number_input("Uzunluk (ft)", value=_to_f(urun.get("length_ft")), min_value=0.0, step=0.1, format="%.1f")
-        _not_txt = st.text_area("Not", value=urun.get("note", "") or "")
+        _cm_gen = _ef2.number_input("Genişlik (cm)", value=_float_or_none(urun.get("width_cm")) or 0.0, min_value=0.0, step=1.0, format="%.0f")
+        _cm_uz = _ef3.number_input("Uzunluk (cm)", value=_float_or_none(urun.get("length_cm")) or 0.0, min_value=0.0, step=1.0, format="%.0f")
+        st.caption("Kategori, ft ölçüleri ve m² kayıt sırasında otomatik hesaplanır.")
 
         _es1, _es2, _es3 = st.columns([2, 2, 1])
         if _es1.button("Kaydet", type="primary", use_container_width=True):
             from shared.product_catalog import ProductCatalog as _PC
             from shared.product_sheet_sync import sync_product_sheet as _sync_product_sheet
             import requests as _req, os as _os
+            _new_code = _yeni_kod.strip()
+            _derived = _derived_product_fields(_cm_gen, _cm_uz)
+            if not _new_code:
+                st.error("Ürün Kodu zorunlu.")
+                return
+            if _cm_gen <= 0 or _cm_uz <= 0:
+                st.error("Genişlik cm ve Uzunluk cm zorunlu.")
+                return
+            if not _derived["category"]:
+                st.error("Kategori otomatik hesaplanamadı; ölçüleri kontrol edin.")
+                return
             _updated = {
                 **urun,
-                "category": _yeni_kat,
-                "width_cm": str(int(_cm_gen)) if _cm_gen else "",
-                "length_cm": str(int(_cm_uz)) if _cm_uz else "",
-                "size_cm": _fmt_size(_cm_gen or None, _cm_uz or None, digits=0),
-                "area_m2": f"{_cm_gen * _cm_uz / 10000:.2f}" if _cm_gen and _cm_uz else urun.get("area_m2", ""),
-                "width_ft": _decimal_str(_ft_gen, digits=1) if _ft_gen else "",
-                "length_ft": _decimal_str(_ft_uz, digits=1) if _ft_uz else "",
-                "size_ft": _fmt_size(_ft_gen or None, _ft_uz or None, digits=1),
-                "note": _not_txt.strip(),
+                **_derived,
                 "updated_at": _t.strftime("%Y-%m-%d %H:%M"),
             }
             _old_code = urun.get("product_code", "")
-            _new_code = _yeni_kod.strip()
             if _new_code and _new_code != _old_code:
                 _supa_url = _os.environ.get("SUPABASE_URL", "").rstrip("/")
                 _supa_key = _os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -2859,10 +2974,8 @@ with tab3:
         if st.session_state.urun_alt_tab == "liste":
             if st.session_state.urun_formu_acik:
                 _NUF = {
-                    "nuf_kod": "", "nuf_kategori": "Seçiniz",
+                    "nuf_kod": "",
                     "nuf_cm_gen": 0.0, "nuf_cm_uz": 0.0,
-                    "nuf_ft_gen": 0.0, "nuf_ft_uz": 0.0,
-                    "nuf_not": "",
                 }
                 for _k, _dv in _NUF.items():
                     if _k not in st.session_state:
@@ -2880,36 +2993,25 @@ with tab3:
                             st.session_state[_k] = _dv
                         st.rerun(scope="fragment")
 
-                    _f1, _f2, _f3, _f4 = st.columns(4)
+                    _f1, _f2, _f3 = st.columns(3)
                     _f1.markdown(_zorunlu_label("Ürün kodu"), unsafe_allow_html=True)
                     _f1.text_input("Ürün kodu", key="nuf_kod", label_visibility="collapsed")
-                    _f2.markdown(_zorunlu_label("Kategori"), unsafe_allow_html=True)
-                    _f2.selectbox("Kategori", ["Seçiniz", "Area", "Runner", "Doormat"], key="nuf_kategori", label_visibility="collapsed")
-                    _f3.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
-                    _f3.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
-                    _f4.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
-                    _f4.number_input("Uzunluk cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_uz", label_visibility="collapsed")
-                    _f5, _f6, _f7 = st.columns(3)
-                    _f5.markdown(_zorunlu_label("Genişlik ft"), unsafe_allow_html=True)
-                    _f5.number_input("Genişlik ft", min_value=0.0, step=0.1, format="%.1f", key="nuf_ft_gen", label_visibility="collapsed")
-                    _f6.markdown(_zorunlu_label("Uzunluk ft"), unsafe_allow_html=True)
-                    _f6.number_input("Uzunluk ft", min_value=0.0, step=0.1, format="%.1f", key="nuf_ft_uz", label_visibility="collapsed")
-                    _f7.text_input("Not", key="nuf_not")
+                    _f2.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
+                    _f2.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
+                    _f3.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
+                    _f3.number_input("Uzunluk cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_uz", label_visibility="collapsed")
 
                     if _yeni_m2_raw is not None:
-                        st.caption(f"Otomatik m²: **{_yeni_m2_raw:.4f}** m²  ·  ({_yeni_m2_raw:.2f} yuvarlanmış)")
+                        st.caption(f"m², ft ölçüleri ve kategori kayıt sırasında otomatik hesaplanır. Tahmini alan: **{_yeni_m2_raw:.2f} m²**")
                     else:
-                        st.caption("Otomatik m²: cm ölçüleri girilince otomatik hesaplanır")
+                        st.caption("ft ölçüleri, m² ve kategori kayıt sırasında otomatik hesaplanır.")
 
                     if st.button("➕ Ürün Ekle", type="primary", use_container_width=True, key="nuf_ekle_btn"):
                         _nuf_kod = st.session_state.nuf_kod
-                        _nuf_kat = st.session_state.nuf_kategori
                         _nuf_cmg = float(st.session_state.nuf_cm_gen or 0)
                         _nuf_cmu = float(st.session_state.nuf_cm_uz or 0)
-                        _nuf_ftg = float(st.session_state.nuf_ft_gen or 0)
-                        _nuf_ftu = float(st.session_state.nuf_ft_uz or 0)
-                        _nuf_not = str(st.session_state.nuf_not or "").strip()
                         _nuf_m2 = (_nuf_cmg * _nuf_cmu) / 10000 if _nuf_cmg > 0 and _nuf_cmu > 0 else None
+                        _nuf_derived = _derived_product_fields(_nuf_cmg, _nuf_cmu)
                         kod = _urun_kodu_normalize(_nuf_kod) or _urun_kodu_al(_nuf_kod)
                         mevcut_kodlar = {
                             str(u.get("product_code") or "").strip().lower()
@@ -2920,26 +3022,17 @@ with tab3:
                             st.error("Ürün Kodu zorunlu.")
                         elif str(kod).strip().lower() in mevcut_kodlar:
                             st.error(f"{kod} ürün kodu zaten mevcut, tekrar eklenemez.")
-                        elif _nuf_kat == "Seçiniz":
-                            st.error("Kategori zorunlu.")
                         elif _nuf_cmg <= 0 or _nuf_cmu <= 0:
                             st.error("cm ölçüleri zorunlu.")
-                        elif _nuf_ftg <= 0 or _nuf_ftu <= 0:
-                            st.error("ft ölçüleri zorunlu.")
                         elif _nuf_m2 is None or _nuf_m2 <= 0:
                             st.error("m² hesaplanamadı; cm ölçülerini kontrol edin.")
+                        elif not _nuf_derived["category"]:
+                            st.error("Kategori otomatik hesaplanamadı; ölçüleri kontrol edin.")
                         else:
                             eklenen = dict(
                                 product_id=_product_id_for_code(kod),
                                 product_code=kod,
-                                category=_nuf_kat,
-                                width_cm=_decimal_str(_nuf_cmg, digits=0),
-                                length_cm=_decimal_str(_nuf_cmu, digits=0),
-                                size_cm=_fmt_size(_nuf_cmg, _nuf_cmu, digits=0),
-                                area_m2=_decimal_str(round(_nuf_m2, 2), digits=2),
-                                width_ft=_decimal_str(_nuf_ftg, digits=1),
-                                length_ft=_decimal_str(_nuf_ftu, digits=1),
-                                size_ft=_fmt_size(_nuf_ftg, _nuf_ftu, digits=1),
+                                **_nuf_derived,
                                 status="active",
                                 source_tab="manual",
                                 source_row="",
@@ -2951,7 +3044,7 @@ with tab3:
                                 customer_phone="",
                                 customer_address="",
                                 customer_contact_country="",
-                                note=_nuf_not,
+                                note="",
                                 updated_at=_time.strftime("%Y-%m-%d %H:%M"),
                             )
                             _urunleri_kaydet([*urunler, eklenen])
@@ -3007,10 +3100,10 @@ with tab3:
                     }
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
-                        "kategori": urun.get("category", ""),
                         "cm": urun.get("size_cm", ""),
-                        "ft": urun.get("size_ft", ""),
                         "m2": urun.get("area_m2", ""),
+                        "ft": urun.get("size_ft", ""),
+                        "kategori": urun.get("category", ""),
                         "yüklü": int(urun.get("loaded_store_count") or 0),
                     }
                     for magaza in magaza_adlari:
@@ -3018,8 +3111,9 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
+                    aktif_df = pd.DataFrame(satirlar)
                     _secim = st.dataframe(
-                        pd.DataFrame(satirlar),
+                        aktif_df,
                         use_container_width=True,
                         hide_index=True,
                         on_select="rerun",
@@ -3034,6 +3128,19 @@ with tab3:
                             )
                     else:
                         _edit_btn_col.button("✏️ Düzenle", disabled=True, use_container_width=True, key="duzenle_btn")
+
+                    kopya_metin = _tablo_kopyalama_metni(
+                        aktif_df,
+                        ["Ürün Kodu", "cm", "m2", "ft", "kategori"],
+                    )
+                    if kopya_metin:
+                        st.caption("İlk 5 kolonu seçip `Ctrl+C` ile kopyalayabilirsiniz.")
+                        st.text_area(
+                            "Kopyalanabilir ilk 5 kolon",
+                            value=kopya_metin,
+                            height=min(360, max(120, 24 * (len(aktif_df) + 1))),
+                            key="urun_listesi_kopyalama_alani",
+                        )
                 else:
                     _secilen_satirlar = []
                     st.info("Gösterilecek ürün bulunamadı.")
@@ -3222,6 +3329,9 @@ with tab3:
                 for urun in satilan_goster:
                     satilan_satirlar.append({
                         "Ürün Kodu": urun.get("product_code", ""),
+                        "cm": urun.get("size_cm", ""),
+                        "m2": urun.get("area_m2", ""),
+                        "ft": urun.get("size_ft", ""),
                         "kategori": urun.get("category", ""),
                         "satılan_tarih": urun.get("sold_at", ""),
                         "site": _site_label(urun.get("sold_site", "")),
@@ -3229,15 +3339,25 @@ with tab3:
                         "telefon": urun.get("customer_phone", ""),
                         "iletişim_ülke": urun.get("customer_contact_country", ""),
                         "adres": urun.get("customer_address", ""),
-                        "cm": urun.get("size_cm", ""),
-                        "ft": urun.get("size_ft", ""),
-                        "m2": urun.get("area_m2", ""),
                         "yüklü_mağazalar": urun.get("loaded_stores", ""),
                         "not": urun.get("note", ""),
                     })
 
                 if satilan_satirlar:
-                    st.dataframe(pd.DataFrame(satilan_satirlar), width="stretch", hide_index=True)
+                    satilan_df = pd.DataFrame(satilan_satirlar)
+                    st.dataframe(satilan_df, width="stretch", hide_index=True)
+                    kopya_metin = _tablo_kopyalama_metni(
+                        satilan_df,
+                        ["Ürün Kodu", "cm", "m2", "ft", "kategori"],
+                    )
+                    if kopya_metin:
+                        st.caption("İlk 5 kolonu seçip `Ctrl+C` ile kopyalayabilirsiniz.")
+                        st.text_area(
+                            "Satılanlar için kopyalanabilir ilk 5 kolon",
+                            value=kopya_metin,
+                            height=min(360, max(120, 24 * (len(satilan_df) + 1))),
+                            key="satilan_listesi_kopyalama_alani",
+                        )
                 else:
                     st.info("Satılan ürün bulunamadı.")
             except Exception as exc:
@@ -3847,7 +3967,7 @@ with tab5:
     @st.fragment
     def _tab5_ara():
         import pandas as pd
-        from shared.product_catalog import guess_category_by_size
+        from shared.product_catalog import derive_category_from_dimensions
 
         _gc1, _gc2, _ = st.columns([2, 3, 3])
         if _gc1.button("🔄 Ürünleri Yenile"):
@@ -3873,8 +3993,13 @@ with tab5:
                 atlanan_ft += 1
                 continue
 
-            category = str(urun.get("category") or "").strip() or guess_category_by_size(
-                urun.get("size_ft") or _fmt_size(width_ft, length_ft, digits=1)
+            category = str(urun.get("category") or "").strip() or derive_category_from_dimensions(
+                width_cm=urun.get("width_cm"),
+                length_cm=urun.get("length_cm"),
+                width_ft=width_ft,
+                length_ft=length_ft,
+                area_m2=urun.get("area_m2"),
+                source_tab=urun.get("source_tab", ""),
             )
             arama_kaynaklari.append({
                 "kod": str(urun.get("product_code") or "").strip(),

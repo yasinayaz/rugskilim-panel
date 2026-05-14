@@ -50,10 +50,10 @@ PRODUCT_HEADERS = [
 
 ACTIVE_TAB_HEADERS = [
     "Urun Kodu",
-    "Kategori",
     "CM",
-    "FT",
     "M2",
+    "FT",
+    "Kategori",
     "loaded_store_count",
     "loaded_stores",
     "updated_at",
@@ -61,20 +61,20 @@ ACTIVE_TAB_HEADERS = [
 
 SOLD_TAB_HEADERS = [
     "Urun Kodu",
-    "Kategori",
     "CM",
-    "FT",
     "M2",
+    "FT",
+    "Kategori",
     "Satilan Site",
     "Satilan Tarih",
 ]
 
 ACTIVE_TAB_HEADER_MAP = {
     "Urun Kodu": "product_code",
-    "Kategori": "category",
     "CM": "size_cm",
-    "FT": "size_ft",
     "M2": "area_m2",
+    "FT": "size_ft",
+    "Kategori": "category",
     "loaded_store_count": "loaded_store_count",
     "loaded_stores": "loaded_stores",
     "updated_at": "updated_at",
@@ -82,10 +82,10 @@ ACTIVE_TAB_HEADER_MAP = {
 
 SOLD_TAB_HEADER_MAP = {
     "Urun Kodu": "product_code",
-    "Kategori": "category",
     "CM": "size_cm",
-    "FT": "size_ft",
     "M2": "area_m2",
+    "FT": "size_ft",
+    "Kategori": "category",
     "Satilan Site": "sold_site",
     "Satilan Tarih": "sold_at",
 }
@@ -178,10 +178,10 @@ def _product_row(product: dict) -> list:
 def _active_tab_row(product: dict) -> list:
     return [
         _clean_str(product.get("product_code")),
-        _normalize_category(product.get("category")),
         _clean_str(product.get("size_cm")),
-        _clean_str(product.get("size_ft")),
         _clean_str(product.get("area_m2")),
+        _clean_str(product.get("size_ft")),
+        _normalize_category(product.get("category")),
         _clean_str(product.get("loaded_store_count")),
         _clean_str(product.get("loaded_stores")),
         _clean_str(product.get("updated_at")),
@@ -191,10 +191,10 @@ def _active_tab_row(product: dict) -> list:
 def _sold_tab_row(product: dict) -> list:
     return [
         _clean_str(product.get("product_code")),
-        _normalize_category(product.get("category")),
         _clean_str(product.get("size_cm")),
-        _clean_str(product.get("size_ft")),
         _clean_str(product.get("area_m2")),
+        _clean_str(product.get("size_ft")),
+        _normalize_category(product.get("category")),
         _clean_str(product.get("sold_site")),
         _clean_str(product.get("sold_at")),
     ]
@@ -397,13 +397,10 @@ def update_store_presence(products: list[dict], store_map: dict[str, set[str]]) 
 
 
 def guess_category(source_tab: str, width_ft, length_ft) -> str:
-    if _clean_str(source_tab).upper().startswith("DOOR"):
-        return "Doormat"
+    from shared.product_catalog import derive_category
 
-    a = _to_float(width_ft) or 0
-    b = _to_float(length_ft) or 0
-    short_edge = min(a, b)
-    long_edge = max(a, b)
-    if short_edge > 0 and (long_edge / short_edge) >= 2.0:
-        return "Runner"
-    return "Area"
+    return derive_category(
+        width_ft=width_ft,
+        length_ft=length_ft,
+        source_tab=source_tab,
+    )
