@@ -5,6 +5,7 @@ Dark SaaS theme · pCloud klasör gezgini · Google Sheets kuyruk yönetimi
 
 import sys
 import streamlit as st
+import streamlit.components.v1 as components
 import httpx
 import os
 import json
@@ -738,6 +739,34 @@ def _kategori_etiketi(value: str) -> str:
 def _product_id_for_code(code: str) -> str:
     clean = (_urun_kodu_normalize(code) or _urun_kodu_al(code) or _kod_normalize(code)).upper()
     return f"PRD-{clean}"
+
+
+def _copy_display_upper(value: str) -> str:
+    return str(value or "").strip().replace("x", "X")
+
+
+def _copy_display_decimal(value) -> str:
+    text = _decimal_str(value, digits=2)
+    return text.replace(".", ",") if text else ""
+
+
+def _copy_display_ft(value: str) -> str:
+    return _copy_display_upper(str(value or "").strip().replace(".", ","))
+
+
+def _build_product_copy_text(product: dict) -> str:
+    kod = str(product.get("product_code") or "").strip()
+    size_cm = _copy_display_upper(product.get("size_cm"))
+    area_m2 = _copy_display_decimal(product.get("area_m2"))
+    size_ft = _copy_display_ft(product.get("size_ft"))
+    parts = []
+    if kod or size_cm:
+        parts.append(f"{kod}--{size_cm}".strip("-"))
+    if area_m2:
+        parts.append(f"= {area_m2} M2")
+    if size_ft:
+        parts.append(f"{size_ft} FT")
+    return " ".join(parts).strip()
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3046,7 +3075,8 @@ with tab3:
             kategori_opsiyonlari = ["Tümü", "Boş", "Doormat", "Area", "Runner"]
             kategori_filtre = _l2.selectbox("Kategori", kategori_opsiyonlari, index=0)
             sadece_aktif = _l3.toggle("Sadece aktif", value=True)
-            _edit_btn_col = _l4
+            _l4.empty()
+            _urun_aksiyon_alani = st.container()
 
             gosterilecek = aktifler if sadece_aktif else urunler
             if filtre.strip():
@@ -3107,18 +3137,74 @@ with tab3:
                     _secilen_satirlar = _secim.selection.rows if _secim and hasattr(_secim, "selection") else []
                     if _secilen_satirlar:
                         _sec_kod = satirlar[_secilen_satirlar[0]]["Ürün Kodu"]
-                        if _edit_btn_col.button(f"✏️ {_sec_kod}", type="primary", use_container_width=True, key="duzenle_btn"):
-                            st.session_state["_edit_urun"] = next(
-                                (u for u in urunler if u.get("product_code") == _sec_kod), None
-                            )
+                        _secili_urun = next((u for u in urunler if u.get("product_code") == _sec_kod), None)
+                        with _urun_aksiyon_alani:
+                            if _secili_urun:
+                                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                                _ab1, _ab2, _ab3 = st.columns([1.35, 1.0, 3.65])
+                                if _ab1.button(
+                                    f"✏️ {_sec_kod} Düzenle",
+                                    type="primary",
+                                    use_container_width=True,
+                                    key="duzenle_btn",
+                                ):
+                                    st.session_state["_edit_urun"] = _secili_urun
+                                if _ab2.button(
+                                    "📋 Kopyala",
+                                    use_container_width=True,
+                                    key="kopyala_btn",
+                                ):
+                                    st.session_state["_clipboard_copy_request"] = {
+                                        "text": _build_product_copy_text(_secili_urun),
+                                        "nonce": datetime.now().isoformat(),
+                                    }
                     else:
-                        _edit_btn_col.button("✏️ Düzenle", disabled=True, use_container_width=True, key="duzenle_btn")
+                        with _urun_aksiyon_alani:
+                            _urun_aksiyon_alani.empty()
                 else:
                     _secilen_satirlar = []
                     st.info("Gösterilecek ürün bulunamadı.")
             except Exception as exc:
                 _secilen_satirlar = []
                 st.warning(f"Ürün listesi çizilemedi: {exc}")
+
+            _clipboard_req = st.session_state.pop("_clipboard_copy_request", None)
+            if _clipboard_req and _clipboard_req.get("text"):
+                _clipboard_text = json.dumps(_clipboard_req["text"], ensure_ascii=False)
+                components.html(
+                    f"""
+                    <script>
+                    const copyText = {_clipboard_text};
+                    async function writeClipboard(text) {{
+                      try {{
+                        if (navigator.clipboard && window.isSecureContext) {{
+                          await navigator.clipboard.writeText(text);
+                          return true;
+                        }}
+                      }} catch (e) {{}}
+                      try {{
+                        const area = document.createElement("textarea");
+                        area.value = text;
+                        area.setAttribute("readonly", "");
+                        area.style.position = "fixed";
+                        area.style.left = "-9999px";
+                        document.body.appendChild(area);
+                        area.focus();
+                        area.select();
+                        const ok = document.execCommand("copy");
+                        document.body.removeChild(area);
+                        return ok;
+                      }} catch (e) {{
+                        return false;
+                      }}
+                    }}
+                    writeClipboard(copyText);
+                    </script>
+                    <!-- {_clipboard_req.get("nonce", "")} -->
+                    """,
+                    height=0,
+                )
+                st.toast(f"Kopyalandı: {_clipboard_req['text']}")
 
             if st.session_state.get("_edit_urun"):
                 _edit_data = st.session_state.pop("_edit_urun")
