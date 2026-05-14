@@ -286,6 +286,40 @@ def _kolon_no_from_positions(pozisyonlar: dict, baslik: str, occurrence: int = 0
     return default
 
 
+def _supabase_store_status_upsert(store_id: str, row: dict):
+    try:
+        from shared.product_catalog import StoreCatalog, _supabase_ready
+        if not _supabase_ready():
+            return
+        payload = {
+            "product_code": str(row.get("product_code") or "").strip(),
+            "store_id": str(store_id or "").strip(),
+            "status": str(row.get("status") or "").strip(),
+            "islem_tarihi": str(row.get("islem_tarihi") or "").strip(),
+        }
+        if not payload["product_code"] or not payload["store_id"]:
+            return
+        etsy_draft_url = str(row.get("etsy_draft_url") or "").strip()
+        if etsy_draft_url:
+            payload["etsy_draft_url"] = etsy_draft_url
+        renk = str(row.get("renk") or "").strip()
+        if renk:
+            payload["renk"] = renk
+        StoreCatalog().upsert([payload])
+    except Exception:
+        pass
+
+
+def _supabase_store_status_delete(store_id: str, product_codes: list[str] | None = None):
+    try:
+        from shared.product_catalog import StoreCatalog, _supabase_ready
+        if not _supabase_ready():
+            return
+        StoreCatalog().delete(store_id, product_codes)
+    except Exception:
+        pass
+
+
 def _urun_satir_bul(ws, urun_id: str) -> int:
     """urun_id'ye göre satır numarası döndürür (1-tabanlı)."""
     urun_id_kol = _kolon_no(ws, "urun_id", default=KOL["urun_id"])
@@ -667,6 +701,15 @@ class SheetsKatmani:
         # Emniyet payı: hızlı bulk girişte Sheets API rate limit aşılmasın
         time.sleep(0.8)
 
+        _supabase_store_status_upsert(
+            self.store_id,
+            {
+                "product_code": urun_bilgisi.get("urun_id"),
+                "status": "pending",
+                "islem_tarihi": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            },
+        )
+
         print(f"[Sheets:{self.store_id}] ✓ Ürün eklendi: {urun_bilgisi['urun_id']} → satır {satir_no}")
         return satir_no
 
@@ -723,6 +766,15 @@ class SheetsKatmani:
 
         _yeniden_dene("AI verilerini yazma", ws.batch_update, batch_veri)
 
+        _supabase_store_status_upsert(
+            self.store_id,
+            {
+                "product_code": urun_id,
+                "status": "ready",
+                "islem_tarihi": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            },
+        )
+
         # Satır yüksekliğini 21px sabit tut (description açılmasın)
         self._satir_yuksekliklerini_sabitle([satir_no], pixel_size=21)
 
@@ -763,6 +815,17 @@ class SheetsKatmani:
             "values": [[datetime.now().strftime("%Y-%m-%d %H:%M")]],
         })
         _yeniden_dene("Status güncelleme", ws.batch_update, batch_veri)
+        _renk = "green" if yeni_status == "done" else ""
+        _supabase_store_status_upsert(
+            self.store_id,
+            {
+                "product_code": urun_id,
+                "status": yeni_status,
+                "islem_tarihi": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "etsy_draft_url": etsy_url,
+                "renk": _renk,
+            },
+        )
         print(f"[Sheets:{self.store_id}] ✓ Status: {urun_id} → {yeni_status}")
 
     def urunleri_renklendir(self, urun_idler: list[str], renk: str) -> dict:
@@ -950,6 +1013,7 @@ class SheetsKatmani:
             _yeniden_dene("Satır silme", ws.delete_rows, satir_no)
 
         self._satir_haritasini_gecersiz_kil()
+        _supabase_store_status_delete(self.store_id, [str(uid) for uid in urun_idler if str(uid).strip()])
 
         print(f"[Sheets:{self.store_id}] {len(satir_nolari)} satır silindi.")
         return len(satir_nolari)

@@ -1272,7 +1272,7 @@ def _global_kirmizi_cache_bayatti(ttl_sn: int = 300) -> bool:
         return True
 
 
-def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False) -> set[str]:
+def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False, include_blocked: bool = False) -> set[str]:
     store_id = str(store_id or "").strip()
     if not store_id:
         return set()
@@ -1297,7 +1297,9 @@ def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False) -> set[str]:
     yuklu_kodlar = set()
     for raw_code, urun in urunler.items():
         kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
-        if not kod or _urun_kodu_bloklu_mu(kod):
+        if not kod:
+            continue
+        if not include_blocked and _urun_kodu_bloklu_mu(kod):
             continue
         renk = str((urun or {}).get("renk", "")).strip().lower()
         durum = str((urun or {}).get("status", "")).strip().lower()
@@ -1402,6 +1404,64 @@ def _envanter_cache_stale_mi(cache: dict, ttl_sn: int = _STORE_INVENTORY_TTL_SN)
     if not updated_at:
         return True
     return (_time.time() - updated_at) > ttl_sn
+
+
+def _supabase_kuyruk_satirlari(store_id: str):
+    from shared.product_catalog import StoreCatalog, _supabase_ready
+
+    if not _supabase_ready():
+        return None
+
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return []
+
+    store_rows = StoreCatalog().list_by_store(store_id)
+    product_map = {
+        str(item.get("product_code") or "").strip(): dict(item)
+        for item in _urunleri_yukle(force_source_sync=False)
+        if str(item.get("product_code") or "").strip()
+    }
+
+    sheet_map = {}
+    try:
+        from shared.sheets import SheetsKatmani as _SK_QUEUE_META
+
+        for row in _SK_QUEUE_META(store_id).tum_satirlar_al():
+            kod = _urun_kodu_normalize(row.get("urun_id", "")) or _urun_kodu_al(row.get("urun_id", ""))
+            if kod:
+                sheet_map[kod] = row
+    except Exception:
+        sheet_map = {}
+
+    satirlar = []
+    for row in store_rows:
+        kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
+        if not kod:
+            continue
+        product = product_map.get(str(row.get("product_code") or "").strip(), {})
+        sheet_row = sheet_map.get(kod, {})
+        satirlar.append({
+            "urun_id": str(row.get("product_code") or sheet_row.get("urun_id") or "").strip(),
+            "boyut_ft": str(sheet_row.get("boyut_ft") or product.get("size_ft") or "").strip(),
+            "fiyat_usd": str(sheet_row.get("fiyat_usd") or "").strip(),
+            "baslik": str(sheet_row.get("baslik") or product.get("note") or "").strip(),
+            "durum": str(row.get("status") or sheet_row.get("status") or "").strip(),
+            "status": str(row.get("status") or sheet_row.get("status") or "").strip(),
+            "islem_tarihi": str(row.get("islem_tarihi") or sheet_row.get("islem_tarihi") or "").strip(),
+            "etsy_draft_url": str(row.get("etsy_draft_url") or sheet_row.get("etsy_draft_url") or "").strip(),
+            "pcloud_klasor_id": str(sheet_row.get("pcloud_klasor_id") or "").strip(),
+            "renk": str(row.get("renk") or "").strip().lower(),
+        })
+
+    satirlar.sort(
+        key=lambda item: (
+            str(item.get("islem_tarihi") or ""),
+            str(item.get("urun_id") or ""),
+        ),
+        reverse=True,
+    )
+    return satirlar
 
 
 def _magaza_envanterini_topla(force: bool = False):
@@ -2425,9 +2485,12 @@ with tab2:
             if _oc1.button("✅ Evet, sil", type="primary"):
                 try:
                     from shared.sheets import SheetsKatmani, BASLIK_SATIRI
+                    from shared.product_catalog import StoreCatalog, _supabase_ready
                     ws = SheetsKatmani(st.session_state.hedef_magaza_id)._baglanti()
                     ws.clear()
                     ws.append_row(BASLIK_SATIRI)
+                    if _supabase_ready():
+                        StoreCatalog().delete(st.session_state.hedef_magaza_id)
                     st.session_state.kuyruga_eklenenler = {}
                     st.session_state.sheet_renk_durumlari = {}
                     st.session_state.klasor_id_durumlari = {}
@@ -2449,13 +2512,30 @@ with tab2:
 
         try:
             import pandas as pd
+            from shared.product_catalog import _supabase_ready
             from shared.sheets import SheetsKatmani as _SK2
+
+            satirlar = _supabase_kuyruk_satirlari(st.session_state.hedef_magaza_id) if _supabase_ready() else None
             _sk2 = _SK2(st.session_state.hedef_magaza_id)
-            satirlar = _sk2.tum_satirlar_al()
-            _yuklu_kodlar = _magaza_yuklu_kodlari_al(st.session_state.hedef_magaza_id)
+            if satirlar is None:
+                satirlar = _sk2.tum_satirlar_al()
+            _yuklu_kodlar = _magaza_yuklu_kodlari_al(
+                st.session_state.hedef_magaza_id,
+                include_blocked=True,
+            )
             _renk_durumlari = {
                 (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
-                for k, v in (st.session_state.get("sheet_renk_durumlari") or _sk2.urun_renk_durumlari_al()).items()
+                for k, v in (
+                    (
+                        {
+                            str(item.get("urun_id") or "").strip(): str(item.get("renk") or "").strip().lower()
+                            for item in satirlar
+                            if str(item.get("renk") or "").strip()
+                        }
+                    )
+                    if _supabase_ready() and satirlar is not None
+                    else (st.session_state.get("sheet_renk_durumlari") or _sk2.urun_renk_durumlari_al())
+                ).items()
             }
             st.session_state.sheet_renk_durumlari = _renk_durumlari
             st.session_state.klasor_id_durumlari = {
@@ -2469,9 +2549,8 @@ with tab2:
                 if "status" in df.columns and "urun_id" in df.columns:
                     def _gorunen_status(row):
                         kod = _urun_kodu_normalize(row.get("urun_id", "")) or _urun_kodu_al(row.get("urun_id", ""))
-                        renk = _renk_durumlari.get(kod)
-                        if _urun_kodu_bloklu_mu(kod):
-                            return "deleted"
+                        renk = str(row.get("renk") or _renk_durumlari.get(kod) or "").strip().lower()
+                        mevcut_status = str(row.get("status", "")).strip().lower()
                         if kod in _yuklu_kodlar:
                             return "done"
                         if renk == "green":
@@ -2480,7 +2559,7 @@ with tab2:
                             return "error"
                         if renk == "red":
                             return "deleted"
-                        return row.get("status", "")
+                        return mevcut_status or row.get("status", "")
 
                     df["gosterim_status"] = df.apply(_gorunen_status, axis=1)
                 else:

@@ -280,13 +280,32 @@ class StoreCatalog:
 
     def list_by_store(self, store_id: str | None = None) -> list[dict]:
         import requests
-        params: dict = {"select": "*", "order": "product_code.asc"}
-        if store_id:
-            params["store_id"] = f"eq.{store_id}"
-        r = requests.get(self._url(), headers={**_headers(), "Accept": "application/json"}, params=params, timeout=45)
-        if not r.ok:
-            raise RuntimeError(f"store_status okunamadı: {r.status_code} {r.text}")
-        return r.json()
+        rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            params: dict = {"select": "*", "order": "product_code.asc"}
+            if store_id:
+                params["store_id"] = f"eq.{store_id}"
+            r = requests.get(
+                self._url(),
+                headers={
+                    **_headers(),
+                    "Accept": "application/json",
+                    "Range-Unit": "items",
+                    "Range": f"{offset}-{offset + page_size - 1}",
+                },
+                params=params,
+                timeout=45,
+            )
+            if not r.ok:
+                raise RuntimeError(f"store_status okunamadı: {r.status_code} {r.text}")
+            page = r.json()
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return rows
 
     def upsert(self, rows: list[dict]) -> None:
         if not rows:
@@ -301,6 +320,47 @@ class StoreCatalog:
         )
         if not r.ok:
             raise RuntimeError(f"store_status upsert başarısız: {r.status_code} {r.text}")
+
+    def delete(self, store_id: str, product_codes: list[str] | None = None) -> int:
+        sid = _clean(store_id)
+        if not sid:
+            return 0
+
+        import requests
+
+        deleted = 0
+        if not product_codes:
+            response = requests.delete(
+                self._url(),
+                headers={**_headers(), "Prefer": "return=representation"},
+                params={"store_id": f"eq.{sid}"},
+                timeout=60,
+            )
+            if not response.ok:
+                raise RuntimeError(f"store_status silme başarısız: {response.status_code} {response.text}")
+            try:
+                return len(response.json() or [])
+            except Exception:
+                return 0
+
+        codes = sorted({_clean(code) for code in product_codes if _clean(code)})
+        chunk_size = 200
+        for start in range(0, len(codes), chunk_size):
+            chunk = codes[start:start + chunk_size]
+            code_filter = ",".join(chunk)
+            response = requests.delete(
+                self._url(),
+                headers={**_headers(), "Prefer": "return=representation"},
+                params={"store_id": f"eq.{sid}", "product_code": f"in.({code_filter})"},
+                timeout=60,
+            )
+            if not response.ok:
+                raise RuntimeError(f"store_status silme başarısız: {response.status_code} {response.text}")
+            try:
+                deleted += len(response.json() or [])
+            except Exception:
+                deleted += len(chunk)
+        return deleted
 
     def as_inventory_cache(self) -> dict:
         rows = self.list_by_store()
