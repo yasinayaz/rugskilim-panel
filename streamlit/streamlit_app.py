@@ -609,6 +609,26 @@ _GLOBAL_KIRMIZI_DB = _RUNTIME_DIR / "global_kirmizi.json"
 _PRODUCT_SOURCE_SYNC_DB = _RUNTIME_DIR / "product_source_sync.json"
 _STORE_INVENTORY_TTL_SN = 1800
 
+_SOLD_SITE_LABELS: dict[str, str] = {
+    "lmx":   "LoomixRugs",
+    "wcr":   "WoolCottonRugs",
+    "wtr":   "WovenTurkishRugs",
+    "wlr":   "WovenLoomRugs",
+    "lr":    "LoopRug",
+    "llc":   "RugsKilimLLC",
+    "rst":   "RugsShopTurkey",
+    "rks":   "RugsKilimStore",
+    "bhr":   "BohoRugHouse",
+    "old":   "OldNewRugs",
+    "pacht": "PatchArts",
+    "ilmek": "İlmekRug",
+}
+
+
+def _site_label(raw: str) -> str:
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return ", ".join(_SOLD_SITE_LABELS.get(p.lower(), p) for p in parts)
+
 
 def _stok_log_yaz(durum: str, detay: str = ""):
     ts = str(int(_time.time()))
@@ -3204,7 +3224,7 @@ with tab3:
                         "Ürün Kodu": urun.get("product_code", ""),
                         "kategori": urun.get("category", ""),
                         "satılan_tarih": urun.get("sold_at", ""),
-                        "site": urun.get("sold_site", ""),
+                        "site": _site_label(urun.get("sold_site", "")),
                         "müşteri": urun.get("customer_name", ""),
                         "telefon": urun.get("customer_phone", ""),
                         "iletişim_ülke": urun.get("customer_contact_country", ""),
