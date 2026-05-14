@@ -630,20 +630,6 @@ def _site_label(raw: str) -> str:
     return ", ".join(_SOLD_SITE_LABELS.get(p.lower(), p) for p in parts)
 
 
-def _tablo_kopyalama_metni(df, kolonlar: list[str]) -> str:
-    if df is None or getattr(df, "empty", True):
-        return ""
-
-    mevcut_kolonlar = [kolon for kolon in kolonlar if kolon in df.columns]
-    if not mevcut_kolonlar:
-        return ""
-
-    satirlar = ["\t".join(mevcut_kolonlar)]
-    for _, row in df[mevcut_kolonlar].fillna("").astype(str).iterrows():
-        satirlar.append("\t".join(str(row[kolon]) for kolon in mevcut_kolonlar))
-    return "\n".join(satirlar)
-
-
 def _stok_log_yaz(durum: str, detay: str = ""):
     ts = str(int(_time.time()))
     satir = f"{durum}|{ts}"
@@ -3111,9 +3097,8 @@ with tab3:
                     satirlar.append(satir)
 
                 if satirlar:
-                    aktif_df = pd.DataFrame(satirlar)
                     _secim = st.dataframe(
-                        aktif_df,
+                        pd.DataFrame(satirlar),
                         use_container_width=True,
                         hide_index=True,
                         on_select="rerun",
@@ -3128,19 +3113,6 @@ with tab3:
                             )
                     else:
                         _edit_btn_col.button("✏️ Düzenle", disabled=True, use_container_width=True, key="duzenle_btn")
-
-                    kopya_metin = _tablo_kopyalama_metni(
-                        aktif_df,
-                        ["Ürün Kodu", "cm", "m2", "ft", "kategori"],
-                    )
-                    if kopya_metin:
-                        st.caption("İlk 5 kolonu seçip `Ctrl+C` ile kopyalayabilirsiniz.")
-                        st.text_area(
-                            "Kopyalanabilir ilk 5 kolon",
-                            value=kopya_metin,
-                            height=min(360, max(120, 24 * (len(aktif_df) + 1))),
-                            key="urun_listesi_kopyalama_alani",
-                        )
                 else:
                     _secilen_satirlar = []
                     st.info("Gösterilecek ürün bulunamadı.")
@@ -3344,20 +3316,7 @@ with tab3:
                     })
 
                 if satilan_satirlar:
-                    satilan_df = pd.DataFrame(satilan_satirlar)
-                    st.dataframe(satilan_df, width="stretch", hide_index=True)
-                    kopya_metin = _tablo_kopyalama_metni(
-                        satilan_df,
-                        ["Ürün Kodu", "cm", "m2", "ft", "kategori"],
-                    )
-                    if kopya_metin:
-                        st.caption("İlk 5 kolonu seçip `Ctrl+C` ile kopyalayabilirsiniz.")
-                        st.text_area(
-                            "Satılanlar için kopyalanabilir ilk 5 kolon",
-                            value=kopya_metin,
-                            height=min(360, max(120, 24 * (len(satilan_df) + 1))),
-                            key="satilan_listesi_kopyalama_alani",
-                        )
+                    st.dataframe(pd.DataFrame(satilan_satirlar), width="stretch", hide_index=True)
                 else:
                     st.info("Satılan ürün bulunamadı.")
             except Exception as exc:
