@@ -527,7 +527,7 @@ for k, v in [
     ("aktif_islem_durumlari", {}),
     ("aktif_islem_ozeti", {}),
     ("stok_son_indirme", 0), ("ara_sonuclari", []), ("magazalar_root_id", None),
-    ("sifirla_onay", False), ("kuyruk_yuklendi", False), ("stok_indiriliyor", False),
+    ("kuyruk_yuklendi", False), ("stok_indiriliyor", False),
     ("stok_indir_hata", None), ("_cikis_yapildi", False),
     ("magaza_id", None), ("magaza_ad", None),
     ("hedef_magaza_id", "PatchArts"), ("kuyruk_magaza_id", None), ("ayar_magaza_id", None),
@@ -535,6 +535,8 @@ for k, v in [
     ("urun_formu_acik", False),
     ("satilan_urun_formu_acik", False),
     ("urun_alt_tab", "liste"),
+    ("_kuyruk_loading_ui", False),
+    ("_kuyruk_refresh_istek", False),
     ("_secim_limit_hatasi", None),
     ("_kaldirilacak_secim_id", None),
     ("_urun_katalog_cache", None),
@@ -2942,51 +2944,44 @@ with tab1:
 with tab2:
     @st.fragment
     def _tab2_kuyruk():
-        _t2h1, _t2h2, _t2h3 = st.columns([4, 1, 1])
+        _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
+        _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui"))
+        if _force_queue_refresh or _queue_loading_ui:
+            st.markdown(
+                """
+                <div class="loading-panel">
+                  <div class="loading-title">Kuyruk yenileniyor</div>
+                  <div class="loading-text">
+                    Sheets ve magaza durumlari yeniden okunuyor.
+                    Bu sirada tablo kisa sureli bos gorunse bile islem devam ediyor.
+                  </div>
+                  <div class="loading-dots">
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        _t2h1, _t2h2 = st.columns([5, 1])
         _t2h1.markdown(
             f"<div style='padding:4px 0;font-size:0.95rem;font-weight:600;color:#e6edf3;'>"
             f"Kuyruk — <span style='color:#f59e0b;'>{st.session_state.hedef_magaza_id}</span></div>",
             unsafe_allow_html=True
         )
-        yenile_btn   = _t2h2.button("🔄 Yenile", width="stretch")
-        tumu_sil_btn = _t2h3.button("🗑 Temizle", width="stretch")
-
-        if tumu_sil_btn:
-            st.session_state["sifirla_onay"] = True
-
-        if st.session_state.get("sifirla_onay"):
-            st.warning("**Tüm kuyruk silinecek.** Google Sheets'teki tüm satırlar kaldırılır. Emin misiniz?")
-            _oc1, _oc2, _ = st.columns([1, 1, 6])
-            if _oc1.button("✅ Evet, sil", type="primary"):
-                try:
-                    from shared.sheets import SheetsKatmani, BASLIK_SATIRI
-                    from shared.product_catalog import StoreCatalog, _supabase_ready
-                    ws = SheetsKatmani(st.session_state.hedef_magaza_id)._baglanti()
-                    ws.clear()
-                    ws.append_row(BASLIK_SATIRI)
-                    if _supabase_ready():
-                        StoreCatalog().delete(st.session_state.hedef_magaza_id)
-                    st.session_state.kuyruga_eklenenler = {}
-                    st.session_state.kuyruk_klasor_durumlari = {}
-                    st.session_state.sheet_renk_durumlari = {}
-                    st.session_state.klasor_id_durumlari = {}
-                    st.session_state["sifirla_onay"] = False
-                    st.success("✅ Kuyruk sıfırlandı.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ {e}")
-            if _oc2.button("İptal"):
-                st.session_state["sifirla_onay"] = False
-                st.rerun()
+        yenile_btn = _t2h2.button("🔄 Yenile", width="stretch")
 
         if yenile_btn:
+            st.session_state["_kuyruk_loading_ui"] = True
+            st.session_state["_kuyruk_refresh_istek"] = True
+            st.rerun(scope="fragment")
+
+        try:
             try:
                 _magaza_renk_cache_yenile(st.session_state.hedef_magaza_id)
             except Exception:
                 pass
-            st.rerun()
-
-        try:
             import pandas as pd
             from shared.product_catalog import _supabase_ready
             from shared.sheets import SheetsKatmani as _SK2
@@ -3120,7 +3115,9 @@ with tab2:
                             st.error(f"❌ {e}")
             else:
                 st.info("Kuyruk boş.")
+            st.session_state["_kuyruk_loading_ui"] = False
         except Exception as e:
+            st.session_state["_kuyruk_loading_ui"] = False
             st.warning(f"Sheets bağlantısı yok: {e}")
 
     _tab2_kuyruk()
@@ -3324,20 +3321,27 @@ with tab3:
                             st.session_state[_k] = _dv
                         st.rerun(scope="fragment")
 
-                    _f1, _f2, _f3 = st.columns(3)
-                    _f1.markdown(_zorunlu_label("Ürün kodu"), unsafe_allow_html=True)
-                    _f1.text_input("Ürün kodu", key="nuf_kod", label_visibility="collapsed")
-                    _f2.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
-                    _f2.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
-                    _f3.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
-                    _f3.number_input("Uzunluk cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_uz", label_visibility="collapsed")
+                    with st.form("new_product_quick_add_form", clear_on_submit=True):
+                        _f1, _f2, _f3 = st.columns(3)
+                        _f1.markdown(_zorunlu_label("Ürün kodu"), unsafe_allow_html=True)
+                        _f1.text_input("Ürün kodu", key="nuf_kod", label_visibility="collapsed")
+                        _f2.markdown(_zorunlu_label("Genişlik cm"), unsafe_allow_html=True)
+                        _f2.number_input("Genişlik cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_gen", label_visibility="collapsed")
+                        _f3.markdown(_zorunlu_label("Uzunluk cm"), unsafe_allow_html=True)
+                        _f3.number_input("Uzunluk cm", min_value=0.0, step=1.0, format="%.0f", key="nuf_cm_uz", label_visibility="collapsed")
 
-                    if _yeni_m2_raw is not None:
-                        st.caption(f"m², ft ölçüleri ve kategori kayıt sırasında otomatik hesaplanır. Tahmini alan: **{_yeni_m2_raw:.2f} m²**")
-                    else:
-                        st.caption("ft ölçüleri, m² ve kategori kayıt sırasında otomatik hesaplanır.")
+                        if _yeni_m2_raw is not None:
+                            st.caption(f"m², ft ölçüleri ve kategori kayıt sırasında otomatik hesaplanır. Tahmini alan: **{_yeni_m2_raw:.2f} m²**")
+                        else:
+                            st.caption("3 zorunlu alanı girip kaydedin; ürün hemen listeye eklenir. ft ölçüleri, m² ve kategori otomatik hesaplanır.")
 
-                    if st.button("➕ Ürün Ekle", type="primary", use_container_width=True, key="nuf_ekle_btn"):
+                        _quick_add_submit = st.form_submit_button(
+                            "➕ Ürün Ekle",
+                            type="primary",
+                            width="stretch",
+                        )
+
+                    if _quick_add_submit:
                         _nuf_kod = st.session_state.nuf_kod
                         _nuf_cmg = float(st.session_state.nuf_cm_gen or 0)
                         _nuf_cmu = float(st.session_state.nuf_cm_uz or 0)
@@ -3379,11 +3383,12 @@ with tab3:
                                 updated_at=_time.strftime("%Y-%m-%d %H:%M"),
                             )
                             _urunleri_kaydet([*urunler, eklenen])
-                            for _k, _dv in _NUF.items():
-                                st.session_state[_k] = _dv
-                            st.session_state.urun_formu_acik = False
-                            st.success(f"{kod} eklendi.")
+                            st.session_state["_son_eklenen_urun_kodu"] = kod
                             st.rerun()
+
+            _son_eklenen_urun = st.session_state.pop("_son_eklenen_urun_kodu", "")
+            if _son_eklenen_urun:
+                st.success(f"{_son_eklenen_urun} eklendi. Listeye en ustte alindi.")
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
             _l1, _l2 = st.columns([3.7, 1.9])
@@ -3406,6 +3411,21 @@ with tab3:
                 gosterilecek = [u for u in gosterilecek if not str(u.get("category", "")).strip()]
             elif kategori_filtre != "Tümü":
                 gosterilecek = [u for u in gosterilecek if str(u.get("category", "")).strip() == kategori_filtre]
+
+            def _aktif_urun_siralama(urun: dict):
+                raw_updated = str(urun.get("updated_at", "")).strip()
+                if raw_updated:
+                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                        try:
+                            return (3, datetime.strptime(raw_updated, fmt).timestamp())
+                        except Exception:
+                            pass
+                raw_source = str(urun.get("source_row", "")).strip()
+                if raw_source.isdigit():
+                    return (2, int(raw_source))
+                return (1, 0)
+
+            gosterilecek = sorted(gosterilecek, key=_aktif_urun_siralama, reverse=True)
 
             try:
                 from shared.store_manager import tum_magazalar as _tum_mag_liste
@@ -3444,6 +3464,7 @@ with tab3:
                     stores.update(canli_magaza_haritasi.get(kod, set()))
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
+                        "durum": f"Yuklendi ({len(stores)})" if stores else "Bekliyor",
                         "cm": urun.get("size_cm", ""),
                         "m2": urun.get("area_m2", ""),
                         "ft": urun.get("size_ft", ""),
