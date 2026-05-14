@@ -1424,23 +1424,33 @@ def _supabase_kuyruk_satirlari(store_id: str):
     }
 
     sheet_map = {}
+    sheet_renkleri = {}
     try:
         from shared.sheets import SheetsKatmani as _SK_QUEUE_META
 
-        for row in _SK_QUEUE_META(store_id).tum_satirlar_al():
+        _sheet = _SK_QUEUE_META(store_id)
+        for row in _sheet.tum_satirlar_al():
             kod = _urun_kodu_normalize(row.get("urun_id", "")) or _urun_kodu_al(row.get("urun_id", ""))
             if kod:
                 sheet_map[kod] = row
+        sheet_renkleri = {
+            (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
+            for k, v in _sheet.urun_renk_durumlari_al().items()
+            if (_urun_kodu_normalize(k) or _urun_kodu_al(k))
+        }
     except Exception:
         sheet_map = {}
+        sheet_renkleri = {}
 
     satirlar = []
+    eklenen_kodlar = set()
     for row in store_rows:
         kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
         if not kod:
             continue
         product = product_map.get(str(row.get("product_code") or "").strip(), {})
         sheet_row = sheet_map.get(kod, {})
+        renk = str(row.get("renk") or sheet_renkleri.get(kod) or "").strip().lower()
         satirlar.append({
             "urun_id": str(row.get("product_code") or sheet_row.get("urun_id") or "").strip(),
             "boyut_ft": str(sheet_row.get("boyut_ft") or product.get("size_ft") or "").strip(),
@@ -1451,7 +1461,30 @@ def _supabase_kuyruk_satirlari(store_id: str):
             "islem_tarihi": str(row.get("islem_tarihi") or sheet_row.get("islem_tarihi") or "").strip(),
             "etsy_draft_url": str(row.get("etsy_draft_url") or sheet_row.get("etsy_draft_url") or "").strip(),
             "pcloud_klasor_id": str(sheet_row.get("pcloud_klasor_id") or "").strip(),
-            "renk": str(row.get("renk") or "").strip().lower(),
+            "renk": renk,
+        })
+        eklenen_kodlar.add(kod)
+
+    # Gecmiste sadece Google Sheet'te kalmis yuklu/silinmis satirlari da gorunumde tut.
+    for kod, sheet_row in sheet_map.items():
+        if kod in eklenen_kodlar:
+            continue
+        renk = str(sheet_renkleri.get(kod) or "").strip().lower()
+        status = str(sheet_row.get("status") or "").strip().lower()
+        if renk not in {"green", "red", "yellow"} and status not in {"pending", "ready", "downloading", "downloaded", "uploading", "done", "error"}:
+            continue
+        product = product_map.get(str(sheet_row.get("urun_id") or "").strip(), {})
+        satirlar.append({
+            "urun_id": str(sheet_row.get("urun_id") or "").strip(),
+            "boyut_ft": str(sheet_row.get("boyut_ft") or product.get("size_ft") or "").strip(),
+            "fiyat_usd": str(sheet_row.get("fiyat_usd") or "").strip(),
+            "baslik": str(sheet_row.get("baslik") or product.get("note") or "").strip(),
+            "durum": status,
+            "status": status,
+            "islem_tarihi": str(sheet_row.get("islem_tarihi") or "").strip(),
+            "etsy_draft_url": str(sheet_row.get("etsy_draft_url") or "").strip(),
+            "pcloud_klasor_id": str(sheet_row.get("pcloud_klasor_id") or "").strip(),
+            "renk": renk,
         })
 
     satirlar.sort(
