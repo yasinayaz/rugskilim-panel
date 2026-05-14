@@ -161,6 +161,64 @@ section.main { background-color: var(--bg-0) !important; }
   line-height: 1;
 }
 
+.loading-panel {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #161b22 0%, #1f2937 100%);
+  border: 1px solid #374151;
+  border-radius: 18px;
+  padding: 18px 20px;
+  margin: 10px 0 18px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.28);
+}
+.loading-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  animation: loading-sweep 1.4s ease-in-out infinite;
+}
+.loading-title {
+  position: relative;
+  z-index: 1;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 6px;
+}
+.loading-text {
+  position: relative;
+  z-index: 1;
+  font-size: 0.92rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+.loading-dots {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.loading-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #334155;
+  animation: loading-pulse 1.2s ease-in-out infinite;
+}
+.loading-dot:nth-child(1) { background: #60a5fa; }
+.loading-dot:nth-child(2) { background: #fbbf24; animation-delay: 0.15s; }
+.loading-dot:nth-child(3) { background: #22c55e; animation-delay: 0.3s; }
+@keyframes loading-sweep {
+  100% { transform: translateX(100%); }
+}
+@keyframes loading-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.55; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
 .req-star {
   color: #ef4444;
   font-weight: 700;
@@ -3157,12 +3215,34 @@ with tab3:
     @st.fragment
     def _tab3_urunler():
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
-        try:
-            urunler = _urunleri_yukle(
-                force_source_sync=False,
-                force_store_refresh=_force_store_refresh,
+        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui"))
+        if _force_store_refresh or _urunler_loading_ui:
+            st.markdown(
+                """
+                <div class="loading-panel">
+                  <div class="loading-title">Magaza durumlari yenileniyor</div>
+                  <div class="loading-text">
+                    Sheet renkleri ve Supabase magaza kayitlari tekrar eslestiriliyor.
+                    Bu sirada ekran bos gorunse bile islem devam ediyor.
+                  </div>
+                  <div class="loading-dots">
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+        try:
+            with st.spinner("Urunler ve magaza durumlari yenileniyor..."):
+                urunler = _urunleri_yukle(
+                    force_source_sync=False,
+                    force_store_refresh=_force_store_refresh,
+                )
+            st.session_state["_urunler_loading_ui"] = False
         except Exception as exc:
+            st.session_state["_urunler_loading_ui"] = False
             urunler = _panel_urunleri_yerden_yukle()
             if urunler:
                 st.warning(f"Canlı katalog okunamadı, yerel stok gösteriliyor: {exc}")
@@ -3175,28 +3255,30 @@ with tab3:
 
         _liste_aktif = st.session_state.urun_alt_tab == "liste"
         _satilan_aktif = st.session_state.urun_alt_tab == "satilan"
-        _b1, _b2, _sp, _stats_col, _refresh_col, _btn_col = st.columns(
-            [1.6, 1.7, 2.9, 2.3, 1.5, 1.8], vertical_alignment="center"
+        _tabs_col, _stats_col, _refresh_col, _btn_col = st.columns(
+            [4.0, 2.6, 1.6, 1.9], vertical_alignment="center"
         )
-        if _b1.button(
-            "Ürün Listesi",
-            key="urun_alt_tab_liste",
-            width="stretch",
-            type="primary" if _liste_aktif else "secondary",
-        ):
-            st.session_state.urun_alt_tab = "liste"
-            st.rerun(scope="fragment")
-        if _b2.button(
-            "Satılan Ürünler",
-            key="urun_alt_tab_satilan",
-            width="stretch",
-            type="primary" if _satilan_aktif else "secondary",
-        ):
-            st.session_state.urun_alt_tab = "satilan"
-            st.rerun(scope="fragment")
+        with _tabs_col:
+            _b1, _b2 = st.columns(2, vertical_alignment="center")
+            if _b1.button(
+                "Ürün Listesi",
+                key="urun_alt_tab_liste",
+                width="stretch",
+                type="primary" if _liste_aktif else "secondary",
+            ):
+                st.session_state.urun_alt_tab = "liste"
+                st.rerun(scope="fragment")
+            if _b2.button(
+                "Satılan Ürünler",
+                key="urun_alt_tab_satilan",
+                width="stretch",
+                type="primary" if _satilan_aktif else "secondary",
+            ):
+                st.session_state.urun_alt_tab = "satilan"
+                st.rerun(scope="fragment")
         with _stats_col:
             st.markdown(
-                "<div class='compact-stats' style='justify-content:flex-end; margin:0;'>"
+                "<div class='compact-stats' style='justify-content:flex-start; flex-wrap:nowrap; margin:0;'>"
                 f"<div class='compact-stat'><span class='compact-stat-label'>Aktif</span>"
                 f"<span class='compact-stat-value'>{len(aktifler)}</span></div>"
                 f"<div class='compact-stat'><span class='compact-stat-label'>Satılan</span>"
@@ -3207,6 +3289,7 @@ with tab3:
         with _refresh_col:
             if st.button("🔄 Yenile", width="stretch", key="urun_list_refresh_btn"):
                 _urun_katalog_cache_temizle()
+                st.session_state["_urunler_loading_ui"] = True
                 st.session_state["_urunler_store_refresh"] = True
                 st.rerun(scope="fragment")
         with _btn_col:
@@ -3303,15 +3386,13 @@ with tab3:
                             st.rerun()
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-            _l1, _l2, _l3, _l4 = st.columns([3.5, 1.9, 1.2, 1.8])
+            _l1, _l2 = st.columns([3.7, 1.9])
             filtre = _l1.text_input("Ara", placeholder="Ürün kodu veya not")
             kategori_opsiyonlari = ["Tümü", "Boş", "Doormat", "Area", "Runner"]
             kategori_filtre = _l2.selectbox("Kategori", kategori_opsiyonlari, index=0)
-            sadece_aktif = _l3.toggle("Sadece aktif", value=True)
-            _l4.empty()
             _urun_aksiyon_alani = st.container()
 
-            gosterilecek = aktifler if sadece_aktif else urunler
+            gosterilecek = aktifler
             if filtre.strip():
                 needle = filtre.strip().lower()
                 gosterilecek = [
@@ -3337,6 +3418,18 @@ with tab3:
                     if magaza.strip()
                 })
 
+            envanter_cache = _envanter_cache_dosyadan_yukle()
+            canli_magaza_haritasi = {}
+            for magaza in magaza_adlari:
+                store_data = ((envanter_cache.get("stores") or {}).get(magaza) or {})
+                for kod, magaza_urun in (store_data.get("urunler") or {}).items():
+                    norm_kod = _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
+                    if not norm_kod:
+                        continue
+                    if str((magaza_urun or {}).get("renk") or "").strip().lower() != "green":
+                        continue
+                    canli_magaza_haritasi.setdefault(norm_kod, set()).add(magaza)
+
             try:
                 import pandas as pd
 
@@ -3347,13 +3440,15 @@ with tab3:
                         for s in str(urun.get("loaded_stores", "")).split(",")
                         if s.strip()
                     }
+                    kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
+                    stores.update(canli_magaza_haritasi.get(kod, set()))
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
                         "cm": urun.get("size_cm", ""),
                         "m2": urun.get("area_m2", ""),
                         "ft": urun.get("size_ft", ""),
                         "kategori": urun.get("category", ""),
-                        "yüklü": int(urun.get("loaded_store_count") or 0),
+                        "yüklü": len(stores),
                     }
                     for magaza in magaza_adlari:
                         satir[magaza] = "🟢" if magaza in stores else "⚪"
