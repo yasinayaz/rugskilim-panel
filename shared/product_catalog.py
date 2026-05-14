@@ -151,7 +151,7 @@ def _schema_missing_column(response_text: str) -> str | None:
 
 
 class ProductCatalog:
-    def list_products(self) -> list[dict]:
+    def list_products(self, include_store_presence: bool = False) -> list[dict]:
         import requests
         products = []
         page_size = 1000
@@ -171,32 +171,34 @@ class ProductCatalog:
                 break
             offset += page_size
 
-        # Mağaza bilgilerini product_store_status'tan ekle (sayfalama ile)
-        try:
-            store_rows = []
-            s_offset = 0
-            while True:
-                page = requests.get(
-                    f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}",
-                    headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{s_offset}-{s_offset + 999}"},
-                    params={"select": "product_code,store_id,status,renk"},
-                    timeout=30,
-                ).json()
-                store_rows.extend(page)
-                if len(page) < 1000:
-                    break
-                s_offset += 1000
-            store_map: dict[str, list[str]] = {}
-            for row in store_rows:
-                if row.get("renk") == "green" or row.get("status") == "done":
-                    store_map.setdefault(row["product_code"], []).append(row["store_id"])
-            for p in products:
-                code = p.get("product_code", "")
-                stores = store_map.get(code, [])
-                p["loaded_stores"] = ", ".join(sorted(stores))
-                p["loaded_store_count"] = len(stores)
-        except Exception:
-            pass
+        if include_store_presence:
+            # Bu ek tarama binlerce store_status satiri oldugunda pahali oldugu icin
+            # varsayilan olarak kapali tutulur; urun listesi tek API ile acilsin.
+            try:
+                store_rows = []
+                s_offset = 0
+                while True:
+                    page = requests.get(
+                        f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}",
+                        headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{s_offset}-{s_offset + 999}"},
+                        params={"select": "product_code,store_id,status,renk"},
+                        timeout=30,
+                    ).json()
+                    store_rows.extend(page)
+                    if len(page) < 1000:
+                        break
+                    s_offset += 1000
+                store_map: dict[str, list[str]] = {}
+                for row in store_rows:
+                    if row.get("renk") == "green" or row.get("status") == "done":
+                        store_map.setdefault(row["product_code"], []).append(row["store_id"])
+                for p in products:
+                    code = p.get("product_code", "")
+                    stores = store_map.get(code, [])
+                    p["loaded_stores"] = ", ".join(sorted(stores))
+                    p["loaded_store_count"] = len(stores)
+            except Exception:
+                pass
 
         return products
 

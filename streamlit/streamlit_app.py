@@ -1119,6 +1119,61 @@ def _urunleri_kaydet(products: list[dict], *, incremental: bool = False, sync_sh
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
 
 
+def _urunleri_cachede_uste_tut(urun: dict):
+    kod = str((urun or {}).get("product_code") or "").strip()
+    if not kod:
+        return
+
+    mevcut_cache = st.session_state.get("_urun_katalog_cache")
+    if mevcut_cache is None:
+        mevcut = _panel_urunleri_yerden_yukle()
+    else:
+        mevcut = [dict(item) for item in mevcut_cache]
+
+    yeni_liste = [dict(urun)]
+    yeni_liste.extend(
+        item for item in mevcut
+        if str(item.get("product_code") or "").strip() != kod
+    )
+    yeni_liste = _silinenleri_filtrele(yeni_liste)
+
+    stok = _stok_dosya_yolu()
+    st.session_state["_urun_katalog_cache"] = [dict(item) for item in yeni_liste]
+    st.session_state["_urun_katalog_cache_ts"] = _time.time()
+    st.session_state["_urun_katalog_cache_stok_mtime"] = float(stok.stat().st_mtime) if stok.exists() else 0.0
+    _json_kaydet(_RUNTIME_DIR / "panel_products.json", yeni_liste)
+
+
+def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True):
+    payload = [dict(item) for item in (products or [])]
+
+    def _job():
+        from shared.product_catalog import ProductCatalog, _supabase_ready
+
+        try:
+            if _supabase_ready():
+                ProductCatalog().upsert_products(payload)
+                if sync_sheet:
+                    from shared.product_sheet_sync import sync_product_sheet
+                    sync_product_sheet(force=True)
+            elif incremental:
+                mevcut = _json_yukle(_RUNTIME_DIR / "panel_products.json", [])
+                mevcut_map = {
+                    str(item.get("product_code") or "").strip(): dict(item)
+                    for item in mevcut
+                    if str(item.get("product_code") or "").strip()
+                }
+                for urun in payload:
+                    kod = str(urun.get("product_code") or "").strip()
+                    if kod:
+                        mevcut_map[kod] = dict(urun)
+                _json_kaydet(_RUNTIME_DIR / "panel_products.json", list(mevcut_map.values()))
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urun-kaydet").start()
+
+
 def _urun_katalog_cache_temizle():
     st.session_state["_urun_katalog_cache"] = None
     st.session_state["_urun_katalog_cache_ts"] = 0.0
@@ -1585,7 +1640,9 @@ def _json_kaydet(path: Path, veri):
 
 
 def _panel_urunleri_yerden_yukle() -> list[dict]:
-    return _json_yukle(_RUNTIME_DIR / "panel_products.json", [])
+    # Yerel fallback kaynagi da silinen urunler listesini dikkate almali;
+    # aksi halde canli katalog okunamadiginda silinmis kodlar tekrar gorunebiliyor.
+    return _silinenleri_filtrele(_json_yukle(_RUNTIME_DIR / "panel_products.json", []))
 
 
 def _kod_key(value) -> str:
@@ -1645,12 +1702,15 @@ def _zorunlu_label(text: str) -> str:
 
 def _envanter_cache_yukle():
     from shared.product_catalog import StoreCatalog, _supabase_ready
+    dosya_cache = _envanter_cache_dosyadan_yukle()
+    if not _envanter_cache_stale_mi(dosya_cache):
+        return dosya_cache
     if _supabase_ready():
         try:
             return StoreCatalog().as_inventory_cache()
         except Exception:
             pass
-    return _json_yukle(_STORE_INVENTORY_DB, {"updated_at": 0, "stores": {}, "errors": {}})
+    return dosya_cache
 
 
 def _envanter_cache_dosyadan_yukle():
@@ -1868,9 +1928,9 @@ def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None =
 
     if hedef_store_ids:
         if not force and all(not _magaza_cache_stale_mi(dosya_cache, sid) for sid in hedef_store_ids):
-            return _envanter_cache_yukle()
+            return dosya_cache
     elif not force and not _envanter_cache_stale_mi(dosya_cache):
-        return _envanter_cache_yukle()
+        return dosya_cache
 
     yeni_cache = {
         "updated_at": _time.time(),
@@ -3468,8 +3528,10 @@ with tab_urunler:
                             )
                             try:
                                 _silinen_urunden_cikar(kod)
-                                _urunleri_kaydet([eklenen], incremental=True, sync_sheet=True)
+                                _urunleri_cachede_uste_tut(eklenen)
+                                _urunleri_kaydet_arkaplanda([eklenen], incremental=True, sync_sheet=True)
                                 st.session_state["_son_eklenen_urun_kodu"] = kod
+                                st.session_state["_urun_listesi_oncele_kod"] = kod
                                 st.rerun()
                             except Exception as exc:
                                 st.error(f"{kod} eklenemedi: {exc}")
@@ -3504,6 +3566,10 @@ with tab_urunler:
                 gosterilecek = [u for u in gosterilecek if str(u.get("category", "")).strip() == kategori_filtre]
 
             def _aktif_urun_siralama(urun: dict):
+                oncelikli_kod = str(st.session_state.get("_urun_listesi_oncele_kod") or "").strip()
+                urun_kodu = str(urun.get("product_code") or "").strip()
+                if oncelikli_kod and urun_kodu == oncelikli_kod:
+                    return (4, float("inf"))
                 raw_updated = str(urun.get("updated_at", "")).strip()
                 if raw_updated:
                     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
