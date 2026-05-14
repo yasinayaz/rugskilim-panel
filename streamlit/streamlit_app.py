@@ -667,6 +667,7 @@ _STORE_INVENTORY_DB = _RUNTIME_DIR / "store_inventory.json"
 _SOLD_NOTES_DB = _RUNTIME_DIR / "sold_notes.json"
 _GLOBAL_KIRMIZI_DB = _RUNTIME_DIR / "global_kirmizi.json"
 _PRODUCT_SOURCE_SYNC_DB = _RUNTIME_DIR / "product_source_sync.json"
+_DELETED_PRODUCTS_DB = _RUNTIME_DIR / "deleted_products.json"
 _STORE_INVENTORY_TTL_SN = 1800
 
 _SOLD_SITE_LABELS: dict[str, str] = {
@@ -1001,6 +1002,7 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
         return False
 
     kaynak = kaynak_urunler or _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
+    kaynak = _silinenleri_filtrele(kaynak)
     ProductCatalog().replace_from_source(kaynak)
     _json_kaydet(
         _PRODUCT_SOURCE_SYNC_DB,
@@ -1072,20 +1074,44 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
         mevcut = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
 
+    mevcut = _silinenleri_filtrele(mevcut)
     st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
     st.session_state["_urun_katalog_cache_ts"] = _time.time()
     st.session_state["_urun_katalog_cache_stok_mtime"] = stok_mtime
     return mevcut
 
 
-def _urunleri_kaydet(products: list[dict]):
+def _urun_sheet_sync_arkaplanda(force: bool = True):
+    def _job():
+        try:
+            from shared.product_sheet_sync import sync_product_sheet
+            sync_product_sheet(force=force)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urun-sheet-sync").start()
+
+
+def _urunleri_kaydet(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True):
     from shared.product_catalog import ProductCatalog, _supabase_ready
-    from shared.product_sheet_sync import sync_product_sheet
 
     if _supabase_ready():
         ProductCatalog().upsert_products(products)
-        sync_product_sheet(force=True)
+        if sync_sheet:
+            _urun_sheet_sync_arkaplanda(force=True)
     else:
+        if incremental:
+            mevcut = _panel_urunleri_yerden_yukle()
+            mevcut_map = {
+                str(item.get("product_code") or "").strip(): dict(item)
+                for item in mevcut
+                if str(item.get("product_code") or "").strip()
+            }
+            for urun in products:
+                kod = str(urun.get("product_code") or "").strip()
+                if kod:
+                    mevcut_map[kod] = dict(urun)
+            products = list(mevcut_map.values())
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", products)
         st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
     st.session_state["_urun_katalog_cache"] = None
@@ -1560,6 +1586,57 @@ def _json_kaydet(path: Path, veri):
 
 def _panel_urunleri_yerden_yukle() -> list[dict]:
     return _json_yukle(_RUNTIME_DIR / "panel_products.json", [])
+
+
+def _kod_key(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _silinen_urunler_db_yukle():
+    return _json_yukle(_DELETED_PRODUCTS_DB, {"updated_at": 0, "codes": []})
+
+
+def _silinen_urun_kodlari() -> set[str]:
+    return {
+        _kod_key(code)
+        for code in (_silinen_urunler_db_yukle().get("codes") or [])
+        if _kod_key(code)
+    }
+
+
+def _silinen_urun_kodlari_kaydet(kodlar) -> None:
+    temiz = sorted({_kod_key(kod) for kod in kodlar if _kod_key(kod)})
+    _json_kaydet(
+        _DELETED_PRODUCTS_DB,
+        {"updated_at": _time.time(), "codes": temiz},
+    )
+
+
+def _silinen_urune_ekle(kod: str) -> None:
+    kodlar = _silinen_urun_kodlari()
+    key = _kod_key(kod)
+    if not key:
+        return
+    kodlar.add(key)
+    _silinen_urun_kodlari_kaydet(kodlar)
+
+
+def _silinen_urunden_cikar(kod: str) -> None:
+    kodlar = _silinen_urun_kodlari()
+    key = _kod_key(kod)
+    if key in kodlar:
+        kodlar.remove(key)
+        _silinen_urun_kodlari_kaydet(kodlar)
+
+
+def _silinenleri_filtrele(products: list[dict]) -> list[dict]:
+    silinenler = _silinen_urun_kodlari()
+    if not silinenler:
+        return products
+    return [
+        urun for urun in products
+        if _kod_key(urun.get("product_code")) not in silinenler
+    ]
 
 
 def _zorunlu_label(text: str) -> str:
@@ -2298,17 +2375,17 @@ if _okunmamis_not_sayisi:
     )
 
 _notlar_etiketi = f"📝  Notlar ({_okunmamis_not_sayisi})" if _okunmamis_not_sayisi else "📝  Notlar"
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📦  Ürün Seç",
-    "📋  Kuyruk",
+tab_urunler, tab_urun_sec, tab_olcu_ara, tab_kuyruk, tab_ayarlar, tab_notlar = st.tabs([
     "🗂️  Ürünler",
-    "⚙️  Ayarlar",
+    "📦  Ürün Seç",
     "🔍  Ölçü Ara",
+    "📋  Kuyruk",
+    "⚙️  Ayarlar",
     _notlar_etiketi,
 ])
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
-with tab1:
+with tab_urun_sec:
     if not st.session_state.pcloud_token:
         # ── Login formu ──
         st.markdown("<div style='max-width:480px;margin:40px auto;'>", unsafe_allow_html=True)
@@ -2941,7 +3018,7 @@ with tab1:
 
 
 # ══ TAB 2 ════════════════════════════════════════════════════════════════════
-with tab2:
+with tab_kuyruk:
     @st.fragment
     def _tab2_kuyruk():
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
@@ -3124,7 +3201,7 @@ with tab2:
 
 
 # ══ TAB 3 ════════════════════════════════════════════════════════════════════
-with tab3:
+with tab_urunler:
     @st.dialog("Ürün Düzenle", width="large")
     def _urun_edit_dialog(urun: dict):
         import time as _t
@@ -3139,7 +3216,6 @@ with tab3:
         _es1, _es2, _es3 = st.columns([2, 2, 1])
         if _es1.button("Kaydet", type="primary", use_container_width=True):
             from shared.product_catalog import ProductCatalog as _PC
-            from shared.product_sheet_sync import sync_product_sheet as _sync_product_sheet
             import requests as _req, os as _os
             _new_code = _yeni_kod.strip()
             _derived = _derived_product_fields(_cm_gen, _cm_uz)
@@ -3172,7 +3248,7 @@ with tab3:
                 _rename_resp.raise_for_status()
                 _updated["product_code"] = _new_code
             _PC().upsert_products([_updated])
-            _sync_product_sheet(force=True)
+            _urun_sheet_sync_arkaplanda(force=True)
             _urun_katalog_cache_temizle()
             st.success("Kaydedildi.")
             st.rerun()
@@ -3189,22 +3265,30 @@ with tab3:
             st.warning(f"**{urun.get('product_code')}** silinecek. Emin misiniz?")
             _so1, _so2 = st.columns(2)
             if _so1.button("Evet, sil", type="primary", use_container_width=True):
-                from shared.product_sheet_sync import sync_product_sheet as _sync_product_sheet
-                import requests as _req2, os as _os2
-                _supa_url2 = _os2.environ.get("SUPABASE_URL", "").rstrip("/")
-                _supa_key2 = _os2.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-                _delete_resp = _req2.delete(
-                    f"{_supa_url2}/rest/v1/products",
-                    headers={"apikey": _supa_key2, "Authorization": f"Bearer {_supa_key2}"},
-                    params={"product_code": f"eq.{urun.get('product_code')}"},
-                    timeout=30,
-                )
-                _delete_resp.raise_for_status()
-                _sync_product_sheet(force=True)
-                _urun_katalog_cache_temizle()
-                st.session_state.pop("_sil_onay", None)
-                st.success("Silindi.")
-                st.rerun()
+                from shared.product_catalog import ProductCatalog as _PC2, StoreCatalog as _SC2, _supabase_ready as _supabase_ready2
+                _silinecek_kod = str(urun.get("product_code") or "").strip()
+                try:
+                    if _supabase_ready2():
+                        _PC2().delete_products([_silinecek_kod])
+                        try:
+                            for _magaza in _SC2().as_inventory_cache().get("stores", {}).keys():
+                                _SC2().delete(_magaza, [_silinecek_kod])
+                        except Exception:
+                            pass
+                        _urun_sheet_sync_arkaplanda(force=True)
+                    else:
+                        _yerel = [
+                            item for item in _panel_urunleri_yerden_yukle()
+                            if str(item.get("product_code") or "").strip() != _silinecek_kod
+                        ]
+                        _json_kaydet(_RUNTIME_DIR / "panel_products.json", _yerel)
+                    _silinen_urune_ekle(_silinecek_kod)
+                    _urun_katalog_cache_temizle()
+                    st.session_state.pop("_sil_onay", None)
+                    st.session_state["_son_silinen_urun_kodu"] = _silinecek_kod
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"{_silinecek_kod} silinemedi: {exc}")
             if _so2.button("Vazgeç", use_container_width=True):
                 st.session_state.pop("_sil_onay", None)
                 st.rerun()
@@ -3380,15 +3464,22 @@ with tab3:
                                 customer_address="",
                                 customer_contact_country="",
                                 note="",
-                                updated_at=_time.strftime("%Y-%m-%d %H:%M"),
+                                updated_at=_time.strftime("%Y-%m-%d %H:%M:%S"),
                             )
-                            _urunleri_kaydet([*urunler, eklenen])
-                            st.session_state["_son_eklenen_urun_kodu"] = kod
-                            st.rerun()
+                            try:
+                                _silinen_urunden_cikar(kod)
+                                _urunleri_kaydet([eklenen], incremental=True, sync_sheet=True)
+                                st.session_state["_son_eklenen_urun_kodu"] = kod
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"{kod} eklenemedi: {exc}")
 
             _son_eklenen_urun = st.session_state.pop("_son_eklenen_urun_kodu", "")
             if _son_eklenen_urun:
-                st.success(f"{_son_eklenen_urun} eklendi. Listeye en ustte alindi.")
+                st.success(f"{_son_eklenen_urun} eklendi. Liste yenilenirken en ustte gorunmeli.")
+            _son_silinen_urun = st.session_state.pop("_son_silinen_urun_kodu", "")
+            if _son_silinen_urun:
+                st.success(f"{_son_silinen_urun} silindi. Satirdan tamamen kaldirildi.")
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
             _l1, _l2 = st.columns([3.7, 1.9])
@@ -3776,7 +3867,7 @@ with tab3:
 
 
 # ══ TAB 4 ════════════════════════════════════════════════════════════════════
-with tab4:
+with tab_ayarlar:
     _store_tab, _api_tab = st.tabs(["Mağaza Yönetimi", "API"])
 
     with _api_tab:
@@ -4372,7 +4463,7 @@ with tab4:
 
 
 # ══ TAB 5 ════════════════════════════════════════════════════════════════════
-with tab5:
+with tab_olcu_ara:
     @st.fragment
     def _tab5_ara():
         import pandas as pd
@@ -4564,7 +4655,7 @@ with tab5:
 
 
 # ══ TAB 6 ════════════════════════════════════════════════════════════════════
-with tab6:
+with tab_notlar:
     @st.fragment
     def _tab6_notlar():
         st.markdown("#### Satılan Ürün Notları")
