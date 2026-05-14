@@ -461,6 +461,7 @@ hr { border-color: var(--border) !important; }
 for k, v in [
     ("pcloud_token", None), ("klasorler", []), ("secilen", []), ("klasor_id", 0),
     ("klasor_gecmisi", []), ("kuyruga_eklenenler", {}), ("onizleme", None),
+    ("kuyruk_klasor_durumlari", {}),
     ("sheet_renk_durumlari", {}),
     ("sheet_renk_cache_ts", 0.0),
     ("global_kirmizi_kodlar", []),
@@ -1215,6 +1216,11 @@ if not st.session_state.get("kuyruk_yuklendi"):
             _ilk_kod(str(s.get("urun_id", ""))): str(s.get("status", "pending"))
             for s in _satirlar_init if s.get("urun_id")
         }
+        st.session_state.kuyruk_klasor_durumlari = {
+            str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "pending")).strip().lower()
+            for s in _satirlar_init
+            if str(s.get("pcloud_klasor_id", "")).strip()
+        }
         st.session_state.sheet_renk_durumlari = {}
         st.session_state.klasor_id_durumlari = {}
         st.session_state.kuyruk_magaza_id = st.session_state.hedef_magaza_id
@@ -1235,6 +1241,23 @@ def _urun_kodu_al(deger: str) -> str:
     metin = str(deger or "").strip()
     eslesme = _re.match(r"(\d+)", metin)
     return eslesme.group(1) if eslesme else _kod_normalize(metin)
+
+
+def _urun_kodu_adaylari(deger: str) -> list[str]:
+    metin = str(deger or "").strip()
+    if not metin:
+        return []
+
+    adaylar = []
+    for eslesme in _re.finditer(r"([A-Za-z]{0,3})\s*(\d{2,})", metin):
+        harf = (eslesme.group(1) or "").strip().lower()
+        rakam = (eslesme.group(2) or "").strip()
+        if not rakam or set(rakam) == {"0"}:
+            continue
+        adaylar.append((f"{harf}{rakam}" if harf else rakam, len(rakam), len(harf)))
+
+    adaylar.sort(key=lambda item: (item[1], item[2], len(item[0])), reverse=True)
+    return list(dict.fromkeys(item[0] for item in adaylar))
 
 
 def _urun_kodu_normalize(deger: str):
@@ -1265,6 +1288,25 @@ def _klasor_urun_kodu_al(klasor_adi: str):
 
     kod = _urun_kodu_normalize(metin)
     return kod or None
+
+
+def _guvenli_urun_kodu_bul(klasor_adi: str, dosya_adlari: list[str] | None = None) -> str:
+    aday_metinler = []
+    if dosya_adlari:
+        aday_metinler.extend(
+            str(ad or "").strip()
+            for ad in dosya_adlari
+            if "m2" in str(ad or "").lower()
+        )
+        aday_metinler.extend(str(ad or "").strip() for ad in dosya_adlari)
+    aday_metinler.append(str(klasor_adi or "").strip())
+
+    for metin in aday_metinler:
+        adaylar = _urun_kodu_adaylari(metin)
+        if adaylar:
+            return adaylar[0]
+
+    return _klasor_urun_kodu_al(klasor_adi) or _urun_kodu_al(klasor_adi) or str(klasor_adi or "").strip()
 
 
 def _sheet_renk_durumu(klasor_adi: str):
@@ -1425,6 +1467,11 @@ def _magaza_renk_cache_yenile(store_id: str):
         for s in _satirlar_refresh
         if str(s.get("pcloud_klasor_id", "")).strip()
         and _renkler_refresh.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+    }
+    st.session_state.kuyruk_klasor_durumlari = {
+        str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "")).strip().lower()
+        for s in _satirlar_refresh
+        if str(s.get("pcloud_klasor_id", "")).strip() and str(s.get("status", "")).strip()
     }
     st.session_state.sheet_renk_cache_ts = _time.time()
     _magaza_yuklu_kodlari_al(store_id, force=True)
@@ -1973,6 +2020,43 @@ def _klasorleri_getir(token, host, klasor_id):
         except: continue
     return host, []
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _klasor_icerigi_getir(token, host, klasor_id):
+    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
+        try:
+            r = httpx.get(
+                f"{h}/listfolder",
+                params={"auth": token, "folderid": klasor_id, "recursive": 1},
+                timeout=30,
+            )
+            d = r.json()
+            if d.get("result") != 0:
+                continue
+
+            contents = d.get("metadata", {}).get("contents", []) or []
+            klasorler = []
+            dosyalar = []
+
+            for item in contents:
+                if item.get("isfolder"):
+                    alt_icerik = item.get("contents") or []
+                    has_subfolders = any(alt.get("isfolder") for alt in alt_icerik)
+                    has_files = any(not alt.get("isfolder") for alt in alt_icerik)
+                    klasorler.append(
+                        {
+                            "id": item["folderid"],
+                            "ad": item["name"],
+                            "is_product_folder": has_files and not has_subfolders,
+                        }
+                    )
+                else:
+                    dosyalar.append(item)
+
+            return h, klasorler, dosyalar
+        except Exception:
+            continue
+    return host, [], []
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _magazalari_otomatik_bul(token, host):
     def _alt(h, folderid):
@@ -2029,39 +2113,20 @@ def _magaza_tum_kodlar(token, host, magaza_id):
     return set()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _klasor_urun_klasoru_mu(token, host, klasor_id):
-    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
-        try:
-            r = httpx.get(
-                f"{h}/listfolder",
-                params={"auth": token, "folderid": klasor_id},
-                timeout=15,
-            )
-            d = r.json()
-            if d.get("result") != 0:
-                continue
-            contents = d.get("metadata", {}).get("contents", []) or []
-            has_subfolders = any(i.get("isfolder") for i in contents)
-            has_files = any(not i.get("isfolder") for i in contents)
-            if has_subfolders:
-                return False
-            return has_files
-        except Exception:
-            continue
-    return False
-
-def _resimleri_getir(token, host, klasor_id):
+def _resimleri_getir(token, host, klasor_id, dosyalar=None):
     # pCloud getfilelink gecici URL uretir; bunlari cache'lemek bir sure sonra
     # kirik gorsellere neden olur. Onizleme her acildiginda taze link aliyoruz.
     try:
-        r = httpx.get(f"{host}/listfolder",
-                      params={"auth": token, "folderid": klasor_id},
-                      timeout=15)
-        d = r.json()
-        if d.get("result") != 0:
-            return [], d.get("error", "Hata")
-        dosyalar = [f for f in d["metadata"].get("contents", [])
+        if dosyalar is None:
+            r = httpx.get(f"{host}/listfolder",
+                          params={"auth": token, "folderid": klasor_id},
+                          timeout=15)
+            d = r.json()
+            if d.get("result") != 0:
+                return [], d.get("error", "Hata")
+            dosyalar = d["metadata"].get("contents", [])
+
+        dosyalar = [f for f in dosyalar
                     if not f.get("isfolder")
                     and f.get("parentfolderid") == klasor_id
                     and f.get("name", "").lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
@@ -2203,12 +2268,14 @@ with tab1:
                 st.session_state.magaza_ad = _magaza_ad
                 st.session_state.klasor_id = _magaza_id
                 st.session_state.klasor_gecmisi = []
+                st.rerun(scope="app")
 
             def _magaza_secimine_don():
                 st.session_state.magaza_id = None
                 st.session_state.magaza_ad = None
                 st.session_state.klasor_id = 0
                 st.session_state.klasor_gecmisi = []
+                st.rerun(scope="app")
 
             def _klasorde_geri_git():
                 _gecmis = list(st.session_state.klasor_gecmisi)
@@ -2217,6 +2284,7 @@ with tab1:
                 _onceki = _gecmis.pop()
                 st.session_state.klasor_gecmisi = _gecmis
                 st.session_state.klasor_id = _onceki["id"]
+                st.rerun(scope="app")
 
             def _klasoru_ac(_folder_id, _folder_ad):
                 st.session_state.klasor_gecmisi = [
@@ -2224,10 +2292,13 @@ with tab1:
                     {"id": st.session_state.klasor_id, "ad": _folder_ad},
                 ]
                 st.session_state.klasor_id = _folder_id
+                st.rerun(scope="app")
 
             def _klasorleri_yenile():
                 _klasorleri_getir.clear()
+                _klasor_icerigi_getir.clear()
                 st.session_state.kuyruk_yuklendi = False
+                st.session_state.kuyruk_klasor_durumlari = {}
                 st.session_state.sheet_renk_durumlari = {}
                 st.session_state.klasor_id_durumlari = {}
 
@@ -2290,7 +2361,6 @@ with tab1:
                         with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
                             try:
                                 _aktif_islem_kaydi_yaz(k, "isleniyor", "İşleniyor...")
-                                secili_urun_kodu = _urun_kodu_al(k["ad"]) or _klasor_urun_kodu_al(k["ad"]) or str(k["ad"]).strip()
                                 st.write("📂 pCloud'dan dosyalar alınıyor...")
                                 r = httpx.get(f"{host}/listfolder",
                                               params={"auth": token, "folderid": k["id"]},
@@ -2298,6 +2368,7 @@ with tab1:
                                 d = r.json()
                                 dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
                                 dosya_adlari = [f["name"] for f in dosyalar]
+                                secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
                                 st.write(f"✅ {len(dosyalar)} dosya bulundu")
 
                                 st.write("📐 Boyut ve fiyat hesaplanıyor...")
@@ -2345,6 +2416,7 @@ with tab1:
                                 pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
                                 satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
                                 st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "pending"
+                                st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "pending"
                                 st.write(f"✅ Kuyruğa eklendi (satır {satir_no})")
 
                                 st.write("🤖 Gemini analiz ediyor...")
@@ -2380,6 +2452,7 @@ with tab1:
                                 st.write("💾 Sheets'e yazılıyor...")
                                 _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
                                 st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
+                                st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "ready"
                                 st.write(f"✅ Renk: {ai.get('renk1','')} / {ai.get('renk2','')} — Stil: {ai.get('stil','')}")
                                 islem_raporu.append({
                                     "urun_ad": k["ad"],
@@ -2540,9 +2613,13 @@ with tab1:
                     st.toast(f"Kök ayarlandı: ID {st.session_state.klasor_id}")
                 _nav_c_ref.button("🔄", help="Klasörleri yenile", on_click=_klasorleri_yenile)
 
-                # Klasörleri yükle — cache'li, spinner yok (eski listeyi gösteriyor)
+                # Klasör içeriğini tek istekle yükle; satır başına ek ağ çağrısını önle.
                 host = st.session_state.get("pcloud_host", "https://api.pcloud.com")
-                yeni_host, klasorler = _klasorleri_getir(token, host, st.session_state.klasor_id)
+                yeni_host, klasorler, mevcut_dosyalar = _klasor_icerigi_getir(
+                    token,
+                    host,
+                    st.session_state.klasor_id,
+                )
                 st.session_state["pcloud_host"] = yeni_host
 
                 _kaldirilacak_secim_id = st.session_state.get("_kaldirilacak_secim_id")
@@ -2587,13 +2664,17 @@ with tab1:
                             secilen_ids = {s["id"] for s in st.session_state.secilen}
                             _satir_meta = []
                             for k in klasorler:
-                                is_product_folder = _klasor_urun_klasoru_mu(token, host, k["id"])
+                                is_product_folder = k.get("is_product_folder", False)
                                 row_item = {**k, "is_product_folder": is_product_folder}
                                 _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
                                 urun_kodu = _klasor_urun_kodu_al(k["ad"])
                                 satilmis_global = is_product_folder and _klasor_bloklu_mu(k["ad"])
-                                kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu) if is_product_folder else None
+                                kuyruk_status = None
+                                if is_product_folder:
+                                    kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
+                                    if kuyruk_status is None:
+                                        kuyruk_status = st.session_state.kuyruk_klasor_durumlari.get(str(k["id"]))
                                 sheet_renk = _sheet_renk_durumu_klasor(k["id"], k["ad"]) if is_product_folder else None
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
                                 if sheet_renk == "red":
@@ -2649,7 +2730,6 @@ with tab1:
                                         help="Klasoru ac",
                                     ):
                                         _klasoru_ac(k["id"], k["ad"])
-                                        st.rerun(scope="fragment")
 
                                 with _c_prev:
                                     if st.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
@@ -2663,7 +2743,12 @@ with tab1:
                                 _secim_aksiyon_paneli("queue_selected_inline")
                         else:
                             with st.spinner("Fotoğraflar yükleniyor..."):
-                                _urls, _hata = _resimleri_getir(token, host, st.session_state.klasor_id)
+                                _urls, _hata = _resimleri_getir(
+                                    token,
+                                    yeni_host,
+                                    st.session_state.klasor_id,
+                                    dosyalar=mevcut_dosyalar,
+                                )
                             if _hata:
                                 st.error(f"Hata: {_hata}")
                             elif not _urls:
@@ -2791,6 +2876,7 @@ with tab2:
                     if _supabase_ready():
                         StoreCatalog().delete(st.session_state.hedef_magaza_id)
                     st.session_state.kuyruga_eklenenler = {}
+                    st.session_state.kuyruk_klasor_durumlari = {}
                     st.session_state.sheet_renk_durumlari = {}
                     st.session_state.klasor_id_durumlari = {}
                     st.session_state["sifirla_onay"] = False
@@ -2842,6 +2928,11 @@ with tab2:
                 for s in satirlar
                 if str(s.get("pcloud_klasor_id", "")).strip()
                 and _renk_durumlari.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+            }
+            st.session_state.kuyruk_klasor_durumlari = {
+                str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "")).strip().lower()
+                for s in satirlar
+                if str(s.get("pcloud_klasor_id", "")).strip() and str(s.get("status", "")).strip()
             }
             if satirlar:
                 df = pd.DataFrame(satirlar)
@@ -2929,6 +3020,7 @@ with tab2:
                                 _uid = _urun_kodu_normalize(uid) or _urun_kodu_al(uid)
                                 st.session_state.kuyruga_eklenenler.pop(_uid, None)
                                 st.session_state.sheet_renk_durumlari.pop(_uid, None)
+                            st.session_state.kuyruk_klasor_durumlari = {}
                             st.session_state.klasor_id_durumlari = {}
                             st.session_state.kuyruk_yuklendi = False
                             st.success(f"✅ {silinen} satır silindi.")
