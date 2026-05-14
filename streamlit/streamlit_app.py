@@ -469,6 +469,9 @@ for k, v in [
     ("satilan_kodlar_cache", []),
     ("klasor_id_durumlari", {}),
     ("son_islem_raporu", []),
+    ("aktif_islem_urunleri", []),
+    ("aktif_islem_durumlari", {}),
+    ("aktif_islem_ozeti", {}),
     ("stok_son_indirme", 0), ("ara_sonuclari", []), ("magazalar_root_id", None),
     ("sifirla_onay", False), ("kuyruk_yuklendi", False), ("stok_indiriliyor", False),
     ("stok_indir_hata", None), ("_cikis_yapildi", False),
@@ -1854,6 +1857,37 @@ def _okunmamis_not_sayisi_cacheden_al() -> int:
     return sum(1 for note in (db.get("notes") or {}).values() if note.get("status") != "read")
 
 
+def _aktif_islem_panelini_sifirla():
+    st.session_state.aktif_islem_urunleri = []
+    st.session_state.aktif_islem_durumlari = {}
+    st.session_state.aktif_islem_ozeti = {}
+
+
+def _aktif_islem_kaydi_yaz(item: dict, durum: str, mesaj: str = ""):
+    item_id = str(item.get("id") or "")
+    if not item_id:
+        return
+    kayit = {
+        "id": item_id,
+        "ad": str(item.get("ad") or "").strip(),
+        "durum": durum,
+        "mesaj": str(mesaj or "").strip(),
+    }
+    mevcutlar = list(st.session_state.get("aktif_islem_urunleri") or [])
+    guncellendi = False
+    for idx, mevcut in enumerate(mevcutlar):
+        if str(mevcut.get("id") or "") == item_id:
+            mevcutlar[idx] = kayit
+            guncellendi = True
+            break
+    if not guncellendi:
+        mevcutlar.append(kayit)
+    st.session_state.aktif_islem_urunleri = mevcutlar
+    durumlar = dict(st.session_state.get("aktif_islem_durumlari") or {})
+    durumlar[item_id] = kayit
+    st.session_state.aktif_islem_durumlari = durumlar
+
+
 def _son_islem_raporu_goster():
     rapor = st.session_state.get("son_islem_raporu") or []
     if not rapor:
@@ -2239,12 +2273,24 @@ with tab1:
                 islem_raporu = []
                 toplam  = len(st.session_state.secilen)
                 log     = st.container(border=True)
+                st.session_state.aktif_islem_urunleri = []
+                st.session_state.aktif_islem_durumlari = {}
+                st.session_state.aktif_islem_ozeti = {
+                    "durum": "running",
+                    "toplam": toplam,
+                    "basarili": 0,
+                    "hatali": 0,
+                }
+                for _secili in st.session_state.secilen:
+                    _aktif_islem_kaydi_yaz(_secili, "bekliyor", "Sırada bekliyor")
 
                 for i, k in enumerate(st.session_state.secilen):
                     prog.progress((i + 1) / toplam, text=f"{i+1}/{toplam} — {k['ad']}")
                     with log:
                         with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
                             try:
+                                _aktif_islem_kaydi_yaz(k, "isleniyor", "İşleniyor...")
+                                secili_urun_kodu = _urun_kodu_al(k["ad"]) or _klasor_urun_kodu_al(k["ad"]) or str(k["ad"]).strip()
                                 st.write("📂 pCloud'dan dosyalar alınıyor...")
                                 r = httpx.get(f"{host}/listfolder",
                                               params={"auth": token, "folderid": k["id"]},
@@ -2256,6 +2302,8 @@ with tab1:
 
                                 st.write("📐 Boyut ve fiyat hesaplanıyor...")
                                 urun_bilgisi = parse_urun_bilgisi(k["ad"], dosya_adlari)
+                                # Queue sheet'te A kolonu her zaman panelde secilen urun kodunu tutsun.
+                                urun_bilgisi["urun_id"] = secili_urun_kodu
                                 if urun_bilgisi.get("metrekare"):
                                     urun_bilgisi["fiyat_usd"] = round(float(urun_bilgisi["metrekare"]) * price_per_m2)
                                 boyut = urun_bilgisi.get("boyut_ft") or "?"
@@ -2296,13 +2344,13 @@ with tab1:
                                 st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
                                 pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
                                 satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
-                                st.session_state.kuyruga_eklenenler[_klasor_urun_kodu_al(k["ad"]) or _urun_kodu_al(k["ad"])] = "pending"
+                                st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "pending"
                                 st.write(f"✅ Kuyruğa eklendi (satır {satir_no})")
 
                                 st.write("🤖 Gemini analiz ediyor...")
                                 ai = ai_icerik_url(
                                     resim_url=resim_url,
-                                    urun_id=k["ad"],
+                                    urun_id=secili_urun_kodu,
                                     boyut_ft=urun_bilgisi.get("boyut_ft") or "?",
                                     boyut_cm=urun_bilgisi.get("boyut_cm") or "?",
                                     metrekare=urun_bilgisi.get("metrekare") or 0,
@@ -2314,7 +2362,7 @@ with tab1:
                                 if not ai["basarili"]:
                                     st.write(f"⚠️ AI hatası, fallback içerik yazılıyor: {ai['hata']}")
                                     ai = fallback_ai_icerik(
-                                        urun_id=k["ad"],
+                                        urun_id=secili_urun_kodu,
                                         boyut_ft=urun_bilgisi.get("boyut_ft") or "?",
                                         boyut_cm=urun_bilgisi.get("boyut_cm") or "?",
                                         metrekare=urun_bilgisi.get("metrekare") or 0,
@@ -2331,13 +2379,14 @@ with tab1:
 
                                 st.write("💾 Sheets'e yazılıyor...")
                                 _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
-                                st.session_state.kuyruga_eklenenler[_klasor_urun_kodu_al(k["ad"]) or _urun_kodu_al(k["ad"])] = "ready"
+                                st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
                                 st.write(f"✅ Renk: {ai.get('renk1','')} / {ai.get('renk2','')} — Stil: {ai.get('stil','')}")
                                 islem_raporu.append({
                                     "urun_ad": k["ad"],
                                     "durum": "ok",
                                     "mesaj": f"Tamamlandı • {boyut} ft • ${fiyat}",
                                 })
+                                _aktif_islem_kaydi_yaz(k, "ok", f"Tamamlandı • {boyut} ft • ${fiyat}")
                                 durum.update(label=f"✅ {k['ad']} tamamlandı", state="complete", expanded=False)
 
                             except Exception as e:
@@ -2347,11 +2396,18 @@ with tab1:
                                     "durum": "error",
                                     "mesaj": str(e),
                                 })
+                                _aktif_islem_kaydi_yaz(k, "error", str(e))
                                 st.write(f"❌ Hata: {e}")
                                 durum.update(label=f"❌ {k['ad']} — hata", state="error", expanded=False)
 
                 prog.empty()
                 basarili = toplam - len(hatalar)
+                st.session_state.aktif_islem_ozeti = {
+                    "durum": "done",
+                    "toplam": toplam,
+                    "basarili": basarili,
+                    "hatali": len(hatalar),
+                }
                 st.session_state.son_islem_raporu = islem_raporu
                 if basarili:
                     st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
@@ -2623,8 +2679,11 @@ with tab1:
 
                 with _urun_sec_sag:
                     with st.container(border=True, height=720):
+                        _aktif_islem_urunleri = list(st.session_state.get("aktif_islem_urunleri") or [])
+                        _aktif_islem_ozeti = dict(st.session_state.get("aktif_islem_ozeti") or {})
+                        _gosterilecekler = list(st.session_state.secilen) if st.session_state.secilen else _aktif_islem_urunleri
                         st.markdown(
-                            f"<div class='section-label'>Seçilen ürünler — {len(st.session_state.secilen)}/15</div>",
+                            f"<div class='section-label'>Seçilen ürünler — {len(_gosterilecekler)}/15</div>",
                             unsafe_allow_html=True
                         )
 
@@ -2645,10 +2704,50 @@ with tab1:
                                     removed = st.session_state.secilen[i]
                                     st.session_state["_kaldirilacak_secim_id"] = removed["id"]
                                     st.rerun()
+                        elif _aktif_islem_urunleri:
+                            if _aktif_islem_ozeti.get("durum") == "running":
+                                st.info("Seçilen ürünler işleniyor. Durumlar bu panelde canlı olarak görünür.")
+                            elif _aktif_islem_ozeti.get("durum") == "done":
+                                _toplam = int(_aktif_islem_ozeti.get("toplam") or len(_aktif_islem_urunleri))
+                                _basarili = int(_aktif_islem_ozeti.get("basarili") or 0)
+                                _hatali = int(_aktif_islem_ozeti.get("hatali") or 0)
+                                if _hatali:
+                                    st.warning(f"İşlem tamamlandı. {_basarili}/{_toplam} başarılı, {_hatali} ürün hatalı.")
+                                else:
+                                    st.success(f"Tüm ürünlerin işlemi tamamlandı. {_basarili}/{_toplam} başarılı.")
+
+                            for i, item in enumerate(_aktif_islem_urunleri):
+                                _durum = str(item.get("durum") or "").strip().lower()
+                                if _durum == "ok":
+                                    _ikon = "✅"
+                                elif _durum == "error":
+                                    _ikon = "❌"
+                                elif _durum == "isleniyor":
+                                    _ikon = "⏳"
+                                else:
+                                    _ikon = "📦"
+                                _sa, _sb = st.columns([0.5, 4.5])
+                                _sa.markdown(
+                                    f"<div style='padding:5px 0;font-size:0.9rem;text-align:center;'>{_ikon}</div>",
+                                    unsafe_allow_html=True
+                                )
+                                _sb.markdown(
+                                    f"<div style='padding:4px 2px;font-size:0.83rem;color:#e6edf3;'>{item.get('ad','')}</div>",
+                                    unsafe_allow_html=True
+                                )
+                                if item.get("mesaj"):
+                                    st.caption(item.get("mesaj"))
+
+                            if _aktif_islem_ozeti.get("durum") == "done":
+                                if st.button("İşlem panelini temizle", key="clear_active_batch_panel"):
+                                    _aktif_islem_panelini_sifirla()
+                                    st.session_state.son_islem_raporu = []
+                                    st.rerun()
                         else:
                             st.caption("Soldaki listeden ürün seçin. Bu panelde seçilen ürünler ve AI kuyruğa gönder butonu görünecek.")
 
-                _son_islem_raporu_goster()
+                if not st.session_state.get("aktif_islem_urunleri"):
+                    _son_islem_raporu_goster()
 
         _tab1_gezgin()
 
@@ -3154,11 +3253,26 @@ with tab3:
                                     use_container_width=True,
                                     key="kopyala_btn",
                                 ):
+                                    _copy_text = _build_product_copy_text(_secili_urun)
                                     st.session_state["_clipboard_copy_request"] = {
-                                        "text": _build_product_copy_text(_secili_urun),
+                                        "text": _copy_text,
                                         "nonce": datetime.now().isoformat(),
                                     }
+                                    st.session_state["_product_copy_preview"] = {
+                                        "code": str(_sec_kod),
+                                        "text": _copy_text,
+                                    }
+                                _copy_preview = st.session_state.get("_product_copy_preview")
+                                if _copy_preview and str(_copy_preview.get("code")) == str(_sec_kod):
+                                    st.caption("Hazır kopya. Otomatik pano engellenirse aşağıdaki metni seçip Cmd/Ctrl+C yapabilirsiniz.")
+                                    st.text_input(
+                                        "Hazır kopya",
+                                        value=_copy_preview.get("text", ""),
+                                        key=f"kopya_hazir_{_sec_kod}",
+                                        use_container_width=True,
+                                    )
                     else:
+                        st.session_state.pop("_product_copy_preview", None)
                         with _urun_aksiyon_alani:
                             _urun_aksiyon_alani.empty()
                 else:
@@ -3204,7 +3318,7 @@ with tab3:
                     """,
                     height=0,
                 )
-                st.toast(f"Kopyalandı: {_clipboard_req['text']}")
+                st.toast("Kopya hazır", icon="📋")
 
             if st.session_state.get("_edit_urun"):
                 _edit_data = st.session_state.pop("_edit_urun")
