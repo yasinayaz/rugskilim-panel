@@ -53,12 +53,6 @@ if _env_path.exists():
             # .env, ayni terminal oturumunda kalmis eski env degerlerini ezsin.
             os.environ[_k.strip()] = _v.strip()
 
-try:
-    from shared.product_sheet_sync import start_product_sheet_sync_worker as _start_product_sheet_sync_worker
-    _start_product_sheet_sync_worker(interval_seconds=30)
-except Exception:
-    pass
-
 st.set_page_config(
     page_title="RugsKilim Panel",
     page_icon="🪄",
@@ -485,6 +479,9 @@ for k, v in [
     ("urun_alt_tab", "liste"),
     ("_secim_limit_hatasi", None),
     ("_kaldirilacak_secim_id", None),
+    ("_urun_katalog_cache", None),
+    ("_urun_katalog_cache_ts", 0.0),
+    ("_urun_katalog_cache_stok_mtime", 0.0),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -864,11 +861,23 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
 
 def _urunleri_yukle(force_source_sync: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
-    from shared.product_sheet_sync import start_product_sheet_sync_worker, sync_product_sheet
     stok = _stok_dosya_yolu()
+    stok_mtime = float(stok.stat().st_mtime) if stok.exists() else 0.0
+    cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
+    cache_stok_mtime = float(st.session_state.get("_urun_katalog_cache_stok_mtime") or 0.0)
+    cache_data = st.session_state.get("_urun_katalog_cache")
+
+    if (
+        not force_source_sync
+        and cache_data is not None
+        and cache_stok_mtime == stok_mtime
+        and (_time.time() - cache_ts) <= 60
+    ):
+        return [dict(item) for item in cache_data]
+
     kaynak = []
     if stok.exists():
-        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok.stat().st_mtime)
+        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
         if _supabase_ready():
             try:
                 _urun_katalogunu_esitle(force=force_source_sync, kaynak_urunler=kaynak)
@@ -877,12 +886,6 @@ def _urunleri_yukle(force_source_sync: bool = False):
 
     try:
         mevcut = ProductCatalog().list_products() if _supabase_ready() else _panel_urunleri_yerden_yukle()
-        if _supabase_ready():
-            start_product_sheet_sync_worker(interval_seconds=30)
-            try:
-                sync_product_sheet(products=mevcut, throttle_seconds=45)
-            except Exception:
-                pass
     except Exception:
         mevcut = _panel_urunleri_yerden_yukle()
 
@@ -913,6 +916,9 @@ def _urunleri_yukle(force_source_sync: bool = False):
         mevcut = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
 
+    st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
+    st.session_state["_urun_katalog_cache_ts"] = _time.time()
+    st.session_state["_urun_katalog_cache_stok_mtime"] = stok_mtime
     return mevcut
 
 
@@ -926,6 +932,15 @@ def _urunleri_kaydet(products: list[dict]):
     else:
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", products)
         st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
+    st.session_state["_urun_katalog_cache"] = None
+    st.session_state["_urun_katalog_cache_ts"] = 0.0
+    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
+
+
+def _urun_katalog_cache_temizle():
+    st.session_state["_urun_katalog_cache"] = None
+    st.session_state["_urun_katalog_cache_ts"] = 0.0
+    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2617,6 +2632,7 @@ with tab3:
                 _updated["product_code"] = _new_code
             _PC().upsert_products([_updated])
             _sync_product_sheet(force=True)
+            _urun_katalog_cache_temizle()
             st.success("Kaydedildi.")
             st.rerun()
         if _es2.button("İptal", use_container_width=True):
@@ -2644,6 +2660,7 @@ with tab3:
                 )
                 _delete_resp.raise_for_status()
                 _sync_product_sheet(force=True)
+                _urun_katalog_cache_temizle()
                 st.session_state.pop("_sil_onay", None)
                 st.success("Silindi.")
                 st.rerun()
