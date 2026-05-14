@@ -117,12 +117,13 @@ section.main { background-color: var(--bg-0) !important; }
   padding: 4px 22px;
   font-weight: 600;
   font-size: 0.96rem;
-  color: var(--text-2);
-  background: transparent;
-  border: none !important;
+  color: var(--text-2) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
   transition: all 0.15s ease;
 }
-.stTabs [aria-selected="true"] {
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
   background: var(--bg-3) !important;
   color: var(--text-1) !important;
   box-shadow: 0 2px 10px rgba(0,0,0,0.45);
@@ -207,9 +208,7 @@ section.main { background-color: var(--bg-0) !important; }
 
 /* ── Buttons ── */
 .stButton > button,
-[data-testid="stButton"] > button,
-button[kind="secondary"],
-button[kind="primary"] {
+[data-testid="stButton"] > button {
   background: var(--bg-2) !important;
   border: 1px solid var(--border) !important;
   color: var(--text-1) !important;
@@ -219,23 +218,19 @@ button[kind="primary"] {
   transition: all 0.12s ease !important;
 }
 .stButton > button:hover,
-[data-testid="stButton"] > button:hover,
-button[kind="secondary"]:hover,
-button[kind="primary"]:hover {
+[data-testid="stButton"] > button:hover {
   background: var(--bg-3) !important;
   border-color: var(--text-3) !important;
 }
 .stButton > button[kind="primary"],
-[data-testid="stButton"] > button[kind="primary"],
-button[kind="primary"] {
+[data-testid="stButton"] > button[kind="primary"] {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
   color: #000 !important;
   font-weight: 600 !important;
 }
 .stButton > button[kind="primary"]:hover,
-[data-testid="stButton"] > button[kind="primary"]:hover,
-button[kind="primary"]:hover {
+[data-testid="stButton"] > button[kind="primary"]:hover {
   background: #d97706 !important;
   border-color: #d97706 !important;
 }
@@ -954,7 +949,7 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
     return True
 
 
-def _urunleri_yukle(force_source_sync: bool = False):
+def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
     stok = _stok_dosya_yolu()
     stok_mtime = float(stok.stat().st_mtime) if stok.exists() else 0.0
@@ -970,16 +965,16 @@ def _urunleri_yukle(force_source_sync: bool = False):
     ):
         return [dict(item) for item in cache_data]
 
+    if _supabase_ready():
+        try:
+            _magaza_envanterini_topla(force=force_store_refresh)
+        except Exception:
+            pass
+
     kaynak = []
     if stok.exists():
         kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
         if _supabase_ready():
-            try:
-                hedef_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
-                if hedef_magaza:
-                    _magaza_envanterini_topla(force=False, store_ids=[hedef_magaza])
-            except Exception:
-                pass
             try:
                 _urun_katalogunu_esitle(force=force_source_sync, kaynak_urunler=kaynak)
             except Exception:
@@ -1569,20 +1564,11 @@ def _magaza_cache_stale_mi(cache: dict, store_id: str, ttl_sn: int = 120) -> boo
 
 
 def _sheetten_magaza_envanteri_oku(store_id: str, store_name: str) -> dict:
-    from shared.sheets import SheetsKatmani as _SK_NOTLAR
-
-    sk = _SK_NOTLAR(store_id)
-    satirlar = sk.tum_satirlar_al()
-    renkler = {
-        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
-        for k, v in sk.urun_renk_durumlari_al().items()
-        if (_urun_kodu_normalize(k) or _urun_kodu_al(k))
-    }
+    durum_haritasi = _sheetten_magaza_store_status_oku(store_id, store_name)
 
     urunler = {}
-    for satir in satirlar:
-        kod = _urun_kodu_normalize(satir.get("urun_id", "")) or _urun_kodu_al(satir.get("urun_id", ""))
-        if not kod or renkler.get(kod) != "green":
+    for kod, satir in durum_haritasi.items():
+        if str(satir.get("renk") or "").strip().lower() != "green":
             continue
         urunler[kod] = {
             "urun_id": str(satir.get("urun_id", "")).strip(),
@@ -1598,6 +1584,49 @@ def _sheetten_magaza_envanteri_oku(store_id: str, store_name: str) -> dict:
         "urunler": urunler,
         "updated_at": _time.time(),
     }
+
+
+def _sheetten_magaza_store_status_oku(store_id: str, store_name: str = "") -> dict[str, dict]:
+    from shared.sheets import SheetsKatmani as _SK_STATUS
+
+    sk = _SK_STATUS(store_id)
+    satirlar = sk.tum_satirlar_al()
+    renkler = {
+        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
+        for k, v in sk.urun_renk_durumlari_al().items()
+        if (_urun_kodu_normalize(k) or _urun_kodu_al(k))
+    }
+
+    sonuc = {}
+    for satir in satirlar:
+        kod = _urun_kodu_normalize(satir.get("urun_id", "")) or _urun_kodu_al(satir.get("urun_id", ""))
+        if not kod:
+            continue
+
+        renk = str(renkler.get(kod) or "").strip().lower()
+        status = str(satir.get("status", "") or "").strip().lower()
+        if not renk and status not in {"pending", "ready", "downloading", "downloaded", "uploading", "done", "error"}:
+            continue
+
+        if renk == "green":
+            status = "done"
+        elif renk == "red" and not status:
+            status = "deleted"
+        elif renk == "yellow" and not status:
+            status = "error"
+
+        sonuc[kod] = {
+            "store_id": str(store_id or "").strip(),
+            "store_name": str(store_name or store_id or "").strip(),
+            "urun_id": str(satir.get("urun_id", "")).strip() or kod,
+            "status": status,
+            "renk": renk,
+            "etsy_draft_url": str(satir.get("etsy_draft_url", "")).strip(),
+            "islem_tarihi": str(satir.get("islem_tarihi", "")).strip(),
+            "pcloud_klasor_id": str(satir.get("pcloud_klasor_id", "")).strip(),
+        }
+
+    return sonuc
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -1744,10 +1773,14 @@ def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None =
         if _supabase_ready():
             store_catalog = StoreCatalog()
             for sid in islenecek_store_ids:
-                sdata = (yeni_cache.get("stores") or {}).get(sid) or {}
+                smeta = tum_magazalar.get(sid) or {}
+                tum_durumlar = _sheetten_magaza_store_status_oku(
+                    sid,
+                    str(smeta.get("store_name") or sid),
+                )
                 current_codes = {
                     str(code).strip()
-                    for code in (sdata.get("urunler") or {}).keys()
+                    for code in tum_durumlar.keys()
                     if str(code).strip()
                 }
                 existing_codes = {
@@ -1760,7 +1793,7 @@ def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None =
                     store_catalog.delete(sid, silinecek)
 
                 rows = []
-                for code, urun in (sdata.get("urunler") or {}).items():
+                for code, urun in tum_durumlar.items():
                     code = str(code).strip()
                     if not code:
                         continue
@@ -3123,8 +3156,12 @@ with tab3:
 
     @st.fragment
     def _tab3_urunler():
+        _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         try:
-            urunler = _urunleri_yukle(force_source_sync=False)
+            urunler = _urunleri_yukle(
+                force_source_sync=False,
+                force_store_refresh=_force_store_refresh,
+            )
         except Exception as exc:
             urunler = _panel_urunleri_yerden_yukle()
             if urunler:
@@ -3138,8 +3175,8 @@ with tab3:
 
         _liste_aktif = st.session_state.urun_alt_tab == "liste"
         _satilan_aktif = st.session_state.urun_alt_tab == "satilan"
-        _b1, _b2, _sp, _stats_col, _btn_col = st.columns(
-            [1.6, 1.7, 3.5, 2.5, 1.8], vertical_alignment="center"
+        _b1, _b2, _sp, _stats_col, _refresh_col, _btn_col = st.columns(
+            [1.6, 1.7, 2.9, 2.3, 1.5, 1.8], vertical_alignment="center"
         )
         if _b1.button(
             "Ürün Listesi",
@@ -3167,6 +3204,11 @@ with tab3:
                 "</div>",
                 unsafe_allow_html=True,
             )
+        with _refresh_col:
+            if st.button("🔄 Yenile", width="stretch", key="urun_list_refresh_btn"):
+                _urun_katalog_cache_temizle()
+                st.session_state["_urunler_store_refresh"] = True
+                st.rerun(scope="fragment")
         with _btn_col:
             if _liste_aktif:
                 if st.button(
@@ -3357,11 +3399,11 @@ with tab3:
                                 _copy_preview = st.session_state.get("_product_copy_preview")
                                 if _copy_preview and str(_copy_preview.get("code")) == str(_sec_kod):
                                     st.caption("Hazır kopya. Otomatik pano engellenirse aşağıdaki metni seçip Cmd/Ctrl+C yapabilirsiniz.")
-                                    st.text_input(
+                                    st.text_area(
                                         "Hazır kopya",
                                         value=_copy_preview.get("text", ""),
                                         key=f"kopya_hazir_{_sec_kod}",
-                                        use_container_width=True,
+                                        height=120,
                                     )
                     else:
                         st.session_state.pop("_product_copy_preview", None)
