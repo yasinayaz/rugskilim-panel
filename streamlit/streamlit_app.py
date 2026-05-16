@@ -2517,9 +2517,14 @@ with tab_urun_sec:
                 st.rerun(scope="app")
 
             def _klasoru_ac(_folder_id, _folder_ad):
+                _mevcut_klasor_ad = (
+                    st.session_state.klasor_gecmisi[-1]["ad"]
+                    if st.session_state.klasor_gecmisi
+                    else (st.session_state.magaza_ad or "")
+                )
                 st.session_state.klasor_gecmisi = [
                     *st.session_state.klasor_gecmisi,
-                    {"id": st.session_state.klasor_id, "ad": _folder_ad},
+                    {"id": st.session_state.klasor_id, "ad": _mevcut_klasor_ad},
                 ]
                 st.session_state.klasor_id = _folder_id
                 st.rerun(scope="app")
@@ -2953,13 +2958,14 @@ with tab_urun_sec:
                                         )
 
                                 with _c_name:
-                                    if st.button(
+                                    st.button(
                                         f"📁  {k['ad']}",
                                         key=f"open_folder_{k['id']}",
                                         width="stretch",
                                         help="Klasoru ac",
-                                    ):
-                                        _klasoru_ac(k["id"], k["ad"])
+                                        on_click=_klasoru_ac,
+                                        args=(k["id"], k["ad"]),
+                                    )
 
                                 with _c_prev:
                                     if st.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
