@@ -68,7 +68,7 @@ Yapilacak islem:
 
 `C:\rugskilim-panel\vds\baslat.bat` dosyasında şunların doğru olduğundan emin ol:
 ```
-GOOGLE_SHEET_ID=1927qUbprn8NEK3-tYFddelZNfxGzCQsiJ8sl_usLHV4
+GOOGLE_SHEET_ID=12zcGd3Ila-y_aZWCldNZUeJp-1yBrz_Uvh4Yf3U0f7o
 GOOGLE_CREDS_JSON=C:\rugskilim-panel\streamlit\credentials.json
 TEMP_DIR=C:\etsy_temp
 ```

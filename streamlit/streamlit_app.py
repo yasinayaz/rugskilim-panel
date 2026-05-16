@@ -542,6 +542,7 @@ for k, v in [
     ("_urun_katalog_cache", None),
     ("_urun_katalog_cache_ts", 0.0),
     ("_urun_katalog_cache_stok_mtime", 0.0),
+    ("_urunler_magaza_refresh_started_at", 0.0),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1027,12 +1028,6 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
     ):
         return [dict(item) for item in cache_data]
 
-    if _supabase_ready():
-        try:
-            _magaza_envanterini_topla(force=force_store_refresh)
-        except Exception:
-            pass
-
     kaynak = []
     if stok.exists():
         kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
@@ -1172,6 +1167,25 @@ def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = Fal
             pass
 
     _threading.Thread(target=_job, daemon=True, name="urun-kaydet").start()
+
+
+def _urunler_magaza_yenilemesini_baslat(force: bool = False):
+    dosya_cache = _envanter_cache_dosyadan_yukle()
+    son_baslangic = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
+    cache_updated = float((dosya_cache or {}).get("updated_at") or 0.0)
+    if not force and son_baslangic and son_baslangic > cache_updated:
+        return
+
+    baslangic = _time.time()
+    st.session_state["_urunler_magaza_refresh_started_at"] = baslangic
+
+    def _job():
+        try:
+            _magaza_envanterini_topla(force=force)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urunler-magaza-refresh").start()
 
 
 def _urun_katalog_cache_temizle():
@@ -2498,14 +2512,12 @@ with tab_urun_sec:
                 st.session_state.magaza_ad = _magaza_ad
                 st.session_state.klasor_id = _magaza_id
                 st.session_state.klasor_gecmisi = []
-                st.rerun(scope="app")
 
             def _magaza_secimine_don():
                 st.session_state.magaza_id = None
                 st.session_state.magaza_ad = None
                 st.session_state.klasor_id = 0
                 st.session_state.klasor_gecmisi = []
-                st.rerun(scope="app")
 
             def _klasorde_geri_git():
                 _gecmis = list(st.session_state.klasor_gecmisi)
@@ -2514,7 +2526,6 @@ with tab_urun_sec:
                 _onceki = _gecmis.pop()
                 st.session_state.klasor_gecmisi = _gecmis
                 st.session_state.klasor_id = _onceki["id"]
-                st.rerun(scope="app")
 
             def _klasoru_ac(_folder_id, _folder_ad):
                 _mevcut_klasor_ad = (
@@ -2527,7 +2538,6 @@ with tab_urun_sec:
                     {"id": st.session_state.klasor_id, "ad": _mevcut_klasor_ad},
                 ]
                 st.session_state.klasor_id = _folder_id
-                st.rerun(scope="app")
 
             def _klasorleri_yenile():
                 _klasorleri_getir.clear()
@@ -3362,15 +3372,26 @@ with tab_urunler:
     @st.fragment
     def _tab3_urunler():
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
-        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui"))
+        _envanter_cache = _envanter_cache_dosyadan_yukle()
+        _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
+        _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
+        _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
+        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
+
+        if _force_store_refresh or _envanter_cache_stale_mi(_envanter_cache) or not ((_envanter_cache or {}).get("stores") or {}):
+            _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
+            _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
+            _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > float((_envanter_cache_dosyadan_yukle() or {}).get("updated_at") or 0.0))
+            _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
+
         if _force_store_refresh or _urunler_loading_ui:
             st.markdown(
                 """
                 <div class="loading-panel">
-                  <div class="loading-title">Magaza durumlari yenileniyor</div>
+                  <div class="loading-title">Urunler yukleniyor</div>
                   <div class="loading-text">
-                    Sheet renkleri ve Supabase magaza kayitlari tekrar eslestiriliyor.
-                    Bu sirada ekran bos gorunse bile islem devam ediyor.
+                    Urun listesi aciliyor. Magaza yuk durumlari arka planda yenileniyor;
+                    yesil noktalar ve yuklu sayilari kisa sure sonra netlesebilir.
                   </div>
                   <div class="loading-dots">
                     <span class="loading-dot"></span>
@@ -3396,6 +3417,9 @@ with tab_urunler:
             else:
                 st.error(f"Ürün verisi yüklenemedi: {exc}")
                 return
+
+        if _magaza_refresh_suruyor:
+            st.caption("Magaza yuk durumlari guncelleniyor. Liste hazir; yesil noktalar ve yuklu sayilari birazdan tazelenecek.")
 
         aktifler = [u for u in urunler if str(u.get("status", "")).lower() != "sold"]
         satilanlar = [u for u in urunler if str(u.get("status", "")).lower() == "sold"]
@@ -3627,7 +3651,6 @@ with tab_urunler:
                     stores.update(canli_magaza_haritasi.get(kod, set()))
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
-                        "durum": f"Yuklendi ({len(stores)})" if stores else "Bekliyor",
                         "cm": urun.get("size_cm", ""),
                         "m2": urun.get("area_m2", ""),
                         "ft": urun.get("size_ft", ""),
@@ -4108,10 +4131,18 @@ with tab_ayarlar:
                     _blocks.append("{footer_block}")
                 return "\n\n".join(_blocks)
 
+            def _is_global_ai_template(_cfg):
+                return str((_cfg or {}).get("template_id") or "").strip() == "default_v1"
+
             def _editor_defaults(_cfg):
                 _pr = _cfg["prompt_rules"]
                 _preview_template = (_pr.get("description_example_template", "") or "").strip()
-                return {
+                _defaults = {
+                    "description_example_template": _preview_template or _default_preview_framework(_cfg),
+                }
+                if not _is_global_ai_template(_cfg):
+                    return _defaults
+                _defaults.update({
                     "title_brief": _pr.get("title_brief", ""),
                     "title_target_min": int(_pr.get("title_target_min", 120)),
                     "title_target_max": int(_pr.get("title_target_max", 140)),
@@ -4125,8 +4156,8 @@ with tab_ayarlar:
                     "prompt_extra": _cfg.get("prompt_extra_instructions", ""),
                     "tag_count": int(_pr.get("tag_count", 13)),
                     "tag_max_length": int(_pr.get("tag_max_length", 20)),
-                    "description_example_template": _preview_template or _default_preview_framework(_cfg),
-                }
+                })
+                return _defaults
 
             def _ensure_editor_state(_store_id, _cfg):
                 _defaults = _editor_defaults(_cfg)
@@ -4146,23 +4177,29 @@ with tab_ayarlar:
 
             def _template_editor_payload(_tmpl_text, _store_id):
                 _kayit = _json2.loads(_tmpl_text)
-                _kayit["prompt_extra_instructions"] = st.session_state[f"editor_{_store_id}_prompt_extra"]
-                _kayit.setdefault("prompt_rules", {})
-                _kayit["prompt_rules"].update({
-                    "title_target_min": int(st.session_state[f"editor_{_store_id}_title_target_min"]),
-                    "title_target_max": int(st.session_state[f"editor_{_store_id}_title_target_max"]),
-                    "title_max_length": int(st.session_state[f"editor_{_store_id}_title_max_length"]),
-                    "tag_count": int(st.session_state[f"editor_{_store_id}_tag_count"]),
-                    "tag_max_length": int(st.session_state[f"editor_{_store_id}_tag_max_length"]),
-                    "title_brief": st.session_state[f"editor_{_store_id}_title_brief"],
-                    "title_rules": st.session_state[f"editor_{_store_id}_title_rules"],
-                    "tag_strategy": st.session_state[f"editor_{_store_id}_tag_strategy"],
-                    "tag_rules": st.session_state[f"editor_{_store_id}_tag_rules"],
-                    "description_brief": st.session_state[f"editor_{_store_id}_description_brief"],
-                    "opening_rules": st.session_state[f"editor_{_store_id}_opening_rules"],
-                    "story_rules": st.session_state[f"editor_{_store_id}_story_rules"],
-                    "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"],
-                })
+                if str(_kayit.get("template_id") or "").strip() == "default_v1":
+                    _kayit["prompt_extra_instructions"] = st.session_state[f"editor_{_store_id}_prompt_extra"]
+                    _kayit.setdefault("prompt_rules", {})
+                    _kayit["prompt_rules"].update({
+                        "title_target_min": int(st.session_state[f"editor_{_store_id}_title_target_min"]),
+                        "title_target_max": int(st.session_state[f"editor_{_store_id}_title_target_max"]),
+                        "title_max_length": int(st.session_state[f"editor_{_store_id}_title_max_length"]),
+                        "tag_count": int(st.session_state[f"editor_{_store_id}_tag_count"]),
+                        "tag_max_length": int(st.session_state[f"editor_{_store_id}_tag_max_length"]),
+                        "title_brief": st.session_state[f"editor_{_store_id}_title_brief"],
+                        "title_rules": st.session_state[f"editor_{_store_id}_title_rules"],
+                        "tag_strategy": st.session_state[f"editor_{_store_id}_tag_strategy"],
+                        "tag_rules": st.session_state[f"editor_{_store_id}_tag_rules"],
+                        "description_brief": st.session_state[f"editor_{_store_id}_description_brief"],
+                        "opening_rules": st.session_state[f"editor_{_store_id}_opening_rules"],
+                        "story_rules": st.session_state[f"editor_{_store_id}_story_rules"],
+                        "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"],
+                    })
+                else:
+                    _kayit["prompt_extra_instructions"] = ""
+                    _kayit["prompt_rules"] = {
+                        "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"]
+                    }
                 return _kayit
 
             def _toggle_preview_edit(_store_id, _value=None):
@@ -4182,39 +4219,61 @@ with tab_ayarlar:
 
             def _draft_cfg(_base_cfg, _store_id):
                 _cfg = _json2.loads(_json2.dumps(_base_cfg, ensure_ascii=False))
-                _cfg["prompt_extra_instructions"] = st.session_state.get(
-                    f"editor_{_store_id}_prompt_extra",
-                    _cfg.get("prompt_extra_instructions", "")
-                )
                 _cfg.setdefault("prompt_rules", {})
-                _cfg["prompt_rules"].update({
-                    "title_target_min": int(st.session_state.get(f"editor_{_store_id}_title_target_min", _cfg["prompt_rules"].get("title_target_min", 120))),
-                    "title_target_max": int(st.session_state.get(f"editor_{_store_id}_title_target_max", _cfg["prompt_rules"].get("title_target_max", 140))),
-                    "title_max_length": int(st.session_state.get(f"editor_{_store_id}_title_max_length", _cfg["prompt_rules"].get("title_max_length", 140))),
-                    "tag_count": int(st.session_state.get(f"editor_{_store_id}_tag_count", _cfg["prompt_rules"].get("tag_count", 13))),
-                    "tag_max_length": int(st.session_state.get(f"editor_{_store_id}_tag_max_length", _cfg["prompt_rules"].get("tag_max_length", 20))),
-                    "title_brief": st.session_state.get(f"editor_{_store_id}_title_brief", _cfg["prompt_rules"].get("title_brief", "")),
-                    "title_rules": st.session_state.get(f"editor_{_store_id}_title_rules", _cfg["prompt_rules"].get("title_rules", "")),
-                    "tag_strategy": st.session_state.get(f"editor_{_store_id}_tag_strategy", _cfg["prompt_rules"].get("tag_strategy", "")),
-                    "tag_rules": st.session_state.get(f"editor_{_store_id}_tag_rules", _cfg["prompt_rules"].get("tag_rules", "")),
-                    "description_brief": st.session_state.get(f"editor_{_store_id}_description_brief", _cfg["prompt_rules"].get("description_brief", "")),
-                    "opening_rules": st.session_state.get(f"editor_{_store_id}_opening_rules", _cfg["prompt_rules"].get("opening_rules", "")),
-                    "story_rules": st.session_state.get(f"editor_{_store_id}_story_rules", _cfg["prompt_rules"].get("story_rules", "")),
-                    "description_example_template": st.session_state.get(
-                        f"editor_{_store_id}_description_example_template",
-                        _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
-                    ),
-                })
+                if _is_global_ai_template(_cfg):
+                    _cfg["prompt_extra_instructions"] = st.session_state.get(
+                        f"editor_{_store_id}_prompt_extra",
+                        _cfg.get("prompt_extra_instructions", "")
+                    )
+                    _cfg["prompt_rules"].update({
+                        "title_target_min": int(st.session_state.get(f"editor_{_store_id}_title_target_min", _cfg["prompt_rules"].get("title_target_min", 120))),
+                        "title_target_max": int(st.session_state.get(f"editor_{_store_id}_title_target_max", _cfg["prompt_rules"].get("title_target_max", 140))),
+                        "title_max_length": int(st.session_state.get(f"editor_{_store_id}_title_max_length", _cfg["prompt_rules"].get("title_max_length", 140))),
+                        "tag_count": int(st.session_state.get(f"editor_{_store_id}_tag_count", _cfg["prompt_rules"].get("tag_count", 13))),
+                        "tag_max_length": int(st.session_state.get(f"editor_{_store_id}_tag_max_length", _cfg["prompt_rules"].get("tag_max_length", 20))),
+                        "title_brief": st.session_state.get(f"editor_{_store_id}_title_brief", _cfg["prompt_rules"].get("title_brief", "")),
+                        "title_rules": st.session_state.get(f"editor_{_store_id}_title_rules", _cfg["prompt_rules"].get("title_rules", "")),
+                        "tag_strategy": st.session_state.get(f"editor_{_store_id}_tag_strategy", _cfg["prompt_rules"].get("tag_strategy", "")),
+                        "tag_rules": st.session_state.get(f"editor_{_store_id}_tag_rules", _cfg["prompt_rules"].get("tag_rules", "")),
+                        "description_brief": st.session_state.get(f"editor_{_store_id}_description_brief", _cfg["prompt_rules"].get("description_brief", "")),
+                        "opening_rules": st.session_state.get(f"editor_{_store_id}_opening_rules", _cfg["prompt_rules"].get("opening_rules", "")),
+                        "story_rules": st.session_state.get(f"editor_{_store_id}_story_rules", _cfg["prompt_rules"].get("story_rules", "")),
+                        "description_example_template": st.session_state.get(
+                            f"editor_{_store_id}_description_example_template",
+                            _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
+                        ),
+                    })
+                else:
+                    _cfg["prompt_extra_instructions"] = ""
+                    _cfg["prompt_rules"] = {
+                        "description_example_template": st.session_state.get(
+                            f"editor_{_store_id}_description_example_template",
+                            _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
+                        )
+                    }
                 return _tmpl_norm(_cfg, template_id=_cfg.get("template_id", "default_v1"), template_name=_cfg.get("template_name", "Default"))
 
             _tum_magazalar = _tm()
             _tmpl_listesi = _template_listesi()
+            _global_ai_id = "__DEFAULT_AI__"
+            _global_ai_secili = {
+                "store_id": _global_ai_id,
+                "store_name": "Default AI Rules",
+                "sheet_tab": "",
+                "google_sheet_id": None,
+                "price_per_m2": 0,
+                "template": "default_v1",
+                "active": True,
+            }
 
             _kaynak_magaza_ids = [m["store_id"] for m in _tum_magazalar] or ["PatchArts"]
-            if st.session_state.ayar_magaza_id not in [m["store_id"] for m in _tum_magazalar]:
-                st.session_state.ayar_magaza_id = st.session_state.hedef_magaza_id if st.session_state.hedef_magaza_id in _kaynak_magaza_ids else _kaynak_magaza_ids[0]
+            _secilebilir_ids = [_global_ai_id] + [m["store_id"] for m in _tum_magazalar]
+            if st.session_state.ayar_magaza_id not in _secilebilir_ids:
+                st.session_state.ayar_magaza_id = st.session_state.hedef_magaza_id if st.session_state.hedef_magaza_id in _kaynak_magaza_ids else _global_ai_id
 
             _secili = next((m for m in _tum_magazalar if m["store_id"] == st.session_state.ayar_magaza_id), None)
+            if st.session_state.ayar_magaza_id == _global_ai_id:
+                _secili = _global_ai_secili
             _tmpl_cfg = None
             _tmpl_raw = {}
             _tmpl_json = "{}"
@@ -4237,6 +4296,16 @@ with tab_ayarlar:
 
             with _left:
                 st.markdown("#### Mağazalar")
+                _global_selected = st.session_state.ayar_magaza_id == _global_ai_id
+                st.button(
+                    f"{'🧠' if _global_selected else '⚙️'} Default AI Rules",
+                    key="sel_default_ai_rules",
+                    width="stretch",
+                    type="primary" if _global_selected else "secondary",
+                    disabled=(_editor_is_dirty and not _global_selected),
+                    on_click=_select_settings_store,
+                    args=(_global_ai_id,),
+                )
                 for _m in _tum_magazalar:
                     _aktif_ikon = "🟢" if _m.get("active") else "⬜"
                     _is_selected = st.session_state.ayar_magaza_id == _m["store_id"]
@@ -4323,35 +4392,37 @@ with tab_ayarlar:
                     st.info("Düzenlemek için bir mağaza seçin.")
                 else:
                     st.markdown(f"#### {_secili['store_name']}")
-
-                    with st.form(f"store_main_form_{_secili['store_id']}"):
-                        _c1, _c2 = st.columns(2)
-                        _m_name = _c1.text_input("Görünen Ad", value=_secili.get("store_name", _secili["store_id"]))
-                        _m_tab = _c2.text_input("Sheet Tab", value=_secili.get("sheet_tab", _secili["store_id"]))
-                        _c3, _c4, _c5 = st.columns(3)
-                        _m_sheet_id = _c3.text_input("Google Sheet ID", value=_secili.get("google_sheet_id") or "",
-                                                     placeholder="Boş = env GOOGLE_SHEET_ID")
-                        _np = _c4.number_input("m²/$", value=int(_secili.get("price_per_m2", 300)),
-                                               min_value=1, max_value=9999, step=10)
-                        _nt_idx = _tmpl_listesi.index(_secili.get("template", "default_v1")) if _secili.get("template") in _tmpl_listesi else 0
-                        _nt = _c5.selectbox("Template", options=_tmpl_listesi, index=_nt_idx)
-                        _na = st.checkbox("Aktif", value=bool(_secili.get("active")))
-                        if st.form_submit_button("💾 Mağaza Ayarlarını Kaydet", type="primary"):
-                            _mg(_secili["store_id"], {
-                                "store_name": _m_name.strip() or _secili["store_id"],
-                                "sheet_tab": _m_tab.strip() or _secili["store_id"],
-                                "google_sheet_id": _m_sheet_id.strip() or None,
-                                "price_per_m2": _np,
-                                "template": _nt,
-                                "active": _na,
-                            })
-                            try:
-                                from shared.sheets import SheetsKatmani as _SettingsSheets
-                                _SettingsSheets(_secili["store_id"]).sheet_hazirla()
-                            except Exception as _sheet_err:
-                                st.warning(f"Sheet sekmesi kontrol edilemedi: {_sheet_err}")
-                            st.success("✅ Mağaza ayarları kaydedildi!")
-                            st.rerun()
+                    if _secili["store_id"] != _global_ai_id:
+                        with st.form(f"store_main_form_{_secili['store_id']}"):
+                            _c1, _c2 = st.columns(2)
+                            _m_name = _c1.text_input("Görünen Ad", value=_secili.get("store_name", _secili["store_id"]))
+                            _m_tab = _c2.text_input("Sheet Tab", value=_secili.get("sheet_tab", _secili["store_id"]))
+                            _c3, _c4, _c5 = st.columns(3)
+                            _m_sheet_id = _c3.text_input("Google Sheet ID", value=_secili.get("google_sheet_id") or "",
+                                                         placeholder="Boş = env GOOGLE_SHEET_ID")
+                            _np = _c4.number_input("m²/$", value=int(_secili.get("price_per_m2", 300)),
+                                                   min_value=1, max_value=9999, step=10)
+                            _nt_idx = _tmpl_listesi.index(_secili.get("template", "default_v1")) if _secili.get("template") in _tmpl_listesi else 0
+                            _nt = _c5.selectbox("Template", options=_tmpl_listesi, index=_nt_idx)
+                            _na = st.checkbox("Aktif", value=bool(_secili.get("active")))
+                            if st.form_submit_button("💾 Mağaza Ayarlarını Kaydet", type="primary"):
+                                _mg(_secili["store_id"], {
+                                    "store_name": _m_name.strip() or _secili["store_id"],
+                                    "sheet_tab": _m_tab.strip() or _secili["store_id"],
+                                    "google_sheet_id": _m_sheet_id.strip() or None,
+                                    "price_per_m2": _np,
+                                    "template": _nt,
+                                    "active": _na,
+                                })
+                                try:
+                                    from shared.sheets import SheetsKatmani as _SettingsSheets
+                                    _SettingsSheets(_secili["store_id"]).sheet_hazirla()
+                                except Exception as _sheet_err:
+                                    st.warning(f"Sheet sekmesi kontrol edilemedi: {_sheet_err}")
+                                st.success("✅ Mağaza ayarları kaydedildi!")
+                                st.rerun()
+                    else:
+                        st.info("Buradaki ayarlar tüm mağazaların ortak AI kurallarını belirler. Mağaza bazlı fiyat ve template seçimi mağaza kartlarında kalır.")
 
                     _preview_tab, _rules_tab, _json_tab = st.tabs(["Ön İzleme", "AI Kurallar", "JSON Gör"])
 
@@ -4361,21 +4432,11 @@ with tab_ayarlar:
                             st.warning("Kaydedilmemiş değişiklikler var. Kaydetmeden başka mağazaya geçemezsin.")
                             _wd1, _wd2 = st.columns([1, 1])
                             if _wd1.button("💾 Taslağı Kaydet", key=f"save_dirty_{_secili['store_id']}", type="primary"):
-                                _kayit = _json2.loads(_tmpl_json)
-                                _kayit["prompt_extra_instructions"] = st.session_state[f"editor_{_secili['store_id']}_prompt_extra"]
-                                _kayit.setdefault("prompt_rules", {})
-                                _kayit["prompt_rules"].update({
-                                    "title_target_min": int(st.session_state[f"editor_{_secili['store_id']}_title_target_min"]),
-                                    "title_target_max": int(st.session_state[f"editor_{_secili['store_id']}_title_target_max"]),
-                                    "title_max_length": int(st.session_state[f"editor_{_secili['store_id']}_title_max_length"]),
-                                    "tag_count": int(st.session_state[f"editor_{_secili['store_id']}_tag_count"]),
-                                    "tag_max_length": int(st.session_state[f"editor_{_secili['store_id']}_tag_max_length"]),
-                                    "title_brief": st.session_state[f"editor_{_secili['store_id']}_title_brief"],
-                                    "tag_strategy": st.session_state[f"editor_{_secili['store_id']}_tag_strategy"],
-                                    "description_brief": st.session_state[f"editor_{_secili['store_id']}_description_brief"],
-                                    "description_example_template": st.session_state[f"editor_{_secili['store_id']}_description_example_template"],
-                                })
-                                _norm = _tmpl_norm(_kayit, template_id=_tmpl_cfg["template_id"], template_name=_tmpl_cfg["template_name"])
+                                _norm = _tmpl_norm(
+                                    _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                    template_id=_tmpl_cfg["template_id"],
+                                    template_name=_tmpl_cfg["template_name"],
+                                )
                                 _tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
                                 st.success(f"✅ Template kaydedildi: {_tmpl_path.name}")
                                 st.rerun()
@@ -4439,64 +4500,69 @@ with tab_ayarlar:
                             )
 
                     with _rules_tab:
-                        st.text_area(
-                            "Title Talimatı",
-                            key=f"editor_{_secili['store_id']}_title_brief",
-                            height=95,
-                            help="Uzun kuyruklu olsun, ilk 40 karakter güçlü olsun gibi doğal talimatlar yazın."
-                        )
-                        st.text_area(
-                            "Description Talimatı",
-                            key=f"editor_{_secili['store_id']}_description_brief",
-                            height=95,
-                            help="SEO uyumlu, bizim yapıdan ayrılmadan kaliteli içerik üret gibi yönlendirmeler."
-                        )
-                        st.text_area(
-                            "Tag Talimatı",
-                            key=f"editor_{_secili['store_id']}_tag_strategy",
-                            height=110,
-                            help="Örn: 3 tag renk, 3 tag ölçü, 2 tag oda kullanımı, tekrar kalıp olmasın."
-                        )
-                        st.text_area(
-                            "Title Base Rules",
-                            key=f"editor_{_secili['store_id']}_title_rules",
-                            height=240,
-                            help="AI'in gerçekten okuduğu detaylı title kuralları. Karakter, tekrar, yapı ve keyword yerleşimi burada tanımlanır."
-                        )
-                        st.text_area(
-                            "Tag Base Rules",
-                            key=f"editor_{_secili['store_id']}_tag_rules",
-                            height=240,
-                            help="AI'in gerçekten okuduğu detaylı tag kuralları. Ölçü dağılımı, room fit, color/pattern dengesi gibi ana mantık burada tanımlanır."
-                        )
-                        st.text_area(
-                            "Genel AI Talimatı",
-                            key=f"editor_{_secili['store_id']}_prompt_extra",
-                            height=90,
-                            help="Ton, marka dili, kaçınmasını istediğiniz ifade tipi gibi genel notlar."
-                        )
-                        st.text_area(
-                            "Opening Rules",
-                            key=f"editor_{_secili['store_id']}_opening_rules",
-                            height=140,
-                            help="Description açılış cümlesi için detaylı prompt kuralları."
-                        )
-                        st.text_area(
-                            "Story Rules",
-                            key=f"editor_{_secili['store_id']}_story_rules",
-                            height=220,
-                            help="Description hikaye paragrafları için detaylı prompt kuralları."
-                        )
+                        if _is_global_ai_template(_tmpl_cfg):
+                            st.info("Bu template ortak AI merkezidir. Title, tag, renk/pattern sınıflandırma ve genel prompt kuralları tüm mağazalar için buradan yönetilir.")
+                            st.text_area(
+                                "Title Talimatı",
+                                key=f"editor_{_secili['store_id']}_title_brief",
+                                height=95,
+                                help="Uzun kuyruklu olsun, ilk 40 karakter güçlü olsun gibi doğal talimatlar yazın."
+                            )
+                            st.text_area(
+                                "Description Talimatı",
+                                key=f"editor_{_secili['store_id']}_description_brief",
+                                height=95,
+                                help="SEO uyumlu, bizim yapıdan ayrılmadan kaliteli içerik üret gibi yönlendirmeler."
+                            )
+                            st.text_area(
+                                "Tag Talimatı",
+                                key=f"editor_{_secili['store_id']}_tag_strategy",
+                                height=110,
+                                help="Örn: 3 tag renk, 3 tag ölçü, 2 tag oda kullanımı, tekrar kalıp olmasın."
+                            )
+                            st.text_area(
+                                "Title Base Rules",
+                                key=f"editor_{_secili['store_id']}_title_rules",
+                                height=240,
+                                help="AI'in gerçekten okuduğu detaylı title kuralları. Karakter, tekrar, yapı ve keyword yerleşimi burada tanımlanır."
+                            )
+                            st.text_area(
+                                "Tag Base Rules",
+                                key=f"editor_{_secili['store_id']}_tag_rules",
+                                height=240,
+                                help="AI'in gerçekten okuduğu detaylı tag kuralları. Ölçü dağılımı, room fit, color/pattern dengesi gibi ana mantık burada tanımlanır."
+                            )
+                            st.text_area(
+                                "Genel AI Talimatı",
+                                key=f"editor_{_secili['store_id']}_prompt_extra",
+                                height=90,
+                                help="Ton, marka dili, kaçınmasını istediğiniz ifade tipi gibi genel notlar."
+                            )
+                            st.text_area(
+                                "Opening Rules",
+                                key=f"editor_{_secili['store_id']}_opening_rules",
+                                height=140,
+                                help="Description açılış cümlesi için detaylı prompt kuralları."
+                            )
+                            st.text_area(
+                                "Story Rules",
+                                key=f"editor_{_secili['store_id']}_story_rules",
+                                height=220,
+                                help="Description hikaye paragrafları için detaylı prompt kuralları."
+                            )
 
-                        _mini1, _mini2, _mini3, _mini4, _mini5 = st.columns([0.9, 0.9, 0.9, 0.8, 1])
-                        _mini1.number_input("Title min", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_target_min")
-                        _mini2.number_input("Title hedef", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_target_max")
-                        _mini3.number_input("Title max", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_max_length")
-                        _mini4.number_input("Tag adet", min_value=1, max_value=13, key=f"editor_{_secili['store_id']}_tag_count")
-                        _mini5.number_input("Tag max", min_value=1, max_value=20, key=f"editor_{_secili['store_id']}_tag_max_length")
-
-                        st.markdown("##### Description Yapısı")
-                        st.caption("Description yerleşimini Ön İzleme sekmesindeki Edit butonundan düzenleyebilirsin. Bu sekmede artık hem kısa talimatlar hem de AI'in kullandığı detaylı base kurallar görünür.")
+                            _mini1, _mini2, _mini3, _mini4, _mini5 = st.columns([0.9, 0.9, 0.9, 0.8, 1])
+                            _mini1.number_input("Title min", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_target_min")
+                            _mini2.number_input("Title hedef", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_target_max")
+                            _mini3.number_input("Title max", min_value=10, max_value=140, key=f"editor_{_secili['store_id']}_title_max_length")
+                            _mini4.number_input("Tag adet", min_value=1, max_value=13, key=f"editor_{_secili['store_id']}_tag_count")
+                            _mini5.number_input("Tag max", min_value=1, max_value=20, key=f"editor_{_secili['store_id']}_tag_max_length")
+                            st.markdown("##### Description Yapısı")
+                            st.caption("Description yerleşimini Ön İzleme sekmesindeki Edit butonundan düzenleyebilirsin. Bu ortak şablon tüm mağazaların temel AI kurallarını belirler.")
+                        else:
+                            st.info("Bu mağaza template'inde yalnızca description yerleşimi özelleştirilir. Title, tag ve diğer AI kuralları ortak `default_v1` üzerinden gelir.")
+                            st.markdown("##### Description Yapısı")
+                            st.caption("Bu mağaza için sadece blok sırası ve description akışı değişir. Düzenlemek için Ön İzleme sekmesindeki Edit butonunu kullan.")
 
                         if st.button("💾 AI Metin Ayarlarını Kaydet", key=f"save_text_editor_{_secili['store_id']}", type="primary"):
                             _norm = _tmpl_norm(

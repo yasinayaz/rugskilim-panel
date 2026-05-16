@@ -106,6 +106,99 @@ PCLOUD_TOKEN
 TEMP_DIR            # İndirilen dosyalar için (varsayılan: C:\etsy_temp)
 ```
 
+## Ürün Kodu Normalizasyon Kuralları
+
+Tüm mağaza CSV'lerinden gelen SKU'lar panele yazılmadan önce bu kurallara göre normalize edilir.
+Araç: `vds/normalize_product_codes.py`
+
+### 1. Mağaza Prefix Stripping (CSV'den okurken)
+
+Her mağazanın Etsy SKU'sunda bir prefix olabilir. Canonical koda geçmeden önce çıkarılır:
+
+| Mağaza | Çıkarılacak Prefix |
+|--------|-------------------|
+| LoomixRugs | `LMX ` |
+| LoopRug | `LR `, `LP ` |
+| RugsShopTurkey | `RST `, `RSH ` |
+| WovenLoomRugs | `WLR `, `WLB ` |
+| İlmekRug | `ilmek ` (büyük/küçük harf farkı yok) |
+| BohoRugHouse | — (prefix yok) |
+| WovenTurkishRugs | — (prefix yok) |
+| WoolCottonRugs | — (prefix yok) |
+| OldNewRugs | — (prefix yok) |
+| PatchArts | — (prefix yok) |
+| RugsKilimLLC | — (prefix yok) |
+| LoomAntikRugs | — (prefix yok) |
+
+### 2. Canonical Format (Panel / Sheet / Supabase'de saklanan kod)
+
+Prefix çıkarıldıktan sonra şu dönüşümler uygulanır:
+
+```
+1. Büyük harfe çevir
+2. Tire (-) → boşluk ( )
+3. Çoklu boşlukları teke indir
+4. Harf+rakam arasına boşluk ekle (D149 → D 149, KLM62 → KLM 62)
+```
+
+**Örnekler:**
+
+| Ham SKU | Prefix çıkar | Canonical |
+|---------|-------------|-----------|
+| `LMX D 149` | `D 149` | `D 149` |
+| `LMX İ-11` | `İ-11` | `İ 11` |
+| `RST 3340` | `3340` | `3340` |
+| `WLR D-706` | `D-706` | `D 706` |
+| `LR D 730` | `D 730` | `D 730` |
+| `ilmek D 977` | `D 977` | `D 977` |
+| `d149` | `d149` | `D 149` |
+| `D-520` | `D-520` | `D 520` |
+| `h152` | `h152` | `H 152` |
+| `3340` | `3340` | `3340` |
+
+**Sonuç format:** `HARF BOŞLUK SAYI` veya sadece `SAYI`
+- `D 149` ✅ `İ 11` ✅ `KLM 62` ✅ `3340` ✅
+- `D149` ❌ `d 149` ❌ `D-149` ❌ `İ-11` ❌
+
+### 3. İstisna: Adet Kodu (x2)
+
+`4120 x2` gibi `SAYI x SAYI` formatındaki kodlar normalize edilmez — `x` burada adet anlamı taşır.
+
+### 4. Merge Kuralı (Aynı Canonical'a Düşen Birden Fazla Ürün)
+
+`D149`, `d149`, `D-149`, `D 149` hepsi → canonical `D 149`
+
+Çakışma varsa **master seçim önceliği:**
+1. `product_store_status` referansı olan
+2. `products.category` dolu olan
+3. Canonical formatta olan
+4. Alfabetik olarak ilk gelen
+
+**Uygulama sırası:**
+1. Orphan store_status satırları master'a taşı (upsert)
+2. Eski store_status satırlarını sil
+3. Orphan product kayıtlarını sil
+
+### 5. CSV Otoritesi
+
+CSV'de bir ürün varsa panelde ve sheet'te de olmalı.
+- CSV'deki duplicate SKU'lar (aynı canonical): ilk geçen alınır, ikincisi atlanır
+- `products.status=sold` olsa bile Etsy'de aktifse `product_store_status`'ta görünmeli
+- Sheet'te sadece green (aktif) satırlar kalır; green olmayanlar silinir
+
+### 6. Sync Araçları
+
+```bash
+# Tüm ürün kodlarını normalize et (dry-run)
+python3 vds/normalize_product_codes.py
+
+# Uygula
+python3 vds/normalize_product_codes.py --apply
+
+# Mağaza store_status → Sheet sync
+python3 vds/sync_store_status_to_sheet.py <store_id> --include-sold
+```
+
 ## Bağımlılıklar
 
 ```bash

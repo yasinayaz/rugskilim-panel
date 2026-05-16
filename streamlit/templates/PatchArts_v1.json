@@ -1,6 +1,6 @@
 {
-  "template_id": "LoomAntikRugs_v1",
-  "template_name": "LoomAntikRugs",
+  "template_id": "PatchArts_v1",
+  "template_name": "PatchArts",
   "prompt_rules": {
     "description_example_template": "{opening}\n\n{no_extra_fees_block}\n\n{details_block}\n\n{easy_returns_block}\n\n{hikaye}\n\n{footer_block}"
   },

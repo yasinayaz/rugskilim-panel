@@ -18,7 +18,7 @@ if exist "%ENV_FILE%" (
 )
 
 REM ── Ortak / varsayılan ayarlar ───────────────────────────────────────────
-if not defined GOOGLE_SHEET_ID set "GOOGLE_SHEET_ID=1927qUbprn8NEK3-tYFddelZNfxGzCQsiJ8sl_usLHV4"
+if not defined GOOGLE_SHEET_ID set "GOOGLE_SHEET_ID=12zcGd3Ila-y_aZWCldNZUeJp-1yBrz_Uvh4Yf3U0f7o"
 if not defined GOOGLE_CREDS_JSON set "GOOGLE_CREDS_JSON=%REPO_DIR%\streamlit\credentials.json"
 if not defined TEMP_DIR set "TEMP_DIR=C:\etsy_temp"
 

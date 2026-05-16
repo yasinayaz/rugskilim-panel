@@ -4,9 +4,9 @@
       "store_id": "PatchArts",
       "store_name": "PatchArts",
       "sheet_tab": "PatchArts",
-      "google_sheet_id": null,
+      "google_sheet_id": "12zcGd3Ila-y_aZWCldNZUeJp-1yBrz_Uvh4Yf3U0f7o",
       "price_per_m2": 300,
-      "template": "default_v1",
+      "template": "PatchArts_v1",
       "active": true
     },
     {

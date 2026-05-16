@@ -157,6 +157,30 @@ TEMPLATE_PLACEHOLDERS = {
     "footer_block": "Footer / kapanis blogu",
 }
 
+ETSY_RENKLERI = [
+    "Beige", "Black", "Blue", "Bronze", "Brown", "Clear", "Copper", "Gold",
+    "Gray", "Green", "Orange", "Pink", "Purple", "Rainbow", "Red",
+    "Rose gold", "Silver", "White", "Yellow",
+]
+
+ETSY_PATTERNLERI = [
+    "Abstract", "Animal print", "Bordered", "Camouflage", "Check", "Floral",
+    "Geometric", "Ikat", "Moroccan", "Ombré", "Oriental", "Paisley",
+    "Patchwork", "Persian", "Plants & trees", "Polka dot", "Solid",
+    "Southwestern", "Striped",
+]
+
+ETSY_HOME_STYLE = [
+    "Bohemian & eclectic", "Coastal & tropical", "Contemporary",
+    "Country & farmhouse", "Industrial & utility", "Rustic & primitive",
+    "Scandinavian",
+]
+
+ETSY_SHOP_SECTIONS = [
+    "Oversized Rugs", "Large Rugs", "Medium Rugs", "Small Rugs", "Runner Rugs",
+    "Hemp Rug Kilim", "Kilim Rugs", "Mini Rugs - Doormats", "Gifts",
+]
+
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
 
@@ -171,14 +195,51 @@ def _cm_to_feet_inches(cm: float) -> str:
     return f"{ft}' {inch}\""
 
 
+def _global_ai_template_defaults() -> dict:
+    varsayilan = {
+        "prompt_extra_instructions": "",
+        "prompt_rules": deepcopy(_DEFAULT_PROMPT_RULES),
+        "static_texts": deepcopy(_DEFAULT_STATIC_TEXTS),
+    }
+    try:
+        default_path = Path(__file__).resolve().parent.parent / "templates" / "default_v1.json"
+        if not default_path.exists():
+            return varsayilan
+        raw = json.loads(default_path.read_text(encoding="utf-8"))
+        merged = deepcopy(varsayilan)
+        merged["prompt_extra_instructions"] = str(raw.get("prompt_extra_instructions", "") or "")
+        merged["prompt_rules"].update(raw.get("prompt_rules") or {})
+        static_texts = deepcopy(_DEFAULT_STATIC_TEXTS)
+        if "sabit_no_extra_fees" in raw:
+            static_texts["no_extra_fees"] = raw.get("sabit_no_extra_fees") or ""
+        if "sabit_easy_returns" in raw:
+            static_texts["easy_returns"] = raw.get("sabit_easy_returns") or ""
+        if "sabit_alt" in raw:
+            static_texts["footer"] = raw.get("sabit_alt") or ""
+        static_texts.update(raw.get("static_texts") or {})
+        merged["static_texts"] = static_texts
+        return merged
+    except Exception:
+        return varsayilan
+
+
 def template_config_normallestir(template_config: dict = None,
                                  template_id: str = "default_v1",
                                  template_name: str = "Default (Standart)") -> dict:
     raw = deepcopy(template_config or {})
-    prompt_rules = deepcopy(_DEFAULT_PROMPT_RULES)
-    prompt_rules.update(raw.get("prompt_rules") or {})
+    global_defaults = _global_ai_template_defaults()
+    prompt_rules = deepcopy(global_defaults["prompt_rules"])
+    raw_prompt_rules = deepcopy(raw.get("prompt_rules") or {})
+    is_global_template = str(raw.get("template_id") or template_id or "").strip() == "default_v1"
+    if is_global_template:
+        prompt_rules.update(raw_prompt_rules)
+    else:
+        # Store templates only customize description rendering order/layout.
+        for key in ["description_example_template"]:
+            if key in raw_prompt_rules:
+                prompt_rules[key] = raw_prompt_rules.get(key)
 
-    static_texts = deepcopy(_DEFAULT_STATIC_TEXTS)
+    static_texts = deepcopy(global_defaults["static_texts"])
     if "sabit_no_extra_fees" in raw:
         static_texts["no_extra_fees"] = raw.get("sabit_no_extra_fees") or ""
     if "sabit_easy_returns" in raw:
@@ -205,7 +266,11 @@ def template_config_normallestir(template_config: dict = None,
     return {
         "template_id": raw.get("template_id", template_id),
         "template_name": raw.get("template_name", template_name),
-        "prompt_extra_instructions": raw.get("prompt_extra_instructions", ""),
+        "prompt_extra_instructions": (
+            raw.get("prompt_extra_instructions", global_defaults.get("prompt_extra_instructions", ""))
+            if is_global_template else
+            global_defaults.get("prompt_extra_instructions", "")
+        ),
         "prompt_rules": prompt_rules,
         "static_texts": static_texts,
     }
@@ -218,6 +283,224 @@ def _rounded_ft_etiketi(boyut_ft: str) -> str:
     w = max(1, round(float(match.group(1))))
     h = max(1, round(float(match.group(2))))
     return f"{w}x{h}"
+
+
+def _boyut_ft_parse(boyut_ft: str) -> tuple[float | None, float | None]:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)", str(boyut_ft or ""))
+    if not match:
+        return None, None
+    try:
+        return float(match.group(1)), float(match.group(2))
+    except Exception:
+        return None, None
+
+
+def _enum_normalize(value: str, allowed: list[str], synonym_map: dict[str, str] | None = None) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not raw:
+        return ""
+    lowered = raw.casefold()
+    direct = {item.casefold(): item for item in allowed}
+    if lowered in direct:
+        return direct[lowered]
+    for item in allowed:
+        if item.casefold() in lowered or lowered in item.casefold():
+            return item
+    if synonym_map:
+        for key, target in synonym_map.items():
+            if key in lowered and target in allowed:
+                return target
+    return ""
+
+
+def _etsy_renk_normalize(value: str) -> str:
+    return _enum_normalize(value, ETSY_RENKLERI, {
+        "beige": "Beige",
+        "cream": "Beige",
+        "ivory": "Beige",
+        "sand": "Beige",
+        "taupe": "Brown",
+        "tan": "Brown",
+        "brown": "Brown",
+        "black": "Black",
+        "charcoal": "Gray",
+        "gray": "Gray",
+        "grey": "Gray",
+        "silver": "Silver",
+        "white": "White",
+        "off white": "White",
+        "blue": "Blue",
+        "navy": "Blue",
+        "teal": "Blue",
+        "green": "Green",
+        "sage": "Green",
+        "olive": "Green",
+        "red": "Red",
+        "burgundy": "Red",
+        "rust": "Orange",
+        "terracotta": "Orange",
+        "orange": "Orange",
+        "yellow": "Yellow",
+        "mustard": "Yellow",
+        "gold": "Gold",
+        "pink": "Pink",
+        "rose": "Pink",
+        "purple": "Purple",
+        "lilac": "Purple",
+        "copper": "Copper",
+        "bronze": "Bronze",
+        "rainbow": "Rainbow",
+        "clear": "Clear",
+    })
+
+
+def _pattern_etsy_tahmin(pattern_raw: str, style_raw: str = "", title_raw: str = "") -> str:
+    kaynak = " ".join([str(pattern_raw or ""), str(style_raw or ""), str(title_raw or "")]).casefold()
+    if not kaynak:
+        return ""
+    checks = [
+        (["patchwork"], "Patchwork"),
+        (["striped", "stripe"], "Striped"),
+        (["check", "checked", "checker"], "Check"),
+        (["polka"], "Polka dot"),
+        (["animal"], "Animal print"),
+        (["camouflage", "camo"], "Camouflage"),
+        (["ombre", "ombré"], "Ombré"),
+        (["plant", "tree", "botanical"], "Plants & trees"),
+        (["paisley"], "Paisley"),
+        (["ikat"], "Ikat"),
+        (["moroccan", "beni"], "Moroccan"),
+        (["southwestern", "south western", "aztec", "navajo"], "Southwestern"),
+        (["persian"], "Persian"),
+        (["geometric", "tribal", "kilim", "anatolian"], "Geometric"),
+        (["floral", "flower", "rose"], "Floral"),
+        (["medallion", "oriental", "traditional", "vintage"], "Oriental"),
+        (["solid", "plain", "minimal"], "Solid"),
+        (["abstract"], "Abstract"),
+        (["border", "bordered"], "Bordered"),
+    ]
+    for keys, target in checks:
+        if any(key in kaynak for key in keys):
+            return target
+    return ""
+
+
+def _home_style_tahmin(style_raw: str, pattern_raw: str = "", title_raw: str = "") -> str:
+    kaynak = " ".join([str(style_raw or ""), str(pattern_raw or ""), str(title_raw or "")]).casefold()
+    if any(key in kaynak for key in ["scandinavian", "nordic", "minimal"]):
+        return "Scandinavian"
+    if any(key in kaynak for key in ["industrial", "utility", "loft"]):
+        return "Industrial & utility"
+    if any(key in kaynak for key in ["coastal", "tropical", "beach"]):
+        return "Coastal & tropical"
+    if any(key in kaynak for key in ["country", "farmhouse"]):
+        return "Country & farmhouse"
+    if any(key in kaynak for key in ["rustic", "primitive", "tribal", "southwestern"]):
+        return "Rustic & primitive"
+    if any(key in kaynak for key in ["modern", "contemporary", "abstract"]):
+        return "Contemporary"
+    return "Bohemian & eclectic"
+
+
+def _tip_tahmin(boyut_ft: str) -> str:
+    en, boy = _boyut_ft_parse(boyut_ft)
+    if not en or not boy:
+        return "Area"
+    kisa, uzun = sorted([en, boy])
+    if kisa < 4:
+        return "Accent"
+    if uzun >= kisa * 2.5 and kisa <= 4:
+        return "Runner"
+    return "Area"
+
+
+def _shop_section_tahmin(boyut_ft: str, metrekare: float | None, tip: str, pattern_etsy: str, stil: str = "") -> str:
+    pattern_kaynak = " ".join([str(pattern_etsy or ""), str(stil or "")]).casefold()
+    if "hemp" in pattern_kaynak and "kilim" in pattern_kaynak:
+        return "Hemp Rug Kilim"
+    if "kilim" in pattern_kaynak:
+        return "Kilim Rugs"
+    if tip == "Runner":
+        return "Runner Rugs"
+    en, boy = _boyut_ft_parse(boyut_ft)
+    kisa = min([v for v in [en, boy] if v is not None], default=None)
+    alan = float(metrekare or 0)
+    if alan >= 9 or (kisa is not None and kisa >= 9):
+        return "Oversized Rugs"
+    if 6 <= alan < 9:
+        return "Large Rugs"
+    if 3 <= alan < 6:
+        return "Medium Rugs"
+    if 1 <= alan < 3:
+        return "Small Rugs"
+    if 0 < alan < 1:
+        return "Mini Rugs - Doormats"
+    return "Gifts"
+
+
+def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | None) -> dict:
+    norm = dict(ai or {})
+    norm["renk1"] = _etsy_renk_normalize(norm.get("renk1", ""))
+    norm["renk2"] = _etsy_renk_normalize(norm.get("renk2", ""))
+
+    renk_scheme = str(norm.get("renk_scheme", "") or "")
+    if not norm["renk1"]:
+        for parca in [p.strip() for p in renk_scheme.split(",") if p.strip()]:
+            guess = _etsy_renk_normalize(parca)
+            if guess:
+                norm["renk1"] = guess
+                break
+    if not norm["renk2"]:
+        for parca in [p.strip() for p in renk_scheme.split(",") if p.strip()]:
+            guess = _etsy_renk_normalize(parca)
+            if guess and guess != norm["renk1"]:
+                norm["renk2"] = guess
+                break
+
+    norm["pattern_etsy"] = _enum_normalize(norm.get("pattern_etsy", ""), ETSY_PATTERNLERI)
+    if not norm["pattern_etsy"]:
+        norm["pattern_etsy"] = _pattern_etsy_tahmin(
+            norm.get("pattern", ""),
+            norm.get("stil", ""),
+            norm.get("baslik", ""),
+        )
+
+    norm["tip"] = _enum_normalize(norm.get("tip", ""), ["Accent", "Area", "Runner"])
+    if not norm["tip"]:
+        norm["tip"] = _tip_tahmin(boyut_ft)
+
+    norm["home_style"] = _enum_normalize(norm.get("home_style", ""), ETSY_HOME_STYLE, {
+        "bohemian": "Bohemian & eclectic",
+        "eclectic": "Bohemian & eclectic",
+        "rustic": "Rustic & primitive",
+        "primitive": "Rustic & primitive",
+        "farmhouse": "Country & farmhouse",
+        "country": "Country & farmhouse",
+        "industrial": "Industrial & utility",
+        "utility": "Industrial & utility",
+        "scandinavian": "Scandinavian",
+        "coastal": "Coastal & tropical",
+        "tropical": "Coastal & tropical",
+        "contemporary": "Contemporary",
+        "modern": "Contemporary",
+    })
+    if not norm["home_style"]:
+        norm["home_style"] = _home_style_tahmin(
+            norm.get("stil", ""),
+            norm.get("pattern", ""),
+            norm.get("baslik", ""),
+        )
+
+    norm["shop_section"] = _enum_normalize(norm.get("shop_section", ""), ETSY_SHOP_SECTIONS)
+    if not norm["shop_section"]:
+        norm["shop_section"] = _shop_section_tahmin(
+            boyut_ft,
+            metrekare,
+            norm.get("tip", ""),
+            norm.get("pattern_etsy", ""),
+            norm.get("stil", ""),
+        )
+    return norm
 
 
 def _baslik_kisalt(baslik: str, max_uzunluk: int) -> str:
@@ -256,16 +539,7 @@ def _ai_sonuc_normallestir(ai: dict, template_config: dict = None) -> dict:
 
 
 def _varsayilan_tip(boyut_ft: str) -> str:
-    match = re.search(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)", str(boyut_ft))
-    if not match:
-        return "Rug"
-    try:
-        en = float(match.group(1))
-        boy = float(match.group(2))
-    except Exception:
-        return "Rug"
-    kisa, uzun = sorted([en, boy])
-    return "Runner" if kisa <= 4 and uzun >= 6 else "Area Rug"
+    return _tip_tahmin(boyut_ft)
 
 
 class _SafeDict(dict):
@@ -588,6 +862,7 @@ def ai_icerik_url(
         prompt = _prompt_olustur(boyut_ft, boyut_cm, metrekare, fiyat_usd, norm_template)
         ai = _gemini_isle(prompt, gorsel_b64, mime)
         ai = _ai_sonuc_normallestir(ai, norm_template)
+        ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
         _validate(ai, norm_template)
         aciklama = description_olustur(ai, boyut_ft, boyut_cm, metrekare, genislik_cm, uzunluk_cm, norm_template, urun_id=urun_id)
         return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
@@ -619,6 +894,7 @@ def ai_icerik_uret(
         prompt = _prompt_olustur(boyut_ft, boyut_cm, metrekare, fiyat_usd, norm_template)
         ai = _gemini_isle(prompt, gorsel_b64, mime)
         ai = _ai_sonuc_normallestir(ai, norm_template)
+        ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
         _validate(ai, norm_template)
         aciklama = description_olustur(ai, boyut_ft, boyut_cm, metrekare, genislik_cm, uzunluk_cm, norm_template, urun_id=urun_id)
         return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
@@ -642,6 +918,10 @@ def _validate(ai: dict, template_config: dict = None):
     assert "renk_scheme"  in ai, "renk_scheme eksik"
     assert "pattern"      in ai, "pattern eksik"
     assert "ana_resim_tag" in ai, "ana_resim_tag eksik"
+    assert ai.get("pattern_etsy", "") in ETSY_PATTERNLERI, f"Gecersiz pattern_etsy: {ai.get('pattern_etsy', '')}"
+    assert ai.get("tip", "") in ["Accent", "Area", "Runner"], f"Gecersiz tip: {ai.get('tip', '')}"
+    assert ai.get("home_style", "") in ETSY_HOME_STYLE, f"Gecersiz home_style: {ai.get('home_style', '')}"
+    assert ai.get("shop_section", "") in ETSY_SHOP_SECTIONS, f"Gecersiz shop_section: {ai.get('shop_section', '')}"
 
 
 def fallback_ai_icerik(
@@ -689,17 +969,18 @@ def fallback_ai_icerik(
         "renk2": "",
         "renk_scheme": "Soft, timeworn vintage tones",
         "pattern": "Vintage Anatolian pattern",
-        "pattern_etsy": "Anatolian",
+        "pattern_etsy": "Oriental",
         "shop_section": "",
         "tip": tip,
         "ana_resim_tag": f"{rounded_ft} vintage turkish rug".strip(),
         "tahmini_yil": "Vintage",
         "stil": "Vintage",
         "koken": "Turkish",
-        "home_style": "Bohemian",
+        "home_style": "Bohemian & eclectic",
         "hata_notu": str(hata_mesaji or "").strip(),
     }
     ai = _ai_sonuc_normallestir(ai, tc)
+    ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
     ai["aciklama"] = description_olustur(
         ai,
         boyut_ft,
