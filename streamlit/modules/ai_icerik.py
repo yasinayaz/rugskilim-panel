@@ -354,6 +354,19 @@ def _etsy_renk_normalize(value: str) -> str:
     })
 
 
+def _renk_kandidatlari_topla(*alanlar) -> list[str]:
+    bulunan: list[str] = []
+    for alan in alanlar:
+        metin = re.sub(r"[/|;+]", ",", str(alan or ""))
+        parcali = [p.strip() for p in re.split(r"[,\n]", metin) if p.strip()]
+        adaylar = parcali or [metin.strip()]
+        for aday in adaylar:
+            renk = _etsy_renk_normalize(aday)
+            if renk and renk not in bulunan:
+                bulunan.append(renk)
+    return bulunan
+
+
 def _pattern_etsy_tahmin(pattern_raw: str, style_raw: str = "", title_raw: str = "") -> str:
     kaynak = " ".join([str(pattern_raw or ""), str(style_raw or ""), str(title_raw or "")]).casefold()
     if not kaynak:
@@ -385,6 +398,18 @@ def _pattern_etsy_tahmin(pattern_raw: str, style_raw: str = "", title_raw: str =
     return ""
 
 
+def _pattern_etsy_karar_ver(mevcut: str, pattern_raw: str, style_raw: str = "", title_raw: str = "") -> str:
+    mevcut_norm = _enum_normalize(mevcut, ETSY_PATTERNLERI)
+    inferred = _pattern_etsy_tahmin(pattern_raw, style_raw, title_raw)
+
+    # "Oriental" çok genel kalıyorsa, pattern/stil başlığından daha spesifik eşleşmeyi tercih et.
+    if mevcut_norm == "Oriental" and inferred and inferred != "Oriental":
+        return inferred
+    if mevcut_norm:
+        return mevcut_norm
+    return inferred
+
+
 def _home_style_tahmin(style_raw: str, pattern_raw: str = "", title_raw: str = "") -> str:
     kaynak = " ".join([str(style_raw or ""), str(pattern_raw or ""), str(title_raw or "")]).casefold()
     if any(key in kaynak for key in ["scandinavian", "nordic", "minimal"]):
@@ -407,10 +432,10 @@ def _tip_tahmin(boyut_ft: str) -> str:
     if not en or not boy:
         return "Area"
     kisa, uzun = sorted([en, boy])
-    if kisa < 4:
-        return "Accent"
     if uzun >= kisa * 2.5 and kisa <= 4:
         return "Runner"
+    if kisa < 4:
+        return "Accent"
     return "Area"
 
 
@@ -440,34 +465,27 @@ def _shop_section_tahmin(boyut_ft: str, metrekare: float | None, tip: str, patte
 
 def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | None) -> dict:
     norm = dict(ai or {})
-    norm["renk1"] = _etsy_renk_normalize(norm.get("renk1", ""))
-    norm["renk2"] = _etsy_renk_normalize(norm.get("renk2", ""))
+    renkler = _renk_kandidatlari_topla(
+        norm.get("renk1", ""),
+        norm.get("renk2", ""),
+        norm.get("renk_scheme", ""),
+        norm.get("baslik", ""),
+        norm.get("opening", ""),
+        norm.get("hikaye", ""),
+        " ".join(norm.get("taglar", []) or []),
+    )
+    norm["renk1"] = renkler[0] if renkler else ""
+    norm["renk2"] = renkler[1] if len(renkler) > 1 else ""
 
-    renk_scheme = str(norm.get("renk_scheme", "") or "")
-    if not norm["renk1"]:
-        for parca in [p.strip() for p in renk_scheme.split(",") if p.strip()]:
-            guess = _etsy_renk_normalize(parca)
-            if guess:
-                norm["renk1"] = guess
-                break
-    if not norm["renk2"]:
-        for parca in [p.strip() for p in renk_scheme.split(",") if p.strip()]:
-            guess = _etsy_renk_normalize(parca)
-            if guess and guess != norm["renk1"]:
-                norm["renk2"] = guess
-                break
+    norm["pattern_etsy"] = _pattern_etsy_karar_ver(
+        norm.get("pattern_etsy", ""),
+        norm.get("pattern", ""),
+        norm.get("stil", ""),
+        norm.get("baslik", ""),
+    )
 
-    norm["pattern_etsy"] = _enum_normalize(norm.get("pattern_etsy", ""), ETSY_PATTERNLERI)
-    if not norm["pattern_etsy"]:
-        norm["pattern_etsy"] = _pattern_etsy_tahmin(
-            norm.get("pattern", ""),
-            norm.get("stil", ""),
-            norm.get("baslik", ""),
-        )
-
-    norm["tip"] = _enum_normalize(norm.get("tip", ""), ["Accent", "Area", "Runner"])
-    if not norm["tip"]:
-        norm["tip"] = _tip_tahmin(boyut_ft)
+    # Boyut bazlı type daha güvenilir; AI yanıtı geçerli olsa bile ters düşüyorsa override et.
+    norm["tip"] = _tip_tahmin(boyut_ft)
 
     norm["home_style"] = _enum_normalize(norm.get("home_style", ""), ETSY_HOME_STYLE, {
         "bohemian": "Bohemian & eclectic",
@@ -491,15 +509,13 @@ def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | No
             norm.get("baslik", ""),
         )
 
-    norm["shop_section"] = _enum_normalize(norm.get("shop_section", ""), ETSY_SHOP_SECTIONS)
-    if not norm["shop_section"]:
-        norm["shop_section"] = _shop_section_tahmin(
-            boyut_ft,
-            metrekare,
-            norm.get("tip", ""),
-            norm.get("pattern_etsy", ""),
-            norm.get("stil", ""),
-        )
+    norm["shop_section"] = _shop_section_tahmin(
+        boyut_ft,
+        metrekare,
+        norm.get("tip", ""),
+        norm.get("pattern_etsy", ""),
+        norm.get("stil", ""),
+    )
     return norm
 
 
