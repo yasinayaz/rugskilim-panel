@@ -163,6 +163,8 @@ ETSY_RENKLERI = [
     "Rose gold", "Silver", "White", "Yellow",
 ]
 
+# Canonical Etsy Pattern dropdown list shared by every store.
+# AI must always save exactly one of these values for pattern_etsy.
 ETSY_PATTERNLERI = [
     "Abstract", "Animal print", "Bordered", "Camouflage", "Check", "Floral",
     "Geometric", "Ikat", "Moroccan", "Ombré", "Oriental", "Paisley",
@@ -176,6 +178,12 @@ ETSY_HOME_STYLE = [
     "Scandinavian",
 ]
 
+# Canonical Etsy type dropdown list shared by every store.
+# AI must always save exactly one of these values for tip.
+ETSY_TIPLERI = ["Accent", "Area", "Runner"]
+
+# Canonical Etsy shop section dropdown list shared by every store.
+# AI must always save exactly one of these values for shop_section.
 ETSY_SHOP_SECTIONS = [
     "Oversized Rugs", "Large Rugs", "Medium Rugs", "Small Rugs", "Runner Rugs",
     "Hemp Rug Kilim", "Kilim Rugs", "Mini Rugs - Doormats", "Gifts",
@@ -195,51 +203,14 @@ def _cm_to_feet_inches(cm: float) -> str:
     return f"{ft}' {inch}\""
 
 
-def _global_ai_template_defaults() -> dict:
-    varsayilan = {
-        "prompt_extra_instructions": "",
-        "prompt_rules": deepcopy(_DEFAULT_PROMPT_RULES),
-        "static_texts": deepcopy(_DEFAULT_STATIC_TEXTS),
-    }
-    try:
-        default_path = Path(__file__).resolve().parent.parent / "templates" / "default_v1.json"
-        if not default_path.exists():
-            return varsayilan
-        raw = json.loads(default_path.read_text(encoding="utf-8"))
-        merged = deepcopy(varsayilan)
-        merged["prompt_extra_instructions"] = str(raw.get("prompt_extra_instructions", "") or "")
-        merged["prompt_rules"].update(raw.get("prompt_rules") or {})
-        static_texts = deepcopy(_DEFAULT_STATIC_TEXTS)
-        if "sabit_no_extra_fees" in raw:
-            static_texts["no_extra_fees"] = raw.get("sabit_no_extra_fees") or ""
-        if "sabit_easy_returns" in raw:
-            static_texts["easy_returns"] = raw.get("sabit_easy_returns") or ""
-        if "sabit_alt" in raw:
-            static_texts["footer"] = raw.get("sabit_alt") or ""
-        static_texts.update(raw.get("static_texts") or {})
-        merged["static_texts"] = static_texts
-        return merged
-    except Exception:
-        return varsayilan
-
-
 def template_config_normallestir(template_config: dict = None,
                                  template_id: str = "default_v1",
                                  template_name: str = "Default (Standart)") -> dict:
     raw = deepcopy(template_config or {})
-    global_defaults = _global_ai_template_defaults()
-    prompt_rules = deepcopy(global_defaults["prompt_rules"])
-    raw_prompt_rules = deepcopy(raw.get("prompt_rules") or {})
-    is_global_template = str(raw.get("template_id") or template_id or "").strip() == "default_v1"
-    if is_global_template:
-        prompt_rules.update(raw_prompt_rules)
-    else:
-        # Store templates only customize description rendering order/layout.
-        for key in ["description_example_template"]:
-            if key in raw_prompt_rules:
-                prompt_rules[key] = raw_prompt_rules.get(key)
+    prompt_rules = deepcopy(_DEFAULT_PROMPT_RULES)
+    prompt_rules.update(raw.get("prompt_rules") or {})
 
-    static_texts = deepcopy(global_defaults["static_texts"])
+    static_texts = deepcopy(_DEFAULT_STATIC_TEXTS)
     if "sabit_no_extra_fees" in raw:
         static_texts["no_extra_fees"] = raw.get("sabit_no_extra_fees") or ""
     if "sabit_easy_returns" in raw:
@@ -266,11 +237,7 @@ def template_config_normallestir(template_config: dict = None,
     return {
         "template_id": raw.get("template_id", template_id),
         "template_name": raw.get("template_name", template_name),
-        "prompt_extra_instructions": (
-            raw.get("prompt_extra_instructions", global_defaults.get("prompt_extra_instructions", ""))
-            if is_global_template else
-            global_defaults.get("prompt_extra_instructions", "")
-        ),
+        "prompt_extra_instructions": raw.get("prompt_extra_instructions", ""),
         "prompt_rules": prompt_rules,
         "static_texts": static_texts,
     }
@@ -354,19 +321,6 @@ def _etsy_renk_normalize(value: str) -> str:
     })
 
 
-def _renk_kandidatlari_topla(*alanlar) -> list[str]:
-    bulunan: list[str] = []
-    for alan in alanlar:
-        metin = re.sub(r"[/|;+]", ",", str(alan or ""))
-        parcali = [p.strip() for p in re.split(r"[,\n]", metin) if p.strip()]
-        adaylar = parcali or [metin.strip()]
-        for aday in adaylar:
-            renk = _etsy_renk_normalize(aday)
-            if renk and renk not in bulunan:
-                bulunan.append(renk)
-    return bulunan
-
-
 def _pattern_etsy_tahmin(pattern_raw: str, style_raw: str = "", title_raw: str = "") -> str:
     kaynak = " ".join([str(pattern_raw or ""), str(style_raw or ""), str(title_raw or "")]).casefold()
     if not kaynak:
@@ -408,6 +362,22 @@ def _pattern_etsy_karar_ver(mevcut: str, pattern_raw: str, style_raw: str = "", 
     if mevcut_norm:
         return mevcut_norm
     return inferred
+
+
+def _renkleri_renk_schemeden_tamamla(renk1: str, renk2: str, renk_scheme: str) -> tuple[str, str]:
+    bulunan: list[str] = []
+    for parca in [p.strip() for p in re.split(r"[,\n/|;+]", str(renk_scheme or "")) if p.strip()]:
+        renk = _etsy_renk_normalize(parca)
+        if renk and renk not in bulunan:
+            bulunan.append(renk)
+    if not renk1 and bulunan:
+        renk1 = bulunan[0]
+    if not renk2:
+        for renk in bulunan:
+            if renk != renk1:
+                renk2 = renk
+                break
+    return renk1, renk2
 
 
 def _home_style_tahmin(style_raw: str, pattern_raw: str = "", title_raw: str = "") -> str:
@@ -463,19 +433,15 @@ def _shop_section_tahmin(boyut_ft: str, metrekare: float | None, tip: str, patte
     return "Gifts"
 
 
-def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | None) -> dict:
+def _etsy_alanlarini_tamamla(ai: dict, boyut_ft: str, metrekare: float | None) -> dict:
     norm = dict(ai or {})
-    renkler = _renk_kandidatlari_topla(
+    norm["renk1"] = _etsy_renk_normalize(norm.get("renk1", ""))
+    norm["renk2"] = _etsy_renk_normalize(norm.get("renk2", ""))
+    norm["renk1"], norm["renk2"] = _renkleri_renk_schemeden_tamamla(
         norm.get("renk1", ""),
         norm.get("renk2", ""),
         norm.get("renk_scheme", ""),
-        norm.get("baslik", ""),
-        norm.get("opening", ""),
-        norm.get("hikaye", ""),
-        " ".join(norm.get("taglar", []) or []),
     )
-    norm["renk1"] = renkler[0] if renkler else ""
-    norm["renk2"] = renkler[1] if len(renkler) > 1 else ""
 
     norm["pattern_etsy"] = _pattern_etsy_karar_ver(
         norm.get("pattern_etsy", ""),
@@ -484,8 +450,10 @@ def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | No
         norm.get("baslik", ""),
     )
 
-    # Boyut bazlı type daha güvenilir; AI yanıtı geçerli olsa bile ters düşüyorsa override et.
-    norm["tip"] = _tip_tahmin(boyut_ft)
+    beklenen_tip = _tip_tahmin(boyut_ft)
+    norm["tip"] = _enum_normalize(norm.get("tip", ""), ETSY_TIPLERI)
+    if not norm["tip"] or norm["tip"] != beklenen_tip:
+        norm["tip"] = beklenen_tip
 
     norm["home_style"] = _enum_normalize(norm.get("home_style", ""), ETSY_HOME_STYLE, {
         "bohemian": "Bohemian & eclectic",
@@ -509,13 +477,16 @@ def _etsy_alanlarini_zenginlestir(ai: dict, boyut_ft: str, metrekare: float | No
             norm.get("baslik", ""),
         )
 
-    norm["shop_section"] = _shop_section_tahmin(
+    beklenen_shop_section = _shop_section_tahmin(
         boyut_ft,
         metrekare,
         norm.get("tip", ""),
         norm.get("pattern_etsy", ""),
         norm.get("stil", ""),
     )
+    norm["shop_section"] = _enum_normalize(norm.get("shop_section", ""), ETSY_SHOP_SECTIONS)
+    if not norm["shop_section"] or norm["shop_section"] != beklenen_shop_section:
+        norm["shop_section"] = beklenen_shop_section
     return norm
 
 
@@ -770,9 +741,20 @@ OUTPUT FIELDS — follow every rule exactly:
 
 1. "baslik" (string, target {pr["title_target_min"]}–{pr["title_target_max"]} chars, hard max {pr["title_max_length"]})
    {title_rules}
+   HARD RULES:
+   - The first 40 characters matter most; make them keyword-rich and specific to this rug.
+   - Do NOT make every listing start with the same phrase pattern.
+   - Never go below {pr["title_target_min"]} characters unless impossible; never exceed {pr["title_max_length"]}.
 
 2. "taglar" (array of exactly {pr["tag_count"]} strings, each max {pr["tag_max_length"]} chars)
    {tag_rules}
+   HARD RULES:
+   - Never use "?" or any placeholder in any tag.
+   - Use the rounded size, not raw decimal size, in size tags.
+   - Include at least 3 size-based tags.
+   - Include at least 2 color-based tags using the visible rug colors.
+   - If the rug is a Runner, use runner wording in relevant size/type tags; do not use area rug wording for those tags.
+   - Keep tags varied; avoid repeating the same opening words across listings.
 
 3. "renk1" (string) — dominant color. MUST be EXACTLY one of these Etsy values (case-sensitive):
    Beige, Black, Blue, Bronze, Brown, Clear, Copper, Gold, Gray, Green, Orange, Pink, Purple, Rainbow, Red, Rose gold, Silver, White, Yellow
@@ -810,10 +792,13 @@ OUTPUT FIELDS — follow every rule exactly:
 14. "pattern_etsy" (string) — MUST be EXACTLY one of these Etsy pattern values (case-sensitive):
     Abstract, Animal print, Bordered, Camouflage, Check, Floral, Geometric, Ikat, Moroccan,
     Ombré, Oriental, Paisley, Patchwork, Persian, Plants & trees, Polka dot, Solid, Southwestern, Striped
+    This is the canonical shared dropdown list used across ALL stores.
     Pick the closest match to what you see. No other values allowed.
+    Do NOT default to "Oriental" unless the rug truly reads as traditional/oriental rather than something more specific like Geometric, Floral, Moroccan, Kilim-like, or Patchwork.
 
 15. "tip" (string) — MUST be EXACTLY one of these Etsy type values (case-sensitive):
     Accent, Area, Runner
+    This is the canonical shared dropdown list used across ALL stores.
     Accent = small rugs (under 4 ft on shortest side)
     Runner = long narrow rugs (length ≥ 2.5× width — e.g. 2x6, 2x8, 3x8, 3x10, 2x12)
     Area = everything else
@@ -825,6 +810,7 @@ OUTPUT FIELDS — follow every rule exactly:
 
 17. "shop_section" (string) — MUST be EXACTLY one of these values (case-sensitive):
     Oversized Rugs, Large Rugs, Medium Rugs, Small Rugs, Runner Rugs, Hemp Rug Kilim, Kilim Rugs, Mini Rugs - Doormats, Gifts
+    This is the canonical shared dropdown list used across ALL stores.
     Selection rules based on size and type:
     - Runner Rugs → length ≥ 2.5× width (typical runners: 2x6, 2x8, 3x8, 3x10, 2x12, etc.)
     - Oversized Rugs → area ≥ 9 m² or shortest side ≥ 9 ft
@@ -878,7 +864,7 @@ def ai_icerik_url(
         prompt = _prompt_olustur(boyut_ft, boyut_cm, metrekare, fiyat_usd, norm_template)
         ai = _gemini_isle(prompt, gorsel_b64, mime)
         ai = _ai_sonuc_normallestir(ai, norm_template)
-        ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
+        ai = _etsy_alanlarini_tamamla(ai, boyut_ft, metrekare)
         _validate(ai, norm_template)
         aciklama = description_olustur(ai, boyut_ft, boyut_cm, metrekare, genislik_cm, uzunluk_cm, norm_template, urun_id=urun_id)
         return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
@@ -910,7 +896,7 @@ def ai_icerik_uret(
         prompt = _prompt_olustur(boyut_ft, boyut_cm, metrekare, fiyat_usd, norm_template)
         ai = _gemini_isle(prompt, gorsel_b64, mime)
         ai = _ai_sonuc_normallestir(ai, norm_template)
-        ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
+        ai = _etsy_alanlarini_tamamla(ai, boyut_ft, metrekare)
         _validate(ai, norm_template)
         aciklama = description_olustur(ai, boyut_ft, boyut_cm, metrekare, genislik_cm, uzunluk_cm, norm_template, urun_id=urun_id)
         return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
@@ -935,7 +921,7 @@ def _validate(ai: dict, template_config: dict = None):
     assert "pattern"      in ai, "pattern eksik"
     assert "ana_resim_tag" in ai, "ana_resim_tag eksik"
     assert ai.get("pattern_etsy", "") in ETSY_PATTERNLERI, f"Gecersiz pattern_etsy: {ai.get('pattern_etsy', '')}"
-    assert ai.get("tip", "") in ["Accent", "Area", "Runner"], f"Gecersiz tip: {ai.get('tip', '')}"
+    assert ai.get("tip", "") in ETSY_TIPLERI, f"Gecersiz tip: {ai.get('tip', '')}"
     assert ai.get("home_style", "") in ETSY_HOME_STYLE, f"Gecersiz home_style: {ai.get('home_style', '')}"
     assert ai.get("shop_section", "") in ETSY_SHOP_SECTIONS, f"Gecersiz shop_section: {ai.get('shop_section', '')}"
 
@@ -996,7 +982,7 @@ def fallback_ai_icerik(
         "hata_notu": str(hata_mesaji or "").strip(),
     }
     ai = _ai_sonuc_normallestir(ai, tc)
-    ai = _etsy_alanlarini_zenginlestir(ai, boyut_ft, metrekare)
+    ai = _etsy_alanlarini_tamamla(ai, boyut_ft, metrekare)
     ai["aciklama"] = description_olustur(
         ai,
         boyut_ft,
