@@ -267,12 +267,17 @@ section.main { background-color: var(--bg-0) !important; }
 /* ── Buttons ── */
 .stButton > button,
 [data-testid="stButton"] > button {
+  appearance: none !important;
+  -webkit-appearance: none !important;
   background: var(--bg-2) !important;
+  background-image: none !important;
   border: 1px solid var(--border) !important;
   color: var(--text-1) !important;
   border-radius: var(--radius) !important;
   font-size: 0.82rem !important;
   font-weight: 500 !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
   transition: all 0.12s ease !important;
 }
 .stButton > button:hover,
@@ -291,6 +296,10 @@ section.main { background-color: var(--bg-0) !important; }
 [data-testid="stButton"] > button[kind="primary"]:hover {
   background: #d97706 !important;
   border-color: #d97706 !important;
+}
+
+[data-testid="stCheckbox"] input {
+  accent-color: var(--success);
 }
 
 /* ── Inputs ── */
@@ -2307,6 +2316,36 @@ def _klasor_icerigi_getir(token, host, klasor_id):
             continue
     return host, [], []
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _klasor_meta_getir(token, host, klasor_id):
+    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
+        try:
+            r = httpx.get(
+                f"{h}/listfolder",
+                params={"auth": token, "folderid": klasor_id},
+                timeout=15,
+            )
+            d = r.json()
+            if d.get("result") != 0:
+                continue
+
+            contents = d.get("metadata", {}).get("contents", []) or []
+            has_subfolders = any(item.get("isfolder") for item in contents)
+            has_files = any(not item.get("isfolder") for item in contents)
+            return h, {
+                "is_product_folder": has_files and not has_subfolders,
+                "has_subfolders": has_subfolders,
+                "has_files": has_files,
+            }
+        except Exception:
+            continue
+    return host, {
+        "is_product_folder": False,
+        "has_subfolders": False,
+        "has_files": False,
+    }
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _magazalari_otomatik_bul(token, host):
     def _alt(h, folderid):
@@ -2557,6 +2596,7 @@ with tab_urun_sec:
             def _klasorleri_yenile():
                 _klasorleri_getir.clear()
                 _klasor_icerigi_getir.clear()
+                _klasor_meta_getir.clear()
                 st.session_state.kuyruk_yuklendi = False
                 st.session_state.kuyruk_klasor_durumlari = {}
                 st.session_state.sheet_renk_durumlari = {}
@@ -2796,7 +2836,22 @@ with tab_urun_sec:
                 ]
 
                 if st.session_state.get(chk_key):
-                    if _secili_item_bloklu_mu(item):
+                    _item = dict(item)
+                    if not _item.get("is_product_folder"):
+                        _meta_host, _meta = _klasor_meta_getir(
+                            st.session_state.pcloud_token,
+                            st.session_state.get("pcloud_host", "https://api.pcloud.com"),
+                            _item["id"],
+                        )
+                        st.session_state["pcloud_host"] = _meta_host
+                        if not _meta.get("is_product_folder"):
+                            st.session_state[chk_key] = False
+                            st.session_state["_secim_limit_hatasi"] = "Sadece resim içeren ürün klasörleri seçilebilir. Ara klasörleri açarak devam edin."
+                            st.session_state.secilen = secimler
+                            return
+                        _item["is_product_folder"] = True
+
+                    if _secili_item_bloklu_mu(_item):
                         st.session_state[chk_key] = False
                         return
                     if len(secimler) >= 15:
@@ -2804,7 +2859,7 @@ with tab_urun_sec:
                         st.session_state["_secim_limit_hatasi"] = "En fazla 15 ürün seçebilirsiniz. Lütfen bazı seçimleri kaldırın."
                         st.session_state.secilen = secimler
                         return
-                    secimler.append(item)
+                    secimler.append(_item)
 
                 st.session_state["_secim_limit_hatasi"] = None
                 st.session_state.secilen = secimler
@@ -2924,7 +2979,14 @@ with tab_urun_sec:
                             secilen_ids = {s["id"] for s in st.session_state.secilen}
                             _satir_meta = []
                             for k in klasorler:
-                                is_product_folder = k.get("is_product_folder", False)
+                                folder_id = str(k["id"])
+                                known_folder_status = st.session_state.kuyruk_klasor_durumlari.get(folder_id)
+                                known_sheet_color = st.session_state.klasor_id_durumlari.get(folder_id)
+                                is_product_folder = bool(
+                                    k.get("is_product_folder") is True
+                                    or known_folder_status is not None
+                                    or known_sheet_color is not None
+                                )
                                 row_item = {**k, "is_product_folder": is_product_folder}
                                 _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
@@ -2934,8 +2996,8 @@ with tab_urun_sec:
                                 if is_product_folder:
                                     kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
                                     if kuyruk_status is None:
-                                        kuyruk_status = st.session_state.kuyruk_klasor_durumlari.get(str(k["id"]))
-                                sheet_renk = _sheet_renk_durumu_klasor(k["id"], k["ad"]) if is_product_folder else None
+                                        kuyruk_status = known_folder_status
+                                sheet_renk = known_sheet_color if is_product_folder else None
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
                                 if sheet_renk == "red":
                                     _ikon = "🔴"
@@ -2971,8 +3033,7 @@ with tab_urun_sec:
                                     else:
                                         if str(k["id"]) in _reset_checkbox_ids:
                                             st.session_state[_row["chk_key"]] = False
-                                        if _row["chk_key"] not in st.session_state:
-                                            st.session_state[_row["chk_key"]] = _row["zaten_secili"]
+                                        st.session_state[_row["chk_key"]] = _row["zaten_secili"]
                                         st.checkbox(
                                             "seç",
                                             key=_row["chk_key"],
