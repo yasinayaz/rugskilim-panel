@@ -321,6 +321,72 @@ def _etsy_renk_normalize(value: str) -> str:
     })
 
 
+def _pattern_etsy_normalize(value: str) -> str:
+    return _enum_normalize(value, ETSY_PATTERNLERI, {
+        "medallion": "Oriental",
+        "traditional": "Oriental",
+        "classic": "Oriental",
+        "vintage": "Oriental",
+        "tribal": "Southwestern",
+        "kilim": "Geometric",
+        "flatweave": "Geometric",
+        "flat weave": "Geometric",
+        "plain": "Solid",
+        "minimal": "Solid",
+        "botanical": "Plants & trees",
+        "tree": "Plants & trees",
+        "plant": "Plants & trees",
+    })
+
+
+def _tip_normalize(value: str) -> str:
+    return _enum_normalize(value, ETSY_TIPLERI, {
+        "runner rug": "Runner",
+        "runner": "Runner",
+        "hallway runner": "Runner",
+        "area rug": "Area",
+        "area": "Area",
+        "accent rug": "Accent",
+        "small rug": "Accent",
+        "entry rug": "Accent",
+    })
+
+
+def _home_style_normalize(value: str) -> str:
+    return _enum_normalize(value, ETSY_HOME_STYLE, {
+        "bohemian": "Bohemian & eclectic",
+        "eclectic": "Bohemian & eclectic",
+        "rustic": "Rustic & primitive",
+        "primitive": "Rustic & primitive",
+        "farmhouse": "Country & farmhouse",
+        "country": "Country & farmhouse",
+        "industrial": "Industrial & utility",
+        "utility": "Industrial & utility",
+        "scandinavian": "Scandinavian",
+        "coastal": "Coastal & tropical",
+        "tropical": "Coastal & tropical",
+        "contemporary": "Contemporary",
+        "modern": "Contemporary",
+        "traditional": "Bohemian & eclectic",
+    })
+
+
+def _shop_section_normalize(value: str) -> str:
+    return _enum_normalize(value, ETSY_SHOP_SECTIONS, {
+        "runner": "Runner Rugs",
+        "runner rug": "Runner Rugs",
+        "small rug": "Small Rugs",
+        "medium rug": "Medium Rugs",
+        "large rug": "Large Rugs",
+        "oversized rug": "Oversized Rugs",
+        "doormat": "Mini Rugs - Doormats",
+        "mini rug": "Mini Rugs - Doormats",
+        "kilim": "Kilim Rugs",
+        "hemp kilim": "Hemp Rug Kilim",
+        "gift": "Gifts",
+    })
+
+
 def _pattern_etsy_tahmin(pattern_raw: str, style_raw: str = "", title_raw: str = "") -> str:
     # Pattern fallback should stay conservative. We prefer the model's direct
     # visual classification and only infer when the freeform pattern text is
@@ -457,58 +523,18 @@ def _json_yanitini_coz(icerik: str) -> dict:
 
 def _etsy_alanlarini_tamamla(ai: dict, boyut_ft: str, metrekare: float | None) -> dict:
     norm = dict(ai or {})
-    norm["renk1"] = _etsy_renk_normalize(norm.get("renk1", ""))
-    norm["renk2"] = _etsy_renk_normalize(norm.get("renk2", ""))
-    norm["renk1"], norm["renk2"] = _renkleri_renk_schemeden_tamamla(
-        norm.get("renk1", ""),
-        norm.get("renk2", ""),
-        norm.get("renk_scheme", ""),
-    )
-
-    norm["pattern_etsy"] = _pattern_etsy_karar_ver(
-        norm.get("pattern_etsy", ""),
-        norm.get("pattern", ""),
-        norm.get("stil", ""),
-        norm.get("baslik", ""),
-    )
-
-    beklenen_tip = _tip_tahmin(boyut_ft)
-    norm["tip"] = _enum_normalize(norm.get("tip", ""), ETSY_TIPLERI)
-    if not norm["tip"] or norm["tip"] != beklenen_tip:
-        norm["tip"] = beklenen_tip
-
-    norm["home_style"] = _enum_normalize(norm.get("home_style", ""), ETSY_HOME_STYLE, {
-        "bohemian": "Bohemian & eclectic",
-        "eclectic": "Bohemian & eclectic",
-        "rustic": "Rustic & primitive",
-        "primitive": "Rustic & primitive",
-        "farmhouse": "Country & farmhouse",
-        "country": "Country & farmhouse",
-        "industrial": "Industrial & utility",
-        "utility": "Industrial & utility",
-        "scandinavian": "Scandinavian",
-        "coastal": "Coastal & tropical",
-        "tropical": "Coastal & tropical",
-        "contemporary": "Contemporary",
-        "modern": "Contemporary",
-    })
-    if not norm["home_style"]:
-        norm["home_style"] = _home_style_tahmin(
-            norm.get("stil", ""),
-            norm.get("pattern", ""),
-            norm.get("baslik", ""),
-        )
-
-    beklenen_shop_section = _shop_section_tahmin(
-        boyut_ft,
-        metrekare,
-        norm.get("tip", ""),
-        norm.get("pattern_etsy", ""),
-        norm.get("stil", ""),
-    )
-    norm["shop_section"] = _enum_normalize(norm.get("shop_section", ""), ETSY_SHOP_SECTIONS)
-    if not norm["shop_section"] or norm["shop_section"] != beklenen_shop_section:
-        norm["shop_section"] = beklenen_shop_section
+    if str(norm.get("renk1", "")).strip():
+        norm["renk1"] = _etsy_renk_normalize(norm.get("renk1", ""))
+    if str(norm.get("renk2", "")).strip():
+        norm["renk2"] = _etsy_renk_normalize(norm.get("renk2", ""))
+    if str(norm.get("pattern_etsy", "")).strip():
+        norm["pattern_etsy"] = _pattern_etsy_normalize(norm.get("pattern_etsy", ""))
+    if str(norm.get("tip", "")).strip():
+        norm["tip"] = _tip_normalize(norm.get("tip", ""))
+    if str(norm.get("home_style", "")).strip():
+        norm["home_style"] = _home_style_normalize(norm.get("home_style", ""))
+    if str(norm.get("shop_section", "")).strip():
+        norm["shop_section"] = _shop_section_normalize(norm.get("shop_section", ""))
     return norm
 
 
@@ -586,14 +612,14 @@ def _baslik_kisalt(baslik: str, max_uzunluk: int) -> str:
     return kisaltilmis or baslik[:max_uzunluk].rstrip()
 
 
-def _taglari_normallestir(taglar, tag_sayisi: int, tag_max_uzunluk: int) -> list:
+def _taglari_normallestir(taglar, tag_sayisi: int, tag_max_uzunluk: int, pad_missing: bool = True) -> list:
     sonuc = []
     for tag in taglar or []:
         temiz = re.sub(r"\s+", " ", str(tag or "")).strip().strip('"')
         if temiz:
             sonuc.append(temiz[:tag_max_uzunluk].rstrip(" ,;:-|/"))
     sonuc = sonuc[:tag_sayisi]
-    if len(sonuc) < tag_sayisi:
+    if pad_missing and len(sonuc) < tag_sayisi:
         sonuc.extend([""] * (tag_sayisi - len(sonuc)))
     return sonuc
 
@@ -603,8 +629,17 @@ def _ai_sonuc_normallestir(ai: dict, template_config: dict = None) -> dict:
     pr = tc["prompt_rules"]
     norm = dict(ai or {})
     norm["baslik"] = _baslik_kisalt(norm.get("baslik", ""), pr["title_max_length"])
-    norm["taglar"] = _taglari_normallestir(norm.get("taglar", []), pr["tag_count"], pr["tag_max_length"])
-    for alan in ["opening", "hikaye", "renk_scheme", "pattern", "ana_resim_tag"]:
+    norm["taglar"] = _taglari_normallestir(
+        norm.get("taglar", []),
+        pr["tag_count"],
+        pr["tag_max_length"],
+        pad_missing=False,
+    )
+    for alan in [
+        "opening", "hikaye", "renk_scheme", "pattern", "ana_resim_tag",
+        "renk1", "renk2", "pattern_etsy", "tip", "home_style", "shop_section",
+        "tahmini_yil", "stil", "koken",
+    ]:
         norm[alan] = str(norm.get(alan, "") or "").strip()
     return norm
 
@@ -842,8 +877,17 @@ OUTPUT FIELDS — follow every rule exactly:
 3. "renk1" (string) — dominant color. MUST be EXACTLY one of these Etsy values (case-sensitive):
    Beige, Black, Blue, Bronze, Brown, Clear, Copper, Gold, Gray, Green, Orange, Pink, Purple, Rainbow, Red, Rose gold, Silver, White, Yellow
    Pick the closest match to what you see. No other values allowed.
+   Map non-allowed color words to the nearest allowed Etsy value before replying:
+   Ivory/Cream/Off-white/Sand -> Beige
+   Taupe/Tan -> Brown
+   Burgundy -> Red
+   Terracotta/Rust -> Orange
+   Sage/Olive -> Green
+   Teal/Navy -> Blue
+   Reply with the allowed Etsy value only, never the raw synonym.
 
 4. "renk2" (string) — second color. MUST be EXACTLY one of the same Etsy list above.
+   Apply the same nearest-allowed-value mapping rules above.
 
 5. "renk_scheme" (string) — two descriptive color names for the description text, separated by comma.
    Write what you actually see in the rug — be visual and specific.
@@ -877,6 +921,13 @@ OUTPUT FIELDS — follow every rule exactly:
     Ombré, Oriental, Paisley, Patchwork, Persian, Plants & trees, Polka dot, Solid, Southwestern, Striped
     This is the canonical shared dropdown list used across ALL stores.
     Pick the closest match to what you see. No other values allowed.
+    Map non-allowed rug jargon to the nearest allowed Etsy value before replying:
+    Medallion/Traditional/Classic -> Oriental
+    Kilim/Flatweave -> Geometric
+    Botanical/Tree motif -> Plants & trees
+    Minimal/Plain -> Solid
+    Tribal -> Southwestern
+    Reply with the allowed Etsy value only, never the raw synonym.
     Do NOT default to "Oriental" unless the rug truly reads as traditional/oriental rather than something more specific like Geometric, Floral, Moroccan, Kilim-like, or Patchwork.
     IMPORTANT: Decide from the rug image itself first. Do not choose "Geometric" for every rug. If the rug reads as medallion/traditional, choose Oriental or Persian; if floral motifs dominate, choose Floral; if patchwork blocks are visible, choose Patchwork; if striped bands dominate, choose Striped.
 
@@ -886,6 +937,7 @@ OUTPUT FIELDS — follow every rule exactly:
     Accent = small rugs (under 4 ft on shortest side)
     Runner = long narrow rugs (length ≥ 2.5× width — e.g. 2x6, 2x8, 3x8, 3x10, 2x12)
     Area = everything else
+    Never return phrases like "Runner Rug" or "Area Rug". Reply with Accent, Area, or Runner only.
 
 16. "home_style" (string) — MUST be EXACTLY one of these Etsy home style values (case-sensitive):
     Bohemian & eclectic, Coastal & tropical, Contemporary, Country & farmhouse,
@@ -905,9 +957,15 @@ OUTPUT FIELDS — follow every rule exactly:
     - Kilim Rugs → flat-weave kilim pattern (no pile)
     - Hemp Rug Kilim → hemp material kilim
     No other values allowed.
+    Reply with the allowed section label only.
 
 {_extra_block}Respond ONLY with valid JSON, no markdown, no extra text:
-{{  
+NON-NEGOTIABLE:
+- Do not invent labels outside the allowed lists.
+- If you would naturally say Ivory, Cream, Off-white or Medallion, convert it to the nearest allowed Etsy value before replying.
+- If an enum field is uncertain, still choose the single closest allowed value from its allowed list.
+- Do not leave any required field empty.
+{{
   "baslik": "...",
   "taglar": [{tag_example}],
   "renk1": "...",
@@ -957,10 +1015,13 @@ def ai_icerik_url(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
+        if son_hata:
+            print(f"[AI:{urun_id}] URL uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
+        print(f"[AI:{urun_id}] URL uretim dis hata -> {type(e).__name__}: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
@@ -995,10 +1056,13 @@ def ai_icerik_uret(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
+        if son_hata:
+            print(f"[AI:{urun_id}] Dosya uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
+        print(f"[AI:{urun_id}] Dosya uretim dis hata -> {type(e).__name__}: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
@@ -1007,81 +1071,20 @@ def _validate(ai: dict, template_config: dict = None):
     pr = tc["prompt_rules"]
     assert "baslik"    in ai, "baslik eksik"
     ai["baslik"] = _baslik_kisalt(ai.get("baslik", ""), pr["title_max_length"])
+    assert ai["baslik"], "baslik bos"
     assert len(ai["baslik"]) <= pr["title_max_length"], f"Başlık çok uzun: {len(ai['baslik'])} karakter"
     assert "taglar"    in ai, "taglar eksik"
-    ai["taglar"] = _taglari_normallestir(ai["taglar"], pr["tag_count"], pr["tag_max_length"])
+    ai["taglar"] = _taglari_normallestir(ai["taglar"], pr["tag_count"], pr["tag_max_length"], pad_missing=False)
     assert len(ai["taglar"]) == pr["tag_count"], f"Tag sayısı {pr['tag_count']} olmalı, {len(ai['taglar'])} var"
-    assert "opening"      in ai, "opening eksik"
-    assert "hikaye"       in ai, "hikaye eksik"
-    assert "renk_scheme"  in ai, "renk_scheme eksik"
-    assert "pattern"      in ai, "pattern eksik"
-    assert "ana_resim_tag" in ai, "ana_resim_tag eksik"
+    assert all(ai["taglar"]), "taglar bos birakilamaz"
+    assert "opening"      in ai and str(ai.get("opening", "")).strip(), "opening eksik"
+    assert "hikaye"       in ai and str(ai.get("hikaye", "")).strip(), "hikaye eksik"
+    assert "renk_scheme"  in ai and str(ai.get("renk_scheme", "")).strip(), "renk_scheme eksik"
+    assert "pattern"      in ai and str(ai.get("pattern", "")).strip(), "pattern eksik"
+    assert "ana_resim_tag" in ai and str(ai.get("ana_resim_tag", "")).strip(), "ana_resim_tag eksik"
+    assert ai.get("renk1", "") in ETSY_RENKLERI, f"Gecersiz renk1: {ai.get('renk1', '')}"
+    assert ai.get("renk2", "") in ETSY_RENKLERI, f"Gecersiz renk2: {ai.get('renk2', '')}"
     assert ai.get("pattern_etsy", "") in ETSY_PATTERNLERI, f"Gecersiz pattern_etsy: {ai.get('pattern_etsy', '')}"
     assert ai.get("tip", "") in ETSY_TIPLERI, f"Gecersiz tip: {ai.get('tip', '')}"
     assert ai.get("home_style", "") in ETSY_HOME_STYLE, f"Gecersiz home_style: {ai.get('home_style', '')}"
     assert ai.get("shop_section", "") in ETSY_SHOP_SECTIONS, f"Gecersiz shop_section: {ai.get('shop_section', '')}"
-
-
-def fallback_ai_icerik(
-    urun_id: str,
-    boyut_ft: str,
-    boyut_cm: str,
-    metrekare: float,
-    fiyat_usd: int,
-    genislik_cm=None,
-    uzunluk_cm=None,
-    template_config: dict = None,
-    hata_mesaji: str = "",
-) -> dict:
-    tc = template_config_normallestir(template_config)
-    rounded_ft = _rounded_ft_etiketi(boyut_ft)
-    tip = _varsayilan_tip(boyut_ft)
-    koken = "Turkish"
-    stil = "Oushak"
-    pattern_etsy = "Oriental"
-    home_style = "Bohemian & eclectic"
-    shop_section = _shop_section_tahmin(boyut_ft, metrekare, tip, pattern_etsy, stil)
-    renk1 = "Beige" if tip != "Runner" else "Red"
-    renk2 = "Brown" if tip != "Runner" else "Gray"
-    baslik = _fallback_baslik_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section).strip()
-    taglar = _fallback_taglari_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section)
-    ai = {
-        "baslik": baslik,
-        "taglar": taglar,
-        "opening": f"This {rounded_ft} ft vintage Turkish {tip.lower()} brings soft character and timeless handmade texture into the room.",
-        "hikaye": (
-            f"This handmade vintage Turkish {tip.lower()} carries the quiet depth that makes one-of-a-kind rugs feel collected rather than decorated.\n\n"
-            f"With a {boyut_ft} ft profile and a rounded {rounded_ft} fit, it works beautifully in spaces that need warmth, movement, and visual balance.\n\n"
-            "Its woven texture and aged character make it easy to place in bohemian, collected, rustic, or layered interiors.\n\n"
-            "A distinctive piece like this adds soul underfoot while staying versatile enough for everyday living."
-        ),
-        "renk1": renk1,
-        "renk2": renk2,
-        "renk_scheme": f"Faded {renk1}, Muted {renk2}",
-        "pattern": pattern_etsy,
-        "pattern_etsy": pattern_etsy,
-        "shop_section": shop_section,
-        "tip": tip,
-        "ana_resim_tag": f"{rounded_ft} vintage turkish rug".strip(),
-        "tahmini_yil": "Vintage",
-        "stil": stil,
-        "koken": koken,
-        "home_style": home_style,
-        "hata_notu": str(hata_mesaji or "").strip(),
-    }
-    ai = _ai_sonuc_normallestir(ai, tc)
-    ai = _etsy_alanlarini_tamamla(ai, boyut_ft, metrekare)
-    ai["aciklama"] = description_olustur(
-        ai,
-        boyut_ft,
-        boyut_cm,
-        metrekare,
-        genislik_cm,
-        uzunluk_cm,
-        tc,
-        urun_id=urun_id,
-    )
-    ai["basarili"] = True
-    ai["hata"] = None
-    ai["fallback_kullanildi"] = True
-    return ai

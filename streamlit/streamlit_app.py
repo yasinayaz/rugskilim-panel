@@ -2618,7 +2618,7 @@ with tab_urun_sec:
                 host  = st.session_state.get("pcloud_host", "https://api.pcloud.com")
                 token = st.session_state.pcloud_token
                 from shared.sheets import SheetsKatmani
-                from modules.ai_icerik import ai_icerik_url, fallback_ai_icerik
+                from modules.ai_icerik import ai_icerik_url
                 from modules.parser import parse_urun_bilgisi
                 import json as _json
 
@@ -2732,22 +2732,8 @@ with tab_urun_sec:
                                     template_config=_template_cfg,
                                 )
                                 if not ai["basarili"]:
-                                    st.write(f"⚠️ AI hatası, fallback içerik yazılıyor: {ai['hata']}")
-                                    ai = fallback_ai_icerik(
-                                        urun_id=secili_urun_kodu,
-                                        boyut_ft=urun_bilgisi.get("boyut_ft") or "?",
-                                        boyut_cm=urun_bilgisi.get("boyut_cm") or "?",
-                                        metrekare=urun_bilgisi.get("metrekare") or 0,
-                                        fiyat_usd=urun_bilgisi.get("fiyat_usd") or 0,
-                                        genislik_cm=urun_bilgisi.get("genislik_cm"),
-                                        uzunluk_cm=urun_bilgisi.get("uzunluk_cm"),
-                                        template_config=_template_cfg,
-                                        hata_mesaji=ai.get("hata", ""),
-                                    )
-                                if ai.get("fallback_kullanildi"):
-                                    st.write(f"⚠️ Fallback başlık kaydedildi: {ai['baslik'][:60]}...")
-                                else:
-                                    st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
+                                    raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
+                                st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
 
                                 st.write("💾 Sheets'e yazılıyor...")
                                 _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
