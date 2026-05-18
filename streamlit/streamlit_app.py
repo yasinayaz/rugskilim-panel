@@ -2592,6 +2592,7 @@ with tab_urun_sec:
                     {"id": st.session_state.klasor_id, "ad": _mevcut_klasor_ad},
                 ]
                 st.session_state.klasor_id = _folder_id
+                st.rerun(scope="app")
 
             def _klasorleri_yenile():
                 _klasorleri_getir.clear()
