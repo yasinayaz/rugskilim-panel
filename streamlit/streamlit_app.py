@@ -2712,13 +2712,6 @@ with tab_urun_sec:
                                     if _urun_kodu in _satilan:
                                         raise Exception(f"⛔ Bu ürün SATILMIŞ! (KOD: {k['ad']})")
 
-                                st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
-                                pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
-                                satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
-                                st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "pending"
-                                st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "pending"
-                                st.write(f"✅ Kuyruğa eklendi (satır {satir_no})")
-
                                 st.write("🤖 Gemini analiz ediyor...")
                                 ai = ai_icerik_url(
                                     resim_url=resim_url,
@@ -2735,7 +2728,10 @@ with tab_urun_sec:
                                     raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
                                 st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
 
-                                st.write("💾 Sheets'e yazılıyor...")
+                                st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
+                                pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
+                                satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
+                                st.write(f"💾 AI verileri yazılıyor (satır {satir_no})...")
                                 _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
                                 st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
                                 st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "ready"
