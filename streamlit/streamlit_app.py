@@ -1024,9 +1024,18 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
         not force_source_sync
         and cache_data is not None
         and cache_stok_mtime == stok_mtime
-        and (_time.time() - cache_ts) <= 60
+        and (_time.time() - cache_ts) <= 300
     ):
         return [dict(item) for item in cache_data]
+
+    if _supabase_ready():
+        _force_env = force_store_refresh
+        def _envanter_sync_job():
+            try:
+                _magaza_envanterini_topla(force=_force_env)
+            except Exception:
+                pass
+        _threading.Thread(target=_envanter_sync_job, daemon=True, name="magaza-envanter-sync").start()
 
     kaynak = []
     if stok.exists():
@@ -2270,8 +2279,8 @@ def _klasor_icerigi_getir(token, host, klasor_id):
         try:
             r = httpx.get(
                 f"{h}/listfolder",
-                params={"auth": token, "folderid": klasor_id, "recursive": 1},
-                timeout=30,
+                params={"auth": token, "folderid": klasor_id},
+                timeout=15,
             )
             d = r.json()
             if d.get("result") != 0:
@@ -2283,14 +2292,11 @@ def _klasor_icerigi_getir(token, host, klasor_id):
 
             for item in contents:
                 if item.get("isfolder"):
-                    alt_icerik = item.get("contents") or []
-                    has_subfolders = any(alt.get("isfolder") for alt in alt_icerik)
-                    has_files = any(not alt.get("isfolder") for alt in alt_icerik)
                     klasorler.append(
                         {
                             "id": item["folderid"],
                             "ad": item["name"],
-                            "is_product_folder": has_files and not has_subfolders,
+                            "is_product_folder": True,
                         }
                     )
                 else:
@@ -2336,7 +2342,7 @@ def _magazalari_otomatik_bul(token, host):
     magazalar = _alt(host, vintage["id"])
     return vintage["id"], magazalar
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def _magaza_tum_kodlar(token, host, magaza_id):
     def _traverse(contents, result):
         for item in contents:
@@ -2374,16 +2380,25 @@ def _resimleri_getir(token, host, klasor_id, dosyalar=None):
                     if not f.get("isfolder")
                     and f.get("parentfolderid") == klasor_id
                     and f.get("name", "").lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
-        urls = []
-        for dosya in dosyalar:
+
+        def _link_al(dosya):
             try:
                 lr = httpx.get(f"{host}/getfilelink",
                                params={"auth": token, "fileid": dosya["fileid"]},
                                timeout=10)
                 ld = lr.json()
                 if ld.get("result") == 0:
-                    urls.append({"url": f"https://{ld['hosts'][0]}{ld['path']}", "ad": dosya["name"]})
-            except: pass
+                    return {"url": f"https://{ld['hosts'][0]}{ld['path']}", "ad": dosya["name"]}
+            except Exception:
+                pass
+            return None
+
+        import concurrent.futures as _cf
+        urls = []
+        with _cf.ThreadPoolExecutor(max_workers=6) as _pool:
+            for sonuc in _pool.map(_link_al, dosyalar):
+                if sonuc:
+                    urls.append(sonuc)
         return urls, None
     except Exception as e:
         return [], str(e)
