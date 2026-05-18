@@ -3019,7 +3019,8 @@ with tab_urun_sec:
                                     else:
                                         if str(k["id"]) in _reset_checkbox_ids:
                                             st.session_state[_row["chk_key"]] = False
-                                        st.session_state[_row["chk_key"]] = _row["zaten_secili"]
+                                        elif _row["chk_key"] not in st.session_state:
+                                            st.session_state[_row["chk_key"]] = _row["zaten_secili"]
                                         st.checkbox(
                                             "seç",
                                             key=_row["chk_key"],
