@@ -107,11 +107,11 @@ Example for a 3x10 ft red geometric runner:
 "kitchen runner rug", "hallway runner rug", "entryway runner rug",
 "medallion wool rug", "distressed wool rug", "turkish oushak rug", "living room rug" """,
     "opening_rules": """ONE punchy sentence that hooks the reader.
-CRITICAL: Use the exact same core keywords from "baslik" — size, style, pattern, origin, material must appear here too.
-Lead with the visual identity of the rug. Include size, style, and what feeling it gives.
-Example: "This 2.8x9.9 ft Vintage Turkish Runner with its faded Medallion pattern carries the quiet confidence of a piece that has traveled decades to find the right room." """,
-    "story_rules": """Write 4–5 short paragraphs.
-- Para 1: Hook line ("Some rugs just fill a space. This brings soul.") + 1–2 sentences about the rug's era, pattern and dominant colors. Make it cinematic.
+CRITICAL: This sentence must describe what you actually see in THIS rug's photo — a specific color, pattern detail, texture, or wear characteristic unique to this piece. Do NOT write a sentence that could apply to any rug.
+Include size, origin, and one concrete visual observation from the photo.
+Example: "This 3x10 ft Turkish Runner stops you — its deep rust medallions fading into worn ivory give it the kind of patina that takes decades, not months." """,
+    "story_rules": """Write 4–5 short paragraphs following the store's description template style.
+- Para 1: Open with a cinematic hook, then describe this rug's specific visual character — its actual colors, pattern density, fading or wear you observe in the photo. Make the reader picture THIS exact rug.
 - Para 2: Size — what spaces it fits, how it anchors a room. Mention the raw ft size naturally. Also use the rounded size (e.g. "3x11") at least once here.
 - Para 3: Material — what makes this rug honest and tactile. Wool? Cotton? Both?
 - Para 4: Style versatility + room recommendations (Living room, Bedroom, Entryway, etc.) + decoration style fit (Bohemian, Country & farmhouse, etc.)
@@ -824,6 +824,8 @@ def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
             )
     if response.status_code == 429:
         raise Exception("Gemini rate limit (429). Billing aktif mi? aistudio.google.com/apikey kontrol edin.")
+    if response.status_code == 403:
+        raise Exception("Gemini API key yetkisiz (403). Key geçerli mi ve Generative Language API aktif mi? aistudio.google.com/apikey adresini kontrol edin.")
     response.raise_for_status()
 
     veri    = response.json()
