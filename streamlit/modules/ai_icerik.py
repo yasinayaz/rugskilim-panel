@@ -100,8 +100,8 @@ Choose ONE of these five openers based on what makes THIS rug stand out. Do NOT 
 
 HARD RULES:
 - The rounded size (e.g. "6x9", "3x10") MUST always appear within the first 40 characters. No exceptions.
-- Color in the first 40 characters: include it if it significantly boosts SEO or buyer click-through for this specific rug (e.g. a rare or striking color like terracotta, sage, navy). Skip it if the color is generic (plain beige) and a room or style keyword would perform better.
-- Room in the first 40 characters: only include it if it genuinely improves visibility for this rug (e.g. "Runner" for a hallway rug is high-value). Do not force it if size + color already fill the first 40 chars well.
+- Rug type keyword ("Runner", "Area Rug", "Accent Rug") in the first 40 characters: include it when it is a high-search-volume term for this rug (e.g. "Runner" for a narrow long rug is mandatory — buyers search "3x10 Runner Rug" heavily). For standard area rugs, include "Area Rug" in the first 40 chars only if it fits naturally alongside the size.
+- Color in the first 40 characters: include it if the color is distinctive and high-search (terracotta, sage, navy, red). Skip it if the color is generic (plain beige/ivory) and the slot is better used by the rug type or a style keyword.
 - Never start two consecutive titles with the same word pattern.
 - Include somewhere in the title: color(s), pattern, origin (Turkish), material (Wool), room fit.
 - Never go below {title_target_min} characters; never exceed {title_max_length}.
