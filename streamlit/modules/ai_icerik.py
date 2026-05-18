@@ -99,7 +99,7 @@ Choose ONE of these five openers based on what makes THIS rug stand out. Do NOT 
    Example: "Distressed Ivory Turkish Area Rug | 6x9 ft Floral Wool | Rustic Bohemian Living Room Carpet"
 
 HARD RULES:
-- The first 40 characters matter most — make them keyword-rich and SPECIFIC to this rug.
+- The rounded size (e.g. "6x9", "3x10") MUST appear within the first 40 characters of the title, regardless of which opener structure you choose. Adjust every example above accordingly.
 - Never start two consecutive titles with the same word pattern.
 - Include: size (rounded), color(s), pattern, origin (Turkish), material (Wool), room fit.
 - Never go below {title_target_min} characters; never exceed {title_max_length}.
