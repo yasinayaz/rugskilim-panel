@@ -18,6 +18,7 @@ import random
 import re as _re
 import os
 import sys
+import traceback
 from pathlib import Path
 from datetime import datetime
 
@@ -33,7 +34,7 @@ if _env_path.exists():
 
 from modules.pcloud_indirici import pcloud_klasor_indir
 from shared.sheets import SheetsKatmani, config_oku
-from shared.store_manager import aktif_magazalar
+from shared.store_manager import aktif_magazalar, get_store
 try:
     from video_generator import generate_product_video as _gen_video
     _VIDEO_OK = True
@@ -280,6 +281,26 @@ def _tek_sefer_modu() -> bool:
     return "--once" in sys.argv[1:] or os.environ.get("RUN_ONCE", "").strip() == "1"
 
 
+def _magaza_teshis_ozeti(store_id: str) -> dict:
+    try:
+        store = get_store(store_id)
+    except Exception as exc:
+        return {
+            "store_id": store_id,
+            "store_lookup_error": f"{type(exc).__name__}: {exc}",
+            "env_google_sheet_id": os.environ.get("GOOGLE_SHEET_ID", ""),
+            "env_google_creds_json": os.environ.get("GOOGLE_CREDS_JSON", ""),
+        }
+
+    return {
+        "store_id": store_id,
+        "sheet_tab": store.get("sheet_tab"),
+        "store_sheet_id": store.get("google_sheet_id"),
+        "env_google_sheet_id": os.environ.get("GOOGLE_SHEET_ID", ""),
+        "env_google_creds_json": os.environ.get("GOOGLE_CREDS_JSON", ""),
+    }
+
+
 async def ana_dongu():
     print("\n" + "="*55)
     print("  İNDİRME OTOMASYON BAŞLADI")
@@ -308,7 +329,12 @@ async def ana_dongu():
                 sk = SheetsKatmani(store_id)
                 ready = sk.ready_urunleri_al()
             except Exception as e:
-                print(f"[{store_id}] ⚠ Bağlantı hatası: {e}")
+                print(f"[{store_id}] ⚠ Bağlantı hatası")
+                print(f"[{store_id}] Hata tipi: {type(e).__name__}")
+                print(f"[{store_id}] Hata mesajı: {repr(e)}")
+                print(f"[{store_id}] Teşhis özeti: {_magaza_teshis_ozeti(store_id)}")
+                print(f"[{store_id}] Traceback:")
+                print(traceback.format_exc())
                 continue
 
             if not ready:
