@@ -47,11 +47,17 @@ if not exist "%GOOGLE_CREDS_JSON%" (
 
 where python >nul 2>nul
 if errorlevel 1 (
-  echo HATA: Python bulunamadi. Python 3.10+ kurulu olmali ve PATH'te olmali.
-  pause
-  exit /b 1
+  where py >nul 2>nul
+  if errorlevel 1 (
+    echo HATA: Python bulunamadi. Python 3.10+ kurulu olmali ve PATH'te olmali.
+    pause
+    exit /b 1
+  )
+  set "PYTHON_CMD=py"
+) else (
+  set "PYTHON_CMD=python"
 )
 
 cd /d "%SCRIPT_DIR%"
-python orkestrator.py
+%PYTHON_CMD% orkestrator.py
 pause
