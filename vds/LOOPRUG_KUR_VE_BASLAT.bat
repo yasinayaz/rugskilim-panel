@@ -53,13 +53,13 @@ REM ── Gecici klasor ve INDIR butonu ─────────────
 if not exist "C:\etsy_temp\LoopRug" mkdir "C:\etsy_temp\LoopRug"
 echo [OK] Klasor hazir: C:\etsy_temp\LoopRug
 
-if not exist "C:\etsy_temp\LoopRug\INDIR.bat" (
+if not exist "C:\etsy_temp\LoopRug_INDIR.bat" (
   (
     echo @echo off
     echo title LoopRug - Otomasyon
     echo call "C:\rugskilim-panel\vds\LOOPRUG_KUR_VE_BASLAT.bat"
-  ) > "C:\etsy_temp\LoopRug\INDIR.bat"
-  echo [OK] INDIR.bat olusturuldu: C:\etsy_temp\LoopRug\INDIR.bat
+  ) > "C:\etsy_temp\LoopRug_INDIR.bat"
+  echo [OK] INDIR.bat olusturuldu: C:\etsy_temp\LoopRug_INDIR.bat
 )
 
 REM ── .env kontrol ─────────────────────────────────────────
