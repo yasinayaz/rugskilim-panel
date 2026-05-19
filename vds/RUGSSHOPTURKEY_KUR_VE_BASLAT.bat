@@ -49,9 +49,18 @@ echo [..] Python paketleri kuruluyor...
 %PYTHON_CMD% -m pip install --quiet gspread google-auth httpx opencv-python numpy requests
 echo [OK] Paketler hazir.
 
-REM ── Gecici klasor ────────────────────────────────────────
+REM ── Gecici klasor ve INDIR butonu ───────────────────────
 if not exist "C:\etsy_temp\RugsShopTurkey" mkdir "C:\etsy_temp\RugsShopTurkey"
 echo [OK] Klasor hazir: C:\etsy_temp\RugsShopTurkey
+
+if not exist "C:\etsy_temp\RugsShopTurkey\INDIR.bat" (
+  (
+    echo @echo off
+    echo title RugsShopTurkey - Otomasyon
+    echo call "C:\rugskilim-panel\vds\RUGSSHOPTURKEY_KUR_VE_BASLAT.bat"
+  ) > "C:\etsy_temp\RugsShopTurkey\INDIR.bat"
+  echo [OK] INDIR.bat olusturuldu: C:\etsy_temp\RugsShopTurkey\INDIR.bat
+)
 
 REM ── .env kontrol ─────────────────────────────────────────
 if not exist "C:\rugskilim-panel\vds\.env" (
