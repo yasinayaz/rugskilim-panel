@@ -45,17 +45,15 @@ if not exist "%GOOGLE_CREDS_JSON%" (
   exit /b 1
 )
 
-where python >nul 2>nul
-if errorlevel 1 (
-  where py >nul 2>nul
-  if errorlevel 1 (
-    echo HATA: Python bulunamadi. Python 3.10+ kurulu olmali ve PATH'te olmali.
-    pause
-    exit /b 1
-  )
-  set "PYTHON_CMD=py"
-) else (
-  set "PYTHON_CMD=python"
+set "PYTHON_CMD="
+where python >nul 2>nul && set "PYTHON_CMD=python"
+if not defined PYTHON_CMD (
+  where py >nul 2>nul && set "PYTHON_CMD=py"
+)
+if not defined PYTHON_CMD (
+  echo HATA: Python bulunamadi. Python 3.10+ kurulu olmali ve PATH'te olmali.
+  pause
+  exit /b 1
 )
 
 cd /d "%SCRIPT_DIR%"
