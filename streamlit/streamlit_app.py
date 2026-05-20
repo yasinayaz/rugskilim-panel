@@ -682,6 +682,9 @@ _GLOBAL_KIRMIZI_DB = _RUNTIME_DIR / "global_kirmizi.json"
 _PRODUCT_SOURCE_SYNC_DB = _RUNTIME_DIR / "product_source_sync.json"
 _DELETED_PRODUCTS_DB = _RUNTIME_DIR / "deleted_products.json"
 _STORE_INVENTORY_TTL_SN = 1800
+_CANLI_HARITA_DB = _RUNTIME_DIR / "canli_magaza_haritasi.json"
+_CANLI_HARITA_TTL_SN = 90
+_CANLI_HARITA_LOCK = _threading.Lock()
 
 _SOLD_SITE_LABELS: dict[str, str] = {
     "lmx":   "LoomixRugs",
@@ -2000,6 +2003,54 @@ def _urunler_tab_canli_magaza_haritasi(store_ids: list[str]) -> dict[str, set[st
         kod: set(magazalar)
         for kod, magazalar in _sheet_green_haritasi_cached(temiz_store_ids).items()
     }
+
+
+def _canli_magaza_haritasi_dosyadan_yukle() -> dict:
+    return _json_yukle(_CANLI_HARITA_DB, {"updated_at": 0, "data": {}, "store_ids": []})
+
+
+def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
+    """Background thread: Sheets'ten green kodları okur, runtime dosyaya yazar."""
+    if _CANLI_HARITA_LOCK.locked():
+        return
+    temiz = [str(s or "").strip() for s in store_ids if str(s or "").strip()]
+    if not temiz:
+        return
+
+    def _job():
+        with _CANLI_HARITA_LOCK:
+            sonuc: dict[str, list[str]] = {}
+            for sid in temiz:
+                try:
+                    durumlar = _sheetten_magaza_store_status_oku(sid, "")
+                    for raw_code, satir in durumlar.items():
+                        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+                        if not kod:
+                            continue
+                        renk = str((satir or {}).get("renk") or "").strip().lower()
+                        durum = str((satir or {}).get("status") or "").strip().lower()
+                        if renk == "green" or durum == "done":
+                            sonuc.setdefault(kod, []).append(sid)
+                except Exception:
+                    pass
+            _json_kaydet(_CANLI_HARITA_DB, {
+                "updated_at": _time.time(),
+                "data": sonuc,
+                "store_ids": sorted(temiz),
+            })
+
+    _threading.Thread(target=_job, daemon=True, name="canli-harita-sync").start()
+
+
+def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[str]], bool]:
+    """Anında dosyadan okur. Cache bayatsa arka planda Google Sheets yenilemesi başlatır."""
+    cached = _canli_magaza_haritasi_dosyadan_yukle()
+    cached_ts = float((cached or {}).get("updated_at") or 0)
+    is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
+    if is_stale:
+        _canli_magaza_haritasi_bg_guncelle(store_ids)
+    raw_data = (cached or {}).get("data") or {}
+    return {k: set(v) for k, v in raw_data.items()}, is_stale
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -3633,6 +3684,14 @@ if st.session_state.active_main_tab == "urunler":
                 st.rerun()
 
     def _tab3_urunler():
+        # Arka planda mağaza haritası güncellendiyse otomatik yenile
+        _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
+        _harita_shown_ts = float(st.session_state.get("_canli_harita_shown_ts") or 0)
+        if _harita_file_ts > _harita_shown_ts and _harita_shown_ts > 0:
+            st.session_state["_canli_harita_shown_ts"] = _harita_file_ts
+            st.rerun()
+        st.session_state["_canli_harita_shown_ts"] = _harita_file_ts
+
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         _envanter_cache = _envanter_cache_dosyadan_yukle()
         _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
@@ -3654,11 +3713,15 @@ if st.session_state.active_main_tab == "urunler":
             _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
 
         try:
-            with st.spinner("Urunler ve magaza durumlari yenileniyor..."):
-                urunler = _urunleri_yukle(
-                    force_source_sync=False,
-                    force_store_refresh=_force_store_refresh,
-                )
+            _katalog_cache_gecerli = (
+                st.session_state.get("_urun_katalog_cache") is not None
+                and (_time.time() - float(st.session_state.get("_urun_katalog_cache_ts") or 0)) <= 300
+            )
+            if _katalog_cache_gecerli:
+                urunler = _urunleri_yukle(force_source_sync=False, force_store_refresh=_force_store_refresh)
+            else:
+                with st.spinner("Ürünler yükleniyor..."):
+                    urunler = _urunleri_yukle(force_source_sync=False, force_store_refresh=_force_store_refresh)
             st.session_state["_urunler_loading_ui"] = False
         except Exception as exc:
             st.session_state["_urunler_loading_ui"] = False
@@ -3876,7 +3939,9 @@ if st.session_state.active_main_tab == "urunler":
                     if magaza.strip()
                 })
 
-            canli_magaza_haritasi = _urunler_tab_canli_magaza_haritasi(magaza_adlari)
+            canli_magaza_haritasi, _harita_guncelleniyor = _canli_magaza_haritasi_hazir(magaza_adlari)
+            if _harita_guncelleniyor:
+                st.caption("Mağaza yük durumları güncelleniyor, liste hazır...")
 
             try:
                 import pandas as pd
