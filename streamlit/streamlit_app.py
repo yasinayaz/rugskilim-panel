@@ -599,6 +599,7 @@ for k, v in [
     ("_urunler_seen_sync_version", ""),
     ("_urunler_pending_sync_version", ""),
     ("_urunler_last_auto_sync_request_ts", 0.0),
+    ("_urunler_last_sheet_sync_request_ts", 0.0),
     ("_urun_edit_dialog_acik", False),
     ("active_main_tab", "urun_sec"),
     ("_pending_main_tab_render", None),
@@ -1173,7 +1174,7 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
 def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
     from shared.product_sheet import ProductSheet
-    from shared.product_sheet_sync import sync_supabase_from_product_sheet
+    from shared.product_sheet_sync import start_product_sheet_sync_worker, sync_supabase_from_product_sheet
 
     cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
     cache_data = st.session_state.get("_urun_katalog_cache")
@@ -1196,7 +1197,22 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
 
     if _supabase_ready():
         try:
-            sync_supabase_from_product_sheet(force=force_source_sync)
+            start_product_sheet_sync_worker(interval_seconds=30)
+        except Exception:
+            pass
+        try:
+            simdi = _time.time()
+            son_sheet_sync = float(st.session_state.get("_urunler_last_sheet_sync_request_ts") or 0.0)
+            if force_source_sync or (simdi - son_sheet_sync) >= 60:
+                st.session_state["_urunler_last_sheet_sync_request_ts"] = simdi
+
+                def _sheet_sync_job():
+                    try:
+                        sync_supabase_from_product_sheet(force=force_source_sync)
+                    except Exception:
+                        pass
+
+                _threading.Thread(target=_sheet_sync_job, daemon=True, name="urunler-sheet-sync").start()
         except Exception:
             pass
 
