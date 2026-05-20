@@ -44,6 +44,48 @@ def _template_yolu(template_id: str) -> Path:
     return _TEMPLATE_DIRS[0] / f"{template_id}.json"
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def _sheet_baglanti_durumu(store_id: str, google_sheet_id: str, sheet_tab: str):
+    """Magazanin hedef Google Sheet/sekmesine erisilebiliyor mu kontrol eder."""
+    hedef_sheet_id = str(google_sheet_id or os.environ.get("GOOGLE_SHEET_ID", "")).strip()
+    hedef_tab = str(sheet_tab or store_id).strip()
+
+    if not hedef_sheet_id:
+        return {
+            "ok": False,
+            "reason": "Google Sheet ID tanimli degil",
+        }
+
+    try:
+        from shared.sheets import _spreadsheet as _spreadsheet_fn
+
+        spreadsheet = _spreadsheet_fn(hedef_sheet_id)
+        worksheetler = spreadsheet.worksheets()
+        basliklar = [str(ws.title).strip() for ws in worksheetler]
+
+        if hedef_tab in basliklar:
+            return {
+                "ok": True,
+                "reason": f"'{hedef_tab}' sekmesine bagli",
+            }
+
+        if any(str(ad).lower() == hedef_tab.lower() for ad in basliklar):
+            return {
+                "ok": True,
+                "reason": f"'{hedef_tab}' sekmesi buyuk/kucuk harf farkiyla bulundu",
+            }
+
+        return {
+            "ok": False,
+            "reason": f"'{hedef_tab}' sekmesi sheet icinde yok",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"Sheet baglantisi kurulamadı: {type(exc).__name__}: {exc}",
+        }
+
+
 sys.path.insert(0, str(_ROOT_DIR))
 
 _env_path = _APP_DIR / ".env"
@@ -2153,11 +2195,36 @@ def _supabase_kuyruk_satirlari(store_id: str):
 def _olcu_ara_kaynaklari_cached(urunler_sig):
     from shared.product_catalog import derive_category_from_dimensions
 
+    sig_alanlari = (
+        "product_code",
+        "status",
+        "size_cm",
+        "size_ft",
+        "category",
+        "loaded_store_count",
+        "loaded_stores",
+        "note",
+        "width_ft",
+        "length_ft",
+        "width_cm",
+        "length_cm",
+        "area_m2",
+        "source_tab",
+    )
+
     arama_kaynaklari = []
     atlanan_ft = 0
     toplam = 0
     satilan = 0
-    for urun in [dict(item) for item in (urunler_sig or [])]:
+    for item in (urunler_sig or []):
+        if isinstance(item, dict):
+            urun = dict(item)
+        elif isinstance(item, (list, tuple)) and len(item) == len(sig_alanlari):
+            # Performans refactor'inda gelen tuple imzayi alan adlariyla tekrar eslestir.
+            urun = dict(zip(sig_alanlari, item))
+        else:
+            urun = dict(item)
+
         toplam += 1
         if str(urun.get("status", "")).strip().lower() == "sold":
             satilan += 1
@@ -4635,6 +4702,7 @@ if st.session_state.active_main_tab == "ayarlar":
 
             with _left:
                 st.markdown("#### Mağazalar")
+                st.caption("Sol ikondaki yesil durum, magazanin Google Sheet dosyasina ve kendi sekmesine baglanabildigini gosterir.")
                 _global_selected = st.session_state.ayar_magaza_id == _global_ai_id
                 st.button(
                     f"{'🧠' if _global_selected else '⚙️'} Default AI Rules",
@@ -4646,7 +4714,12 @@ if st.session_state.active_main_tab == "ayarlar":
                     args=(_global_ai_id,),
                 )
                 for _m in _tum_magazalar:
-                    _aktif_ikon = "🟢" if _m.get("active") else "⬜"
+                    _sheet_durum = _sheet_baglanti_durumu(
+                        _m["store_id"],
+                        _m.get("google_sheet_id") or "",
+                        _m.get("sheet_tab", _m["store_id"]),
+                    )
+                    _aktif_ikon = "🟢" if _sheet_durum.get("ok") else "⬜"
                     _is_selected = st.session_state.ayar_magaza_id == _m["store_id"]
                     st.button(
                         f"{_aktif_ikon} {_m['store_name']}",
@@ -4732,6 +4805,20 @@ if st.session_state.active_main_tab == "ayarlar":
                 else:
                     st.markdown(f"#### {_secili['store_name']}")
                     if _secili["store_id"] != _global_ai_id:
+                        _sheet_durum = _sheet_baglanti_durumu(
+                            _secili["store_id"],
+                            _secili.get("google_sheet_id") or "",
+                            _secili.get("sheet_tab", _secili["store_id"]),
+                        )
+                        if _sheet_durum.get("ok"):
+                            st.success(f"Google Sheet baglantisi hazir: {_sheet_durum.get('reason')}")
+                        else:
+                            st.warning(f"Google Sheet bagli degil: {_sheet_durum.get('reason')}")
+                        st.caption(
+                            "Worker durumu ayridir: "
+                            + ("aktif" if _secili.get("active") else "pasif")
+                            + " (`stores.json > active`)."
+                        )
                         with st.form(f"store_main_form_{_secili['store_id']}"):
                             _c1, _c2 = st.columns(2)
                             _m_name = _c1.text_input("Görünen Ad", value=_secili.get("store_name", _secili["store_id"]))
