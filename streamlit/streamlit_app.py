@@ -801,7 +801,8 @@ def _urunler_sync_degisikligini_uygula() -> bool:
 
     st.session_state["_urunler_seen_sync_version"] = mevcut_versiyon
     st.session_state["_urunler_pending_sync_version"] = ""
-    _urun_katalog_cache_temizle()
+    # Sadece mağaza haritası değişti — ürün listesini yeniden çekmeye gerek yok.
+    # Cache temizlenmez; rerun ile mevcut ürünler + yeni yeşil noktalar gösterilir.
     st.session_state["_urunler_loading_ui"] = False
     st.rerun(scope="app")
     return True
@@ -3960,7 +3961,6 @@ if st.session_state.active_main_tab == "urunler":
         )
         if st.session_state.get("_urunler_pending_refresh") and _form_kapali:
             st.session_state["_urunler_pending_refresh"] = False
-            _urun_katalog_cache_temizle()
 
         _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
         st.session_state.setdefault("_canli_harita_shown_ts", _harita_file_ts)
