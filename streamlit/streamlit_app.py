@@ -1693,6 +1693,11 @@ def _klasor_urun_kodu_al(klasor_adi: str):
     if not metin:
         return None
 
+    # Magaza icindeki ana navigasyon klasorleri (01-PATCH..., 05-RUGS KILIM vb.)
+    # urun klasoru gibi yorumlanmamali.
+    if _re.match(r"^\d{1,2}\s*[-–]\s*[A-Za-zİIŞŞĞÜÖÇ]", metin):
+        return None
+
     # Ara navigasyon klasorleri (2025, 24,03,2025, 27,03,2025 yeni mallar) urun gibi boyanmasin.
     if _re.fullmatch(r"20\d{2}", metin):
         return None
@@ -1875,18 +1880,22 @@ def _sheet_yuklu_kodlari_al(store_id: str, force: bool = False, include_blocked:
 
     cache_key = f"sheet_loaded_codes::{store_id}"
     ts_key = f"{cache_key}::ts"
-    if not force:
-        try:
-            son_okuma = float(st.session_state.get(ts_key) or 0)
-        except Exception:
-            son_okuma = 0
-        if son_okuma and (_time.time() - son_okuma) <= 60:
-            return set(st.session_state.get(cache_key) or [])
-
     try:
-        yuklu_kodlar = set(_sheet_green_kodlari_cached(store_id))
+        son_okuma = float(st.session_state.get(ts_key) or 0)
     except Exception:
-        yuklu_kodlar = set()
+        son_okuma = 0
+    if son_okuma and (_time.time() - son_okuma) <= 60:
+        yuklu_kodlar = set(st.session_state.get(cache_key) or [])
+    elif not force:
+        # Urun sec tabinda render thread'i sheet okumasi ile bloklama.
+        # Sheet cache henuz bellekte yoksa bos donup hizli ac; manuel/arka plan
+        # yenileme cache'i doldurdugunda rozetler dogal olarak duzelir.
+        yuklu_kodlar = set(st.session_state.get(cache_key) or [])
+    else:
+        try:
+            yuklu_kodlar = set(_sheet_green_kodlari_cached(store_id))
+        except Exception:
+            yuklu_kodlar = set()
 
     if not include_blocked:
         yuklu_kodlar = {kod for kod in yuklu_kodlar if not _urun_kodu_bloklu_mu(kod)}
@@ -3182,16 +3191,6 @@ if st.session_state.active_main_tab == "urun_sec":
     else:
         def _tab1_gezgin():
             token = st.session_state.pcloud_token
-            _hedef_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
-            if _hedef_magaza and (
-                st.session_state.get("sheet_renk_magaza_id") != _hedef_magaza
-                or _sheet_renk_cache_bayatti()
-                or not st.session_state.get("sheet_renk_durumlari")
-            ):
-                try:
-                    _magaza_renk_cache_yenile(_hedef_magaza)
-                except Exception:
-                    pass
 
             def _kaynak_magaza_sec(_magaza_id, _magaza_ad):
                 st.session_state.magaza_id = _magaza_id
