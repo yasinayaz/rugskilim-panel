@@ -1730,9 +1730,12 @@ def _sheet_renk_durumu(klasor_adi: str):
         return None
     if kod in _manuel_kirmizi_kodlar():
         return "red"
-    if kod in _magaza_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
+    renk = st.session_state.sheet_renk_durumlari.get(kod)
+    if renk:
+        return renk
+    if kod in _sheet_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
         return "green"
-    return st.session_state.sheet_renk_durumlari.get(kod)
+    return None
 
 
 def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str):
@@ -1741,11 +1744,11 @@ def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str):
     kod = _klasor_urun_kodu_al(klasor_adi)
     if kod and kod in _manuel_kirmizi_kodlar():
         return "red"
-    if kod and kod in _magaza_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
-        return "green"
     kid = str(klasor_id or "").strip()
     if kid and kid in st.session_state.klasor_id_durumlari:
         return st.session_state.klasor_id_durumlari.get(kid)
+    if kod and kod in _sheet_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
+        return "green"
     return _sheet_renk_durumu(klasor_adi)
 
 
@@ -1865,9 +1868,38 @@ def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False, include_blocked
     return yuklu_kodlar
 
 
+def _sheet_yuklu_kodlari_al(store_id: str, force: bool = False, include_blocked: bool = False) -> set[str]:
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return set()
+
+    cache_key = f"sheet_loaded_codes::{store_id}"
+    ts_key = f"{cache_key}::ts"
+    if not force:
+        try:
+            son_okuma = float(st.session_state.get(ts_key) or 0)
+        except Exception:
+            son_okuma = 0
+        if son_okuma and (_time.time() - son_okuma) <= 60:
+            return set(st.session_state.get(cache_key) or [])
+
+    try:
+        yuklu_kodlar = set(_sheet_green_kodlari_cached(store_id))
+    except Exception:
+        yuklu_kodlar = set()
+
+    if not include_blocked:
+        yuklu_kodlar = {kod for kod in yuklu_kodlar if not _urun_kodu_bloklu_mu(kod)}
+
+    st.session_state[cache_key] = sorted(yuklu_kodlar)
+    st.session_state[ts_key] = _time.time()
+    return yuklu_kodlar
+
+
 def _magaza_renk_cache_yenile(store_id: str):
     from shared.sheets import SheetsKatmani as _SK_REFRESH
 
+    store_id = str(store_id or "").strip()
     _sk_refresh = _SK_REFRESH(store_id)
     _satirlar_refresh = _sk_refresh.tum_satirlar_al()
     _renkler_refresh = {
@@ -1885,6 +1917,13 @@ def _magaza_renk_cache_yenile(store_id: str):
         for s in _satirlar_refresh
         if str(s.get("pcloud_klasor_id", "")).strip() and str(s.get("status", "")).strip()
     }
+    _sheet_yuklu_kodlar = {
+        kod for kod, renk in _renkler_refresh.items()
+        if str(renk or "").strip().lower() == "green"
+    }
+    st.session_state[f"sheet_loaded_codes::{store_id}"] = sorted(_sheet_yuklu_kodlar)
+    st.session_state[f"sheet_loaded_codes::{store_id}::ts"] = _time.time()
+    st.session_state.sheet_renk_magaza_id = store_id
     st.session_state.sheet_renk_cache_ts = _time.time()
     _magaza_yuklu_kodlari_al(store_id, force=True)
     if _global_kirmizi_cache_bayatti():
@@ -2837,10 +2876,17 @@ def _klasor_meta_getir(token, host, klasor_id):
             contents = d.get("metadata", {}).get("contents", []) or []
             has_subfolders = any(item.get("isfolder") for item in contents)
             has_files = any(not item.get("isfolder") for item in contents)
+            has_images = any(
+                (not item.get("isfolder")) and str(item.get("name") or "").lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+                for item in contents
+            )
             return h, {
-                "is_product_folder": has_files and not has_subfolders,
+                # Bazi urun klasorlerinde alt klasor olsa bile secim yapilabilsin;
+                # asil kriter kullanilabilir gorsel dosya bulunmasi.
+                "is_product_folder": has_images or (has_files and not has_subfolders),
                 "has_subfolders": has_subfolders,
                 "has_files": has_files,
+                "has_images": has_images,
             }
         except Exception:
             continue
@@ -2848,6 +2894,7 @@ def _klasor_meta_getir(token, host, klasor_id):
         "is_product_folder": False,
         "has_subfolders": False,
         "has_files": False,
+        "has_images": False,
     }
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -3135,6 +3182,16 @@ if st.session_state.active_main_tab == "urun_sec":
     else:
         def _tab1_gezgin():
             token = st.session_state.pcloud_token
+            _hedef_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+            if _hedef_magaza and (
+                st.session_state.get("sheet_renk_magaza_id") != _hedef_magaza
+                or _sheet_renk_cache_bayatti()
+                or not st.session_state.get("sheet_renk_durumlari")
+            ):
+                try:
+                    _magaza_renk_cache_yenile(_hedef_magaza)
+                except Exception:
+                    pass
 
             def _kaynak_magaza_sec(_magaza_id, _magaza_ad):
                 st.session_state.magaza_id = _magaza_id
@@ -3177,6 +3234,12 @@ if st.session_state.active_main_tab == "urun_sec":
                 st.session_state.kuyruk_klasor_durumlari = {}
                 st.session_state.sheet_renk_durumlari = {}
                 st.session_state.klasor_id_durumlari = {}
+                _sheet_green_kodlari_cached.clear()
+                _sheet_green_haritasi_cached.clear()
+                _mevcut_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+                if _mevcut_magaza:
+                    st.session_state.pop(f"sheet_loaded_codes::{_mevcut_magaza}", None)
+                    st.session_state.pop(f"sheet_loaded_codes::{_mevcut_magaza}::ts", None)
 
             def _ai_kuyruga_ekle():
                 bloklu_secimler = [
@@ -3544,15 +3607,17 @@ if st.session_state.active_main_tab == "urun_sec":
                                 folder_id = str(k["id"])
                                 known_folder_status = st.session_state.kuyruk_klasor_durumlari.get(folder_id)
                                 known_sheet_color = st.session_state.klasor_id_durumlari.get(folder_id)
+                                inferred_product_code = _klasor_urun_kodu_al(k["ad"])
                                 is_product_folder = bool(
                                     k.get("is_product_folder") is True
+                                    or inferred_product_code is not None
                                     or known_folder_status is not None
                                     or known_sheet_color is not None
                                 )
                                 row_item = {**k, "is_product_folder": is_product_folder}
                                 _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
-                                urun_kodu = _klasor_urun_kodu_al(k["ad"])
+                                urun_kodu = inferred_product_code
                                 satilmis_global = is_product_folder and _klasor_bloklu_mu(k["ad"])
                                 kuyruk_status = None
                                 if is_product_folder:
