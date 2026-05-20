@@ -2216,6 +2216,7 @@ def _harita_degisim_izleyici():
     Arka plan güncelleme tamamlanınca tam uygulama yenileme (scope='app') tetikler.
     Kullanıcı form dolduruyorsa rerun ertelenir — pending_refresh flag koyulur.
     """
+    _urunler_sessiz_sync_nabzi()
     _ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
     _shown = float(st.session_state.get("_canli_harita_shown_ts") or 0)
     if _ts > _shown:
@@ -4558,15 +4559,6 @@ if st.session_state.active_main_tab == "urunler":
 
         # Arka planda harita güncellenince otomatik rerun (her 5 saniyede dosya mtime kontrolü)
         _harita_degisim_izleyici()
-    if hasattr(st, "fragment"):
-        @st.fragment(run_every="10s")
-        def _urunler_sync_fragment():
-            _urunler_sessiz_sync_nabzi()
-
-        _urunler_sync_fragment()
-    else:
-        _urunler_sessiz_sync_nabzi()
-
     with st.container(key="main_tab_content_urunler"):
         _tab3_urunler()
 
