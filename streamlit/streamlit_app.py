@@ -595,7 +595,12 @@ for k, v in [
     ("_urun_katalog_cache_ts", 0.0),
     ("_urun_katalog_cache_stok_mtime", 0.0),
     ("_urunler_magaza_refresh_started_at", 0.0),
+    ("_urunler_seen_sync_version", ""),
+    ("_urunler_pending_sync_version", ""),
+    ("_urunler_last_auto_sync_request_ts", 0.0),
+    ("_urun_edit_dialog_acik", False),
     ("active_main_tab", "urun_sec"),
+    ("_pending_main_tab_render", None),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -747,6 +752,88 @@ _SOLD_SITE_LABELS: dict[str, str] = {
 def _site_label(raw: str) -> str:
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     return ", ".join(_SOLD_SITE_LABELS.get(p.lower(), p) for p in parts)
+
+
+def _urunler_kullanici_mesgul_mu() -> bool:
+    """
+    Sessiz veri yenileme aktif kullanicinin formunu veya dialogunu bozmamali.
+    """
+    return bool(
+        st.session_state.get("urun_formu_acik")
+        or st.session_state.get("satilan_urun_formu_acik")
+        or st.session_state.get("_urun_edit_dialog_acik")
+        or st.session_state.get("_edit_urun")
+        or st.session_state.get("_sil_onay")
+    )
+
+
+def _urunler_sync_versiyonu_al() -> str:
+    envanter_ts = float((_envanter_cache_dosyadan_yukle() or {}).get("updated_at") or 0.0)
+    harita_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0.0)
+    return f"{envanter_ts:.6f}|{harita_ts:.6f}"
+
+
+def _urunler_sync_degisikligini_uygula() -> bool:
+    """
+    Arka plan sync tamamlandiginda sadece veri cache'ini yeniler.
+    Kullanici aktif islemdeyse apply ertelenir; session state korunur.
+    """
+    mevcut_versiyon = _urunler_sync_versiyonu_al()
+    gorulen_versiyon = str(st.session_state.get("_urunler_seen_sync_version") or "").strip()
+    bekleyen_versiyon = str(st.session_state.get("_urunler_pending_sync_version") or "").strip()
+
+    if not gorulen_versiyon:
+        st.session_state["_urunler_seen_sync_version"] = mevcut_versiyon
+        if bekleyen_versiyon == mevcut_versiyon:
+            st.session_state["_urunler_pending_sync_version"] = ""
+        return False
+
+    hedef_versiyon = bekleyen_versiyon or mevcut_versiyon
+    if hedef_versiyon == gorulen_versiyon:
+        if bekleyen_versiyon:
+            st.session_state["_urunler_pending_sync_version"] = ""
+        return False
+
+    if _urunler_kullanici_mesgul_mu():
+        st.session_state["_urunler_pending_sync_version"] = mevcut_versiyon
+        return False
+
+    st.session_state["_urunler_seen_sync_version"] = mevcut_versiyon
+    st.session_state["_urunler_pending_sync_version"] = ""
+    _urun_katalog_cache_temizle()
+    st.session_state["_urunler_loading_ui"] = False
+    st.rerun()
+    return True
+
+
+def _urunler_sessiz_sync_nabzi():
+    """
+    Urunler ekranindayken belirli araliklarla sheet -> runtime cache sync tetikler.
+    Baska bir kullanicinin yaptigi degisiklikler arkada toplanir; apply yalnizca uygun anda olur.
+    """
+    if st.session_state.get("active_main_tab") != "urunler":
+        return
+
+    try:
+        from shared.store_manager import tum_magazalar as _tum_magazalar_sync
+
+        store_ids = [
+            str(m.get("store_id") or "").strip()
+            for m in _tum_magazalar_sync()
+            if str(m.get("store_id") or "").strip()
+        ]
+    except Exception:
+        store_ids = []
+
+    simdi = _time.time()
+    son_istek = float(st.session_state.get("_urunler_last_auto_sync_request_ts") or 0.0)
+    if (simdi - son_istek) >= 30:
+        st.session_state["_urunler_last_auto_sync_request_ts"] = simdi
+        _urunler_magaza_yenilemesini_baslat(force=True)
+        if store_ids:
+            _canli_magaza_haritasi_bg_guncelle(store_ids)
+
+    _urunler_sync_degisikligini_uygula()
 
 
 def _stok_log_yaz(durum: str, detay: str = ""):
@@ -959,7 +1046,7 @@ def _kaynak_stok_urunleri_yukle(dosya_yolu: str, dosya_mtime: float):
     except Exception:
         pass
 
-    satilanlar = set(satilan_kayitlari) | _satilan_kodlar(dosya_yolu)
+    satilanlar = set(satilan_kayitlari)
     urunler = []
     eklenen_kodlar = set()
     sheet_specs = [
@@ -1046,41 +1133,52 @@ def _urun_kaynak_sync_bilgisi():
 
 def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | None = None):
     from shared.product_catalog import ProductCatalog, _supabase_ready
+    from shared.product_sheet import ProductSheet
 
     if not _supabase_ready():
         return False
 
-    stok = _stok_dosya_yolu()
-    if not stok.exists():
-        return False
-
-    stok_mtime = float(stok.stat().st_mtime)
-    sync_bilgi = _urun_kaynak_sync_bilgisi()
-    if not force and float(sync_bilgi.get("stok_mtime") or 0) == stok_mtime:
-        return False
-
-    kaynak = kaynak_urunler or _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
+    kaynak = kaynak_urunler or ProductSheet().read_products()
     kaynak = _silinenleri_filtrele(kaynak)
+    kaynak_fingerprint = hash(tuple(
+        (
+            str(item.get("product_code") or "").strip(),
+            str(item.get("status") or "").strip(),
+            str(item.get("size_cm") or "").strip(),
+            str(item.get("size_ft") or "").strip(),
+            str(item.get("sold_at") or "").strip(),
+            str(item.get("sold_site") or "").strip(),
+            str(item.get("updated_at") or "").strip(),
+        )
+        for item in kaynak
+    ))
+    sync_bilgi = _urun_kaynak_sync_bilgisi()
+    if not force and sync_bilgi.get("sheet_fingerprint") == kaynak_fingerprint:
+        return False
+
     ProductCatalog().replace_from_source(kaynak)
     _json_kaydet(
         _PRODUCT_SOURCE_SYNC_DB,
-        {"stok_mtime": stok_mtime, "updated_at": _time.time(), "source_count": len(kaynak)},
+        {
+            "sheet_fingerprint": kaynak_fingerprint,
+            "updated_at": _time.time(),
+            "source_count": len(kaynak),
+        },
     )
     return True
 
 
 def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
-    stok = _stok_dosya_yolu()
-    stok_mtime = float(stok.stat().st_mtime) if stok.exists() else 0.0
+    from shared.product_sheet import ProductSheet
+    from shared.product_sheet_sync import sync_supabase_from_product_sheet
+
     cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
-    cache_stok_mtime = float(st.session_state.get("_urun_katalog_cache_stok_mtime") or 0.0)
     cache_data = st.session_state.get("_urun_katalog_cache")
 
     if (
         not force_source_sync
         and cache_data is not None
-        and cache_stok_mtime == stok_mtime
         and (_time.time() - cache_ts) <= 300
     ):
         return [dict(item) for item in cache_data]
@@ -1094,51 +1192,21 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
                 pass
         _threading.Thread(target=_envanter_sync_job, daemon=True, name="magaza-envanter-sync").start()
 
-    kaynak = []
-    if stok.exists():
-        kaynak = _kaynak_stok_urunleri_yukle(str(stok), stok_mtime)
-        if _supabase_ready():
-            try:
-                _urun_katalogunu_esitle(force=force_source_sync, kaynak_urunler=kaynak)
-            except Exception:
-                pass
+    if _supabase_ready():
+        try:
+            sync_supabase_from_product_sheet(force=force_source_sync)
+        except Exception:
+            pass
 
     try:
-        mevcut = ProductCatalog().list_products() if _supabase_ready() else _panel_urunleri_yerden_yukle()
+        mevcut = ProductCatalog().list_products() if _supabase_ready() else ProductSheet().read_products()
     except Exception:
         mevcut = _panel_urunleri_yerden_yukle()
-
-    if force_source_sync and stok.exists() and (not _supabase_ready() or not mevcut):
-        mevcut_map = {
-            str(item.get("product_code") or "").strip(): dict(item)
-            for item in mevcut
-            if str(item.get("product_code") or "").strip()
-        }
-        for item in kaynak:
-            kod = str(item.get("product_code") or "").strip()
-            if not kod:
-                continue
-            onceki = mevcut_map.get(kod, {})
-            yeni = dict(item)
-            yeni["category"] = item.get("category") or onceki.get("category") or ""
-            yeni["loaded_store_count"] = onceki.get("loaded_store_count", 0)
-            yeni["loaded_stores"] = onceki.get("loaded_stores", "")
-            yeni["sold_at"] = item.get("sold_at") or onceki.get("sold_at", "")
-            yeni["sold_site"] = item.get("sold_site") or onceki.get("sold_site", "")
-            yeni["customer_name"] = item.get("customer_name") or onceki.get("customer_name", "")
-            yeni["customer_phone"] = item.get("customer_phone") or onceki.get("customer_phone", "")
-            yeni["customer_address"] = item.get("customer_address") or onceki.get("customer_address", "")
-            yeni["customer_contact_country"] = item.get("customer_contact_country") or onceki.get("customer_contact_country", "")
-            yeni["note"] = item.get("note") or onceki.get("note", "")
-            yeni["status"] = "sold" if str(item.get("status", "")).lower() == "sold" else str(onceki.get("status", "")).lower() or "active"
-            mevcut_map[kod] = yeni
-        mevcut = sorted(mevcut_map.values(), key=lambda x: str(x.get("product_code") or ""))
-        _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
 
     mevcut = _silinenleri_filtrele(mevcut)
     st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
     st.session_state["_urun_katalog_cache_ts"] = _time.time()
-    st.session_state["_urun_katalog_cache_stok_mtime"] = stok_mtime
+    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
     return mevcut
 
 
@@ -1199,10 +1267,9 @@ def _urunleri_cachede_uste_tut(urun: dict, *, remove_code: str | None = None):
     )
     yeni_liste = _silinenleri_filtrele(yeni_liste)
 
-    stok = _stok_dosya_yolu()
     st.session_state["_urun_katalog_cache"] = [dict(item) for item in yeni_liste]
     st.session_state["_urun_katalog_cache_ts"] = _time.time()
-    st.session_state["_urun_katalog_cache_stok_mtime"] = float(stok.stat().st_mtime) if stok.exists() else 0.0
+    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
     _json_kaydet(_RUNTIME_DIR / "panel_products.json", yeni_liste)
 
 
@@ -1485,7 +1552,7 @@ def _stok_log_durumu():
         return f"HATA: {log['detay']}" if log["detay"] else "HATA"
     return log["durum"]
 
-_stok_indirmeyi_baslat()
+# Eski lokal stok.xlsx akisi kullanilmiyor; urun kaynagi artik sheet + Supabase.
 
 # Mağaza değişince kuyruk sıfırla
 if st.session_state.get("kuyruk_magaza_id") != st.session_state.hedef_magaza_id:
@@ -1639,8 +1706,7 @@ def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str):
 
 
 def _satilan_kod_cache_yenile():
-    stok_yolu = _stok_dosya_yolu()
-    satilan = _satilan_kodlar(str(stok_yolu)) if stok_yolu.exists() else set()
+    satilan = _satilan_kodlar()
     st.session_state.satilan_kodlar_cache = sorted(satilan)
     return satilan
 
@@ -2146,7 +2212,7 @@ def _harita_degisim_izleyici():
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
-    from shared.product_catalog import StoreCatalog, _supabase_ready
+    from shared.product_catalog import ProductCatalog, StoreCatalog, _supabase_ready
 
     if not _supabase_ready():
         return None
@@ -2155,15 +2221,15 @@ def _supabase_kuyruk_satirlari(store_id: str):
     if not store_id:
         return []
 
-    try:
-        _magaza_envanterini_topla(force=False, store_ids=[store_id])
-    except Exception:
-        pass
-
     store_rows = StoreCatalog().list_by_store(store_id)
+    product_codes = [
+        str(item.get("product_code") or "").strip()
+        for item in store_rows
+        if str(item.get("product_code") or "").strip()
+    ]
     product_map = {
         str(item.get("product_code") or "").strip(): dict(item)
-        for item in _urunleri_yukle(force_source_sync=False)
+        for item in ProductCatalog().list_products_by_codes(product_codes)
         if str(item.get("product_code") or "").strip()
     }
 
@@ -2313,6 +2379,36 @@ def _olcu_ara_kaynaklari_cached(urunler_sig):
     }
 
 
+@st.cache_data(ttl=180, show_spinner=False)
+def _urun_sheet_urunleri_yukle_cached():
+    from shared.product_sheet import ProductSheet
+
+    return _silinenleri_filtrele(ProductSheet().read_products())
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _olcu_ara_urunleri_yukle_cached(force_store_refresh: bool = False):
+    """Olcu Ara icin katalogu dogrudan Supabase'ten, gerekirse urun sheet'inden okur."""
+    from shared.product_catalog import ProductCatalog, _supabase_ready
+
+    if _supabase_ready():
+        if force_store_refresh:
+            try:
+                _magaza_envanterini_topla(force=True)
+            except Exception:
+                pass
+        urunler = ProductCatalog().list_products(include_store_presence=False)
+        return {
+            "source": "supabase",
+            "products": _silinenleri_filtrele(urunler),
+        }
+
+    return {
+        "source": "product_sheet",
+        "products": _urun_sheet_urunleri_yukle_cached(),
+    }
+
+
 def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None = None):
     dosya_cache = _envanter_cache_dosyadan_yukle()
     hedef_store_ids = [str(s or "").strip() for s in (store_ids or []) if str(s or "").strip()]
@@ -2404,8 +2500,7 @@ def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None =
 
 
 def _satilan_notlarini_uret(force_refresh: bool = False):
-    stok_yolu = _stok_dosya_yolu()
-    satilanlar = _satilan_kodlar(str(stok_yolu)) if stok_yolu.exists() else set()
+    satilanlar = _satilan_kodlar()
     if not force_refresh:
         return _notlar_db_yukle(), _envanter_cache_yukle(), satilanlar
 
@@ -2581,31 +2676,22 @@ def _son_islem_raporu_goster():
 def _kod_normalize(kod: str) -> str:
     return _re.sub(r'[\+\!\*\s]+$', '', str(kod).strip()).strip()
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _satilan_kodlar_cached(dosya_yolu: str, mtime: float) -> set[str]:
-    # Excel'i her rerun'da yeniden parse etmeyelim; mtime degisince cache otomatik yenilenir.
-    _ = mtime
+@st.cache_data(ttl=300, show_spinner=False)
+def _satilan_kodlar_cached() -> set[str]:
     try:
-        import pandas as pd
-        df = pd.read_excel(dosya_yolu, sheet_name='SATILANLAR')
-        kodlar = df.iloc[:, 0].dropna().astype(str).str.strip()
         sonuc = set()
-        for k in kodlar:
-            if not k or k == 'nan':
+        for urun in _urun_sheet_urunleri_yukle_cached():
+            if str(urun.get("status") or "").strip().lower() != "sold":
                 continue
-            norm = _urun_kodu_normalize(k)
+            norm = _urun_kodu_normalize(urun.get("product_code", ""))
             if norm:
                 sonuc.add(norm)
         return sonuc
     except Exception:
         return set()
 
-def _satilan_kodlar(dosya_yolu: str) -> set:
-    try:
-        mtime = Path(dosya_yolu).stat().st_mtime
-        return _satilan_kodlar_cached(dosya_yolu, mtime)
-    except Exception:
-        return set()
+def _satilan_kodlar() -> set:
+    return _satilan_kodlar_cached()
 
 
 _satilan_kod_cache_yenile()
@@ -2818,6 +2904,9 @@ def _kuyruk_badge(status: str) -> str:
 
 
 def _main_tab_sec(tab_id: str):
+    mevcut_tab = str(st.session_state.get("active_main_tab") or "").strip()
+    if mevcut_tab != tab_id:
+        st.session_state._pending_main_tab_render = tab_id
     st.session_state.active_main_tab = tab_id
 
 
@@ -2845,6 +2934,46 @@ def _tab_loading_gostergesi(title: str, percent: int, detail: str, ready: bool =
         """,
         unsafe_allow_html=True,
     )
+
+
+def _main_tab_gecis_ekrani():
+    _tab_labels = {
+        "urun_sec": "Ürün Seç",
+        "urunler": "Ürünler",
+        "olcu_ara": "Ölçü Ara",
+        "kuyruk": "Kuyruk",
+        "ayarlar": "Ayarlar",
+        "notlar": "Notlar",
+    }
+    aktif_tab = str(st.session_state.get("active_main_tab") or "").strip()
+    hedef_tab = str(st.session_state.get("_pending_main_tab_render") or "").strip()
+    if not aktif_tab or hedef_tab != aktif_tab:
+        return False
+
+    baslik = _tab_labels.get(aktif_tab, "Sekme")
+    with st.container(key=f"main_tab_transition_{aktif_tab}"):
+        st.markdown(
+            f"<div style='padding:4px 0 10px;font-size:0.95rem;font-weight:600;color:#e6edf3;'>{baslik}</div>",
+            unsafe_allow_html=True,
+        )
+        _tab_loading_gostergesi(
+            baslik,
+            12,
+            "Sekme hazırlanıyor. Eski içerik temizlenip yeni görünüm yüklenecek.",
+            ready=False,
+        )
+        st.markdown(
+            """
+            <div style="min-height:520px;background:#0d1117;border:1px solid #21262d;border-radius:18px;
+                        box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);"></div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.session_state["_pending_main_tab_render"] = None
+    _time.sleep(0.06)
+    st.rerun()
+    return True
 
 
 # ── Image preview dialog ──────────────────────────────────────────────────────
@@ -2894,6 +3023,9 @@ for _col, (_tab_id, _tab_label) in zip(_tab_cols, _main_tabs):
         on_click=_main_tab_sec,
         args=(_tab_id,),
     )
+
+if _main_tab_gecis_ekrani():
+    st.stop()
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
@@ -3077,8 +3209,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                                  and f["name"] != bilgi_adi]
                                 if not foto_dosyalar:
                                     _urun_kodu = _kod_normalize(k["ad"])
-                                    _stok_yolu = _stok_dosya_yolu()
-                                    _satilan = _satilan_kodlar(str(_stok_yolu)) if _stok_yolu.exists() else set()
+                                    _satilan = _satilan_kodlar()
                                     if _urun_kodu in _satilan:
                                         raise Exception(f"⛔ Bu ürün SATILMIŞ ve klasörde resim yok. (KOD: {k['ad']})")
                                     else:
@@ -3090,12 +3221,10 @@ if st.session_state.active_main_tab == "urun_sec":
                                 resim_url = f"https://{ld['hosts'][0]}{ld['path']}"
                                 st.write(f"✅ Fotoğraf: {foto_dosyalar[0]['name']}")
 
-                                _stok_yolu = _stok_dosya_yolu()
-                                if _stok_yolu.exists():
-                                    _satilan   = _satilan_kodlar(str(_stok_yolu))
-                                    _urun_kodu = _kod_normalize(k["ad"])
-                                    if _urun_kodu in _satilan:
-                                        raise Exception(f"⛔ Bu ürün SATILMIŞ! (KOD: {k['ad']})")
+                                _satilan = _satilan_kodlar()
+                                _urun_kodu = _kod_normalize(k["ad"])
+                                if _urun_kodu in _satilan:
+                                    raise Exception(f"⛔ Bu ürün SATILMIŞ! (KOD: {k['ad']})")
 
                                 st.write("🤖 Gemini analiz ediyor...")
                                 ai = ai_icerik_url(
@@ -3733,6 +3862,7 @@ if st.session_state.active_main_tab == "urunler":
     def _urun_edit_dialog(urun: dict):
         import time as _t
 
+        st.session_state["_urun_edit_dialog_acik"] = True
         st.markdown(f"**{urun.get('product_code', '')}**")
         _ef1, _ef2, _ef3 = st.columns(3)
         _yeni_kod = _ef1.text_input("Ürün Kodu", value=urun.get("product_code", ""))
@@ -3764,9 +3894,14 @@ if st.session_state.active_main_tab == "urunler":
             _silinen_urunden_cikar(_updated.get("product_code", ""))
             _urunleri_cachede_uste_tut(_updated, remove_code=_old_code)
             _urun_guncelle_arkaplanda(_updated, old_code=_old_code)
+            st.session_state["_urun_edit_dialog_acik"] = False
+            st.session_state["_edit_urun"] = None
             st.success("Kaydedildi. Kalıcı kayıt arka planda tamamlanıyor.")
             st.rerun()
         if _es2.button("İptal", use_container_width=True):
+            st.session_state["_urun_edit_dialog_acik"] = False
+            st.session_state["_edit_urun"] = None
+            st.session_state.pop("_sil_onay", None)
             st.rerun()
 
         # ── Silme ───────────────────────────────────────────────────────────
@@ -3788,10 +3923,12 @@ if st.session_state.active_main_tab == "urunler":
                     ]
                     st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
                     st.session_state["_urun_katalog_cache_ts"] = _time.time()
-                    st.session_state["_urun_katalog_cache_stok_mtime"] = float(_stok_dosya_yolu().stat().st_mtime) if _stok_dosya_yolu().exists() else 0.0
+                    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
                     _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
                     _urun_sil_arkaplanda(_silinecek_kod)
                     st.session_state.pop("_sil_onay", None)
+                    st.session_state["_urun_edit_dialog_acik"] = False
+                    st.session_state["_edit_urun"] = None
                     st.session_state["_son_silinen_urun_kodu"] = _silinecek_kod
                     st.rerun()
                 except Exception as exc:
@@ -3804,6 +3941,8 @@ if st.session_state.active_main_tab == "urunler":
         _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
         st.session_state.setdefault("_canli_harita_shown_ts", _harita_file_ts)
         _harita_stale_su_an = (_time.time() - _harita_file_ts) > _CANLI_HARITA_TTL_SN
+        st.session_state["_urun_edit_dialog_acik"] = False
+        _urunler_sync_degisikligini_uygula()
 
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         _envanter_cache = _envanter_cache_dosyadan_yukle()
@@ -4192,8 +4331,7 @@ if st.session_state.active_main_tab == "urunler":
                 st.toast("Kopya hazır", icon="📋")
 
             if st.session_state.get("_edit_urun"):
-                _edit_data = st.session_state.pop("_edit_urun")
-                _urun_edit_dialog(_edit_data)
+                _urun_edit_dialog(st.session_state.get("_edit_urun"))
 
         if st.session_state.urun_alt_tab == "satilan":
             try:
@@ -4395,6 +4533,14 @@ if st.session_state.active_main_tab == "urunler":
 
         # Arka planda harita güncellenince otomatik rerun (her 5 saniyede dosya mtime kontrolü)
         _harita_degisim_izleyici()
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="10s")
+        def _urunler_sync_fragment():
+            _urunler_sessiz_sync_nabzi()
+
+        _urunler_sync_fragment()
+    else:
+        _urunler_sessiz_sync_nabzi()
 
     with st.container(key="main_tab_content_urunler"):
         _tab3_urunler()
@@ -4752,7 +4898,11 @@ if st.session_state.active_main_tab == "ayarlar":
 
             with _left:
                 st.markdown("#### Mağazalar")
-                st.caption("Sol ikondaki yesil durum, magazanin Google Sheet dosyasina ve kendi sekmesine baglanabildigini gosterir.")
+                st.caption(
+                    "Soldaki yesil durum sadece Google Sheet erisimini gosterir: "
+                    "magaza ortak sheet icindeki kendi sekmesine baglanabiliyor demektir. "
+                    "Worker aktif/pasif durumu ayri gosterilir."
+                )
                 _global_selected = st.session_state.ayar_magaza_id == _global_ai_id
                 st.button(
                     f"{'🧠' if _global_selected else '⚙️'} Default AI Rules",
@@ -4770,9 +4920,10 @@ if st.session_state.active_main_tab == "ayarlar":
                         _m.get("sheet_tab", _m["store_id"]),
                     )
                     _aktif_ikon = "🟢" if _sheet_durum.get("ok") else "⬜"
+                    _worker_etiket = "aktif" if _m.get("active") else "pasif"
                     _is_selected = st.session_state.ayar_magaza_id == _m["store_id"]
                     st.button(
-                        f"{_aktif_ikon} {_m['store_name']}",
+                        f"{_aktif_ikon} {_m['store_name']} · worker {_worker_etiket}",
                         key=f"sel_store_{_m['store_id']}",
                         width="stretch",
                         type="primary" if _is_selected else "secondary",
@@ -5119,11 +5270,15 @@ if st.session_state.active_main_tab == "olcu_ara":
         if _gc1.button("🔄 Ürünleri Yenile"):
             st.session_state.ara_sonuclari = []
             st.session_state["_olcu_ara_loading_ui"] = True
+            _olcu_ara_urunleri_yukle_cached.clear()
+            _olcu_ara_kaynaklari_cached.clear()
             st.rerun()
-        _gc2.caption("Kaynak: Supabase `products` tablosundaki aktif ürünler")
+        _gc2.caption("Kaynak: Supabase `products` tablosu. Supabase yoksa urun katalog sheet fallback kullanilir.")
 
         try:
-            katalog_urunleri = _urunleri_yukle(force_source_sync=False)
+            _olcu_payload = _olcu_ara_urunleri_yukle_cached()
+            katalog_urunleri = list(_olcu_payload.get("products") or [])
+            _olcu_source = str(_olcu_payload.get("source") or "supabase")
         except Exception as exc:
             st.error(f"Ürün kataloğu yüklenemedi: {exc}")
             return
@@ -5163,11 +5318,15 @@ if st.session_state.active_main_tab == "olcu_ara":
         for satir in arama_kaynaklari:
             kategori_sayimlari[satir["tur"]] = kategori_sayimlari.get(satir["tur"], 0) + 1
 
+        _toplam = int(_olcu_kaynak.get("toplam") or len(katalog_urunleri))
+        _satilan = int(_olcu_kaynak.get("satilan") or 0)
+        _aktif_toplam = max(_toplam - _satilan, len(arama_kaynaklari))
+        _kaynak_etiketi = "Supabase products" if _olcu_source == "supabase" else "urun katalog sheet"
         st.caption(
-            f"Aktif ürün: **{len(arama_kaynaklari)}**"
-            f"  |  Toplam katalog: {_olcu_kaynak.get('toplam', len(katalog_urunleri))}"
-            f"  |  Satılan: {_olcu_kaynak.get('satilan', 0)}"
-            f"  |  Ft ölçüsü eksik olduğu için atlanan: {atlanan_ft}"
+            f"Kaynak: {_kaynak_etiketi}"
+            f"  |  Aktif katalog: **{_aktif_toplam}**"
+            f"  |  Olcu aramaya uygun: {len(arama_kaynaklari)}"
+            f"  |  Ft olcusu eksik oldugu icin atlanan: {atlanan_ft}"
         )
         st.caption(
             "  |  ".join(

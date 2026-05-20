@@ -202,6 +202,32 @@ class ProductCatalog:
 
         return products
 
+    def list_products_by_codes(self, product_codes: list[str]) -> list[dict]:
+        import requests
+
+        codes = sorted({_clean(code) for code in (product_codes or []) if _clean(code)})
+        if not codes:
+            return []
+
+        products = []
+        chunk_size = 200
+        for start in range(0, len(codes), chunk_size):
+            chunk = codes[start:start + chunk_size]
+            response = requests.get(
+                _rest_url(),
+                headers={**_headers(), "Accept": "application/json"},
+                params={
+                    "select": "*",
+                    "product_code": f"in.({','.join(chunk)})",
+                    "order": "product_code.asc",
+                },
+                timeout=45,
+            )
+            if not response.ok:
+                raise RuntimeError(f"Supabase ürünleri okunamadı: {response.status_code} {response.text}")
+            products.extend(response.json() or [])
+        return products
+
     def upsert_products(self, products: list[dict]) -> list[dict]:
         payload = []
         for product in products:
