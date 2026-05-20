@@ -2728,48 +2728,49 @@ for _col, (_tab_id, _tab_label) in zip(_tab_cols, _main_tabs):
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
     if not st.session_state.pcloud_token:
-        _tab_loading_gostergesi("Ürün Seç", 100, "pCloud bağlantısı bekleniyor. Giriş ekranı hazır.", ready=True)
-        # ── Login formu ──
-        st.markdown("<div style='max-width:480px;margin:40px auto;'>", unsafe_allow_html=True)
-        st.markdown("### pCloud Bağlantısı")
-        giris_yontemi = st.radio("Giriş yöntemi", ["Token yapıştır", "E-posta / Şifre"], horizontal=True)
-        if giris_yontemi == "Token yapıştır":
-            token_input = st.text_input("pCloud Auth Token", placeholder="Tarayıcı konsolundan kopyalayın")
-            st.caption("Chrome: F12 → Console → `document.cookie.match(/pcauth=([^;]+)/)[1]`")
-            if st.button("🔗 Token ile Bağlan", type="primary", width="stretch"):
-                if token_input:
-                    st.session_state.pcloud_token = token_input
-                    st.session_state["pcloud_host"] = "https://api.pcloud.com"
-                    _token_kaydet(token_input)
-                    try:
-                        from shared.sheets import config_yaz
-                        config_yaz("PCLOUD_TOKEN", token_input)
-                    except Exception: pass
-                    st.rerun()
-                else:
-                    st.warning("Token girin.")
-        else:
-            col1, col2 = st.columns(2)
-            email = col1.text_input("E-posta")
-            sifre = col2.text_input("Şifre", type="password")
-            kod = st.text_input("2FA Kodu (varsa)")
-            if st.button("🔗 Bağlan", type="primary", width="stretch"):
-                if email and sifre:
-                    with st.spinner("Bağlanıyor..."):
-                        ok, sonuc = pcloud_giris(email, sifre, kod)
-                    if ok:
-                        st.session_state.pcloud_token = sonuc
-                        _token_kaydet(sonuc)
+        with st.container(key="main_tab_content_urun_sec"):
+            _tab_loading_gostergesi("Ürün Seç", 100, "pCloud bağlantısı bekleniyor. Giriş ekranı hazır.", ready=True)
+            # ── Login formu ──
+            st.markdown("<div style='max-width:480px;margin:40px auto;'>", unsafe_allow_html=True)
+            st.markdown("### pCloud Bağlantısı")
+            giris_yontemi = st.radio("Giriş yöntemi", ["Token yapıştır", "E-posta / Şifre"], horizontal=True)
+            if giris_yontemi == "Token yapıştır":
+                token_input = st.text_input("pCloud Auth Token", placeholder="Tarayıcı konsolundan kopyalayın")
+                st.caption("Chrome: F12 → Console → `document.cookie.match(/pcauth=([^;]+)/)[1]`")
+                if st.button("🔗 Token ile Bağlan", type="primary", width="stretch"):
+                    if token_input:
+                        st.session_state.pcloud_token = token_input
+                        st.session_state["pcloud_host"] = "https://api.pcloud.com"
+                        _token_kaydet(token_input)
                         try:
                             from shared.sheets import config_yaz
-                            config_yaz("PCLOUD_TOKEN", sonuc)
+                            config_yaz("PCLOUD_TOKEN", token_input)
                         except Exception: pass
                         st.rerun()
                     else:
-                        st.error(f"❌ {sonuc}")
-                else:
-                    st.warning("E-posta ve şifre girin.")
-        st.markdown("</div>", unsafe_allow_html=True)
+                        st.warning("Token girin.")
+            else:
+                col1, col2 = st.columns(2)
+                email = col1.text_input("E-posta")
+                sifre = col2.text_input("Şifre", type="password")
+                kod = st.text_input("2FA Kodu (varsa)")
+                if st.button("🔗 Bağlan", type="primary", width="stretch"):
+                    if email and sifre:
+                        with st.spinner("Bağlanıyor..."):
+                            ok, sonuc = pcloud_giris(email, sifre, kod)
+                        if ok:
+                            st.session_state.pcloud_token = sonuc
+                            _token_kaydet(sonuc)
+                            try:
+                                from shared.sheets import config_yaz
+                                config_yaz("PCLOUD_TOKEN", sonuc)
+                            except Exception: pass
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {sonuc}")
+                    else:
+                        st.warning("E-posta ve şifre girin.")
+            st.markdown("</div>", unsafe_allow_html=True)
     else:
         def _tab1_gezgin():
             token = st.session_state.pcloud_token
@@ -3364,7 +3365,8 @@ if st.session_state.active_main_tab == "urun_sec":
                 if not st.session_state.get("aktif_islem_urunleri"):
                     _son_islem_raporu_goster()
 
-        _tab1_gezgin()
+        with st.container(key="main_tab_content_urun_sec"):
+            _tab1_gezgin()
 
         # Dialog fragment dışında tetiklenmeli (Streamlit @fragment + @dialog uyumsuzluğu)
         if "_onizleme_klasor" in st.session_state:
@@ -3548,7 +3550,8 @@ if st.session_state.active_main_tab == "kuyruk":
             st.session_state["_kuyruk_loading_ui"] = False
             st.warning(f"Sheets bağlantısı yok: {e}")
 
-    _tab2_kuyruk()
+    with st.container(key="main_tab_content_kuyruk"):
+        _tab2_kuyruk()
 
 
 # ══ TAB 3 ════════════════════════════════════════════════════════════════════
@@ -4206,7 +4209,8 @@ if st.session_state.active_main_tab == "urunler":
             except Exception as exc:
                 st.warning(f"Satılan ürün listesi çizilemedi: {exc}")
 
-    _tab3_urunler()
+    with st.container(key="main_tab_content_urunler"):
+        _tab3_urunler()
 
 
 # ══ TAB 4 ════════════════════════════════════════════════════════════════════
@@ -5079,7 +5083,8 @@ if st.session_state.active_main_tab == "olcu_ara":
         elif ara_btn:
             st.warning("Eşleşen ürün bulunamadı.")
 
-    _tab5_ara()
+    with st.container(key="main_tab_content_olcu_ara"):
+        _tab5_ara()
 
 
 # ══ TAB 6 ════════════════════════════════════════════════════════════════════
@@ -5202,4 +5207,5 @@ if st.session_state.active_main_tab == "notlar":
         except Exception as exc:
             st.error(f"Notlar tabı hazırlanamadı: {exc}")
 
-    _tab6_notlar()
+    with st.container(key="main_tab_content_notlar"):
+        _tab6_notlar()
