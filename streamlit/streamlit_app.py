@@ -2935,12 +2935,6 @@ if st.session_state.active_main_tab == "urun_sec":
 
             # ── KAYNAK MAĞAZA SEÇİMİ ──────────────────────────────────────────
             if not st.session_state.magaza_id:
-                _tab_loading_gostergesi(
-                    "Ürün Seç",
-                    20,
-                    "Mağaza klasörleri hazırlanıyor. Yükleme tamamlanınca seçim yapabilirsiniz.",
-                    ready=False,
-                )
                 _host_m = st.session_state.get("pcloud_host", "https://api.pcloud.com")
                 st.markdown("<div class='section-label'>pCloud Kaynak Klasörü</div>", unsafe_allow_html=True)
                 st.caption(f"Hedef: **{st.session_state.hedef_magaza_id}** — Ürünlerin bulunduğu pCloud mağaza klasörünü seçin.")
@@ -2960,13 +2954,9 @@ if st.session_state.active_main_tab == "urun_sec":
                         )
 
             else:
-                if not st.session_state.get("kuyruk_yuklendi") or st.session_state.get("kuyruk_magaza_id") != st.session_state.hedef_magaza_id:
-                    _kuyruk_cache_hazirla(st.session_state.hedef_magaza_id)
-                _tab_loading_gostergesi(
-                    "Ürün Seç",
-                    65 if st.session_state.get("kuyruk_yuklendi") else 40,
-                    "Klasör gezgini ve mağaza durum işaretleri hazırlanıyor.",
-                    ready=bool(st.session_state.get("kuyruk_yuklendi")),
+                _queue_badges_ready = (
+                    bool(st.session_state.get("kuyruk_yuklendi"))
+                    and st.session_state.get("kuyruk_magaza_id") == st.session_state.hedef_magaza_id
                 )
                 # ── KLASÖR GEZGİNİ ────────────────────────────────────────────
                 gecmis = st.session_state.klasor_gecmisi
@@ -3080,7 +3070,11 @@ if st.session_state.active_main_tab == "urun_sec":
                                     kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
                                     if kuyruk_status is None:
                                         kuyruk_status = known_folder_status
-                                sheet_renk = known_sheet_color if is_product_folder else None
+                                sheet_renk = (
+                                    known_sheet_color
+                                    if is_product_folder and known_sheet_color is not None
+                                    else (_sheet_renk_durumu_klasor(k["id"], k["ad"]) if is_product_folder else None)
+                                )
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
                                 if sheet_renk == "red":
                                     _ikon = "🔴"
@@ -3102,6 +3096,9 @@ if st.session_state.active_main_tab == "urun_sec":
                                     "zaten_kuyrukta": zaten_kuyrukta,
                                     "ikon": _ikon,
                                 })
+
+                            if not _queue_badges_ready:
+                                st.caption("Klasör listesi hazır. Mağaza durum işaretleri son bilinen veriden gösteriliyor.")
 
                             for _row in _satir_meta:
                                 k = _row["item"]
@@ -3780,6 +3777,7 @@ if st.session_state.active_main_tab == "urunler":
                 import pandas as pd
 
                 satirlar = []
+                magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
                 for urun in gosterilecek:
                     stores = {
                         s.strip()
@@ -3797,12 +3795,26 @@ if st.session_state.active_main_tab == "urunler":
                         "yüklü": len(stores),
                     }
                     for magaza in magaza_adlari:
-                        satir[magaza] = "🟢" if magaza in stores else "⚪"
+                        yuklu_mu = magaza in stores
+                        satir[magaza] = "🟢" if yuklu_mu else "⚪"
+                        if yuklu_mu:
+                            magaza_yuklu_sayilari[magaza] += 1
                     satirlar.append(satir)
 
                 if satirlar:
+                    kolon_etiketleri = {
+                        magaza: f"{magaza} ({magaza_yuklu_sayilari.get(magaza, 0)})"
+                        for magaza in magaza_adlari
+                    }
+                    tablo_satirlari = [
+                        {
+                            (kolon_etiketleri.get(anahtar, anahtar)): deger
+                            for anahtar, deger in satir.items()
+                        }
+                        for satir in satirlar
+                    ]
                     _secim = st.dataframe(
-                        pd.DataFrame(satirlar),
+                        pd.DataFrame(tablo_satirlari),
                         use_container_width=True,
                         hide_index=True,
                         on_select="rerun",
