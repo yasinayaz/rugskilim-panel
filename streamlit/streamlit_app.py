@@ -2062,7 +2062,7 @@ def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
             if renk != "green" and durum != "done":
                 continue
             raw_code = str(row.get("product_code") or "").strip()
-            kod = _urun_kodu_normalize(raw_code) or raw_code
+            kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
             if not kod:
                 continue
             harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
@@ -2133,6 +2133,16 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
 
     raw_data = (cached or {}).get("data") or {}
     return {k: set(v) for k, v in raw_data.items()}, is_stale
+
+
+@st.fragment(run_every=5)
+def _harita_degisim_izleyici():
+    """Ürünler sekmesinde arka planda güncellenen haritayı tespit edip otomatik rerun tetikler."""
+    _ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
+    _shown = float(st.session_state.get("_canli_harita_shown_ts") or 0)
+    if _ts > _shown:
+        st.session_state["_canli_harita_shown_ts"] = _ts
+        st.rerun()
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -3791,13 +3801,8 @@ if st.session_state.active_main_tab == "urunler":
                 st.rerun()
 
     def _tab3_urunler():
-        # Arka planda mağaza haritası güncellendiyse otomatik yenile
         _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
-        _harita_shown_ts = float(st.session_state.get("_canli_harita_shown_ts") or 0)
-        if _harita_file_ts > _harita_shown_ts:
-            st.session_state["_canli_harita_shown_ts"] = _harita_file_ts
-            if _harita_shown_ts > 0:  # İlk yüklemede değil, sonraki güncellemelerde rerun
-                st.rerun()
+        st.session_state.setdefault("_canli_harita_shown_ts", _harita_file_ts)
         _harita_stale_su_an = (_time.time() - _harita_file_ts) > _CANLI_HARITA_TTL_SN
 
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
@@ -4387,6 +4392,9 @@ if st.session_state.active_main_tab == "urunler":
                     st.info("Satılan ürün bulunamadı.")
             except Exception as exc:
                 st.warning(f"Satılan ürün listesi çizilemedi: {exc}")
+
+        # Arka planda harita güncellenince otomatik rerun (her 5 saniyede dosya mtime kontrolü)
+        _harita_degisim_izleyici()
 
     with st.container(key="main_tab_content_urunler"):
         _tab3_urunler()
