@@ -35,8 +35,10 @@ import random
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+import requests
 import gspread
 from gspread.exceptions import APIError, WorksheetNotFound
+from google.auth.transport.requests import Request
 from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
 
@@ -140,6 +142,32 @@ def _spreadsheet(sheet_id: str):
         _SPREADSHEET_CACHE[cache_key] = spreadsheet
 
     return spreadsheet
+
+
+def drive_file_degisim_imzasi(file_id: str) -> str:
+    """
+    Google Drive dosyasinin hafif degisim imzasini doner.
+    Sheet icerigini okumadan once bu imza degismediyse agir sync atlanabilir.
+    """
+    temiz_id = str(file_id or "").strip()
+    if not temiz_id:
+        return ""
+
+    creds = Credentials.from_service_account_file(
+        _credentials_json_yolu(),
+        scopes=SCOPES,
+    )
+    creds.refresh(Request())
+    response = requests.get(
+        f"https://www.googleapis.com/drive/v3/files/{temiz_id}",
+        headers={"Authorization": f"Bearer {creds.token}"},
+        params={"fields": "id,modifiedTime,version"},
+        timeout=20,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Drive metadata okunamadi: {response.status_code} {response.text}")
+    data = response.json() or {}
+    return f"{data.get('id','')}|{data.get('modifiedTime','')}|{data.get('version','')}"
 
 
 def _api_hata_kodu(exc: Exception) -> int | None:

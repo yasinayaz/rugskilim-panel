@@ -600,6 +600,7 @@ for k, v in [
     ("_urunler_pending_sync_version", ""),
     ("_urunler_last_auto_sync_request_ts", 0.0),
     ("_urunler_last_sheet_sync_request_ts", 0.0),
+    ("_urunler_last_sheet_signature", ""),
     ("_urun_edit_dialog_acik", False),
     ("active_main_tab", "urun_sec"),
     ("_pending_main_tab_render", None),
@@ -775,6 +776,24 @@ def _urunler_sync_versiyonu_al() -> str:
     return f"{envanter_ts:.6f}|{harita_ts:.6f}"
 
 
+def _urunler_sheet_degisim_imzasi_al() -> str:
+    try:
+        from shared.sheets import drive_file_degisim_imzasi
+        from shared.store_manager import tum_magazalar as _tum_magazalar_imza
+
+        varsayilan_sheet_id = str(os.environ.get("GOOGLE_SHEET_ID", "")).strip()
+        sheet_ids = sorted({
+            str(m.get("google_sheet_id") or varsayilan_sheet_id).strip()
+            for m in _tum_magazalar_imza()
+            if str(m.get("google_sheet_id") or varsayilan_sheet_id).strip()
+        })
+        if not sheet_ids:
+            return ""
+        return "||".join(drive_file_degisim_imzasi(sheet_id) for sheet_id in sheet_ids)
+    except Exception:
+        return ""
+
+
 def _urunler_sync_degisikligini_uygula() -> bool:
     """
     Arka plan sync tamamlandiginda sadece veri cache'ini yeniler.
@@ -832,9 +851,16 @@ def _urunler_sessiz_sync_nabzi():
     son_istek = float(st.session_state.get("_urunler_last_auto_sync_request_ts") or 0.0)
     if (simdi - son_istek) >= 30:
         st.session_state["_urunler_last_auto_sync_request_ts"] = simdi
-        _urunler_magaza_yenilemesini_baslat(force=True)
-        if store_ids:
-            _canli_magaza_haritasi_bg_guncelle(store_ids)
+        yeni_imza = _urunler_sheet_degisim_imzasi_al()
+        son_imza = str(st.session_state.get("_urunler_last_sheet_signature") or "").strip()
+        if yeni_imza:
+            if not son_imza:
+                st.session_state["_urunler_last_sheet_signature"] = yeni_imza
+            elif yeni_imza != son_imza:
+                st.session_state["_urunler_last_sheet_signature"] = yeni_imza
+                _urunler_magaza_yenilemesini_baslat(force=False)
+                if store_ids:
+                    _canli_magaza_haritasi_bg_guncelle(store_ids)
 
     _urunler_sync_degisikligini_uygula()
 
@@ -3989,13 +4015,13 @@ if st.session_state.active_main_tab == "urunler":
         _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
         _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
-        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor or _harita_stale_su_an
+        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
         _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
         if _urunler_loading_ui:
-            _loading_percent = 20 if not _urunler_cache_var else (40 if _harita_stale_su_an else 55)
+            _loading_percent = 20 if not _urunler_cache_var else 55
             _loading_mesaj = (
-                "Mağaza yük durumları yükleniyor..." if _harita_stale_su_an and not _urunler_cache_var
-                else "Mağaza yük durumları arka planda güncelleniyor." if _harita_stale_su_an
+                "Mağaza yük durumları yükleniyor..."
+                if not _urunler_cache_var
                 else "Ürün listesi arka planda güncelleniyor."
             )
             _tab_loading_gostergesi("Ürünler", _loading_percent, _loading_mesaj, ready=False)
