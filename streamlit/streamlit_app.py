@@ -586,6 +586,7 @@ for k, v in [
     ("tum_magaza_sekmeleri_hazir", False),
     ("urun_formu_acik", False),
     ("satilan_urun_formu_acik", False),
+    ("_urunler_pending_refresh", False),
     ("urun_alt_tab", "liste"),
     ("_kuyruk_loading_ui", False),
     ("_kuyruk_refresh_istek", False),
@@ -2138,7 +2139,11 @@ def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
 
 
 def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
-    """Background thread: Sheets'ten green kodları okur, runtime dosyaya yazar."""
+    """
+    Background thread: önce Supabase'den hızlıca (aynı VPS, ~100ms), ardından
+    Sheets'ten otoriter veriyle dosyayı günceller. İki adım → iki dosya yazımı →
+    fragment her birini ayrı ayrı yakalar ve sayfayı günceller.
+    """
     if _CANLI_HARITA_LOCK.locked():
         return
     temiz = [str(s or "").strip() for s in store_ids if str(s or "").strip()]
@@ -2147,6 +2152,23 @@ def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
 
     def _job():
         with _CANLI_HARITA_LOCK:
+            from shared.product_catalog import _supabase_ready
+
+            # Adım 1 — Supabase'den hızlı yükleme (aynı VPS, ~100ms)
+            if _supabase_ready():
+                try:
+                    supabase_harita = _supabase_store_haritasi_yukle()
+                    if supabase_harita:
+                        _json_kaydet(_CANLI_HARITA_DB, {
+                            "updated_at": _time.time(),
+                            "data": {k: list(v) for k, v in supabase_harita.items()},
+                            "store_ids": sorted(temiz),
+                            "source": "supabase",
+                        })
+                except Exception:
+                    pass
+
+            # Adım 2 — Sheets'ten otoriter güncelleme (30-60s, kesin doğru veri)
             sonuc: dict[str, list[str]] = {}
             for sid in temiz:
                 try:
@@ -2161,54 +2183,47 @@ def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
                             sonuc.setdefault(kod, []).append(sid)
                 except Exception:
                     pass
-            _json_kaydet(_CANLI_HARITA_DB, {
-                "updated_at": _time.time(),
-                "data": sonuc,
-                "store_ids": sorted(temiz),
-            })
+            if sonuc:
+                _json_kaydet(_CANLI_HARITA_DB, {
+                    "updated_at": _time.time(),
+                    "data": sonuc,
+                    "store_ids": sorted(temiz),
+                    "source": "sheets",
+                })
 
     _threading.Thread(target=_job, daemon=True, name="canli-harita-sync").start()
 
 
 def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[str]], bool]:
     """
-    Anında dosyadan okur.
-    İlk açılış/deploy sonrası (dosya yok): Supabase'den anlık yükler (aynı VPS, hızlı).
-    Stale ise arka planda Sheets'ten günceller.
+    Anında dosyadan okur. Stale ise arka planda güncelleme başlatır.
+    Ana thread'i hiç bloklamaz — her zaman dosyadaki son veriyi döndürür.
     """
-    from shared.product_catalog import _supabase_ready
     cached = _canli_magaza_haritasi_dosyadan_yukle()
     cached_ts = float((cached or {}).get("updated_at") or 0)
     is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
-
     if is_stale:
-        if cached_ts == 0 and _supabase_ready():
-            # Dosya hiç oluşmamış: Supabase'deki mevcut store_status'ı anlık oku
-            try:
-                supabase_harita = _supabase_store_haritasi_yukle()
-                _json_kaydet(_CANLI_HARITA_DB, {
-                    "updated_at": _time.time(),
-                    "data": {k: list(v) for k, v in supabase_harita.items()},
-                    "store_ids": sorted(str(s) for s in store_ids if str(s or "").strip()),
-                })
-                _canli_magaza_haritasi_bg_guncelle(store_ids)
-                return supabase_harita, True
-            except Exception:
-                pass
         _canli_magaza_haritasi_bg_guncelle(store_ids)
-
     raw_data = (cached or {}).get("data") or {}
     return {k: set(v) for k, v in raw_data.items()}, is_stale
 
 
-@st.fragment(run_every=5)
+@st.fragment(run_every=10)
 def _harita_degisim_izleyici():
-    """Ürünler sekmesinde arka planda güncellenen haritayı tespit edip otomatik rerun tetikler."""
+    """
+    Ürünler sekmesinde 10 saniyede bir dosya timestamp'ini kontrol eder.
+    Arka plan güncelleme tamamlanınca tam uygulama yenileme (scope='app') tetikler.
+    Kullanıcı form dolduruyorsa rerun ertelenir — pending_refresh flag koyulur.
+    """
     _ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
     _shown = float(st.session_state.get("_canli_harita_shown_ts") or 0)
     if _ts > _shown:
         st.session_state["_canli_harita_shown_ts"] = _ts
-        st.rerun()
+        if st.session_state.get("urun_formu_acik") or st.session_state.get("_edit_urun"):
+            # Kullanıcı form/edit modunda — şimdi rerun yapma, işartle
+            st.session_state["_urunler_pending_refresh"] = True
+        else:
+            st.rerun(scope="app")
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -3938,6 +3953,15 @@ if st.session_state.active_main_tab == "urunler":
                 st.rerun()
 
     def _tab3_urunler():
+        # Bekleyen yenileme: form kapandıysa sessizce uygula
+        _form_kapali = (
+            not st.session_state.get("urun_formu_acik")
+            and not st.session_state.get("_edit_urun")
+        )
+        if st.session_state.get("_urunler_pending_refresh") and _form_kapali:
+            st.session_state["_urunler_pending_refresh"] = False
+            _urun_katalog_cache_temizle()
+
         _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
         st.session_state.setdefault("_canli_harita_shown_ts", _harita_file_ts)
         _harita_stale_su_an = (_time.time() - _harita_file_ts) > _CANLI_HARITA_TTL_SN
@@ -3986,7 +4010,9 @@ if st.session_state.active_main_tab == "urunler":
                 return
 
         if _magaza_refresh_suruyor:
-            st.caption("Magaza yuk durumlari guncelleniyor. Liste hazir; yesil noktalar ve yuklu sayilari birazdan tazelenecek.")
+            st.caption("Mağaza yük durumları güncelleniyor; yeşil noktalar ve yüklü sayıları birazdan tazelenecek.")
+        if st.session_state.get("_urunler_pending_refresh"):
+            st.caption("🔄 Arka planda yeni mağaza verisi hazır. Form kapandığında otomatik uygulanacak.")
 
         aktifler = [u for u in urunler if str(u.get("status", "")).lower() != "sold"]
         satilanlar = [u for u in urunler if str(u.get("status", "")).lower() == "sold"]
