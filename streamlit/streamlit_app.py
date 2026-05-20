@@ -2051,6 +2051,26 @@ def _canli_magaza_haritasi_dosyadan_yukle() -> dict:
     return _json_yukle(_CANLI_HARITA_DB, {"updated_at": 0, "data": {}, "store_ids": []})
 
 
+def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
+    """Supabase product_store_status'taki green/done satırları çekip store map döndürür. Aynı VPS → hızlı."""
+    from shared.product_catalog import StoreCatalog
+    harita: dict[str, set[str]] = {}
+    try:
+        for row in StoreCatalog().list_by_store():
+            renk = str(row.get("renk") or "").strip().lower()
+            durum = str(row.get("status") or "").strip().lower()
+            if renk != "green" and durum != "done":
+                continue
+            raw_code = str(row.get("product_code") or "").strip()
+            kod = _urun_kodu_normalize(raw_code) or raw_code
+            if not kod:
+                continue
+            harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
+    except Exception:
+        pass
+    return harita
+
+
 def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
     """Background thread: Sheets'ten green kodları okur, runtime dosyaya yazar."""
     if _CANLI_HARITA_LOCK.locked():
@@ -2085,12 +2105,32 @@ def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
 
 
 def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[str]], bool]:
-    """Anında dosyadan okur. Cache bayatsa arka planda Google Sheets yenilemesi başlatır."""
+    """
+    Anında dosyadan okur.
+    İlk açılış/deploy sonrası (dosya yok): Supabase'den anlık yükler (aynı VPS, hızlı).
+    Stale ise arka planda Sheets'ten günceller.
+    """
+    from shared.product_catalog import _supabase_ready
     cached = _canli_magaza_haritasi_dosyadan_yukle()
     cached_ts = float((cached or {}).get("updated_at") or 0)
     is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
+
     if is_stale:
+        if cached_ts == 0 and _supabase_ready():
+            # Dosya hiç oluşmamış: Supabase'deki mevcut store_status'ı anlık oku
+            try:
+                supabase_harita = _supabase_store_haritasi_yukle()
+                _json_kaydet(_CANLI_HARITA_DB, {
+                    "updated_at": _time.time(),
+                    "data": {k: list(v) for k, v in supabase_harita.items()},
+                    "store_ids": sorted(str(s) for s in store_ids if str(s or "").strip()),
+                })
+                _canli_magaza_haritasi_bg_guncelle(store_ids)
+                return supabase_harita, True
+            except Exception:
+                pass
         _canli_magaza_haritasi_bg_guncelle(store_ids)
+
     raw_data = (cached or {}).get("data") or {}
     return {k: set(v) for k, v in raw_data.items()}, is_stale
 
@@ -3754,25 +3794,27 @@ if st.session_state.active_main_tab == "urunler":
         # Arka planda mağaza haritası güncellendiyse otomatik yenile
         _harita_file_ts = float((_canli_magaza_haritasi_dosyadan_yukle() or {}).get("updated_at") or 0)
         _harita_shown_ts = float(st.session_state.get("_canli_harita_shown_ts") or 0)
-        if _harita_file_ts > _harita_shown_ts and _harita_shown_ts > 0:
+        if _harita_file_ts > _harita_shown_ts:
             st.session_state["_canli_harita_shown_ts"] = _harita_file_ts
-            st.rerun()
-        st.session_state["_canli_harita_shown_ts"] = _harita_file_ts
+            if _harita_shown_ts > 0:  # İlk yüklemede değil, sonraki güncellemelerde rerun
+                st.rerun()
+        _harita_stale_su_an = (_time.time() - _harita_file_ts) > _CANLI_HARITA_TTL_SN
 
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         _envanter_cache = _envanter_cache_dosyadan_yukle()
         _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
         _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
-        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
+        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor or _harita_stale_su_an
         _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
         if _urunler_loading_ui:
-            _tab_loading_gostergesi(
-                "Ürünler",
-                55 if _urunler_cache_var else 20,
-                "Ürün listesi ve mağaza yük durumları arka planda güncelleniyor.",
-                ready=False,
+            _loading_percent = 20 if not _urunler_cache_var else (40 if _harita_stale_su_an else 55)
+            _loading_mesaj = (
+                "Mağaza yük durumları yükleniyor..." if _harita_stale_su_an and not _urunler_cache_var
+                else "Mağaza yük durumları arka planda güncelleniyor." if _harita_stale_su_an
+                else "Ürün listesi arka planda güncelleniyor."
             )
+            _tab_loading_gostergesi("Ürünler", _loading_percent, _loading_mesaj, ready=False)
         if _force_store_refresh or _envanter_cache_stale_mi(_envanter_cache) or not ((_envanter_cache or {}).get("stores") or {}):
             _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
             _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
