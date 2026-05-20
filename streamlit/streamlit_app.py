@@ -735,6 +735,9 @@ _STORE_INVENTORY_TTL_SN = 1800
 _CANLI_HARITA_DB = _RUNTIME_DIR / "canli_magaza_haritasi.json"
 _CANLI_HARITA_TTL_SN = 90
 _CANLI_HARITA_LOCK = _threading.Lock()
+_STORE_BG_SYNC_GUARD = _threading.Lock()
+_STORE_BG_SYNC_LOCKS: dict[str, _threading.Lock] = {}
+_STORE_BG_SYNC_TS: dict[str, float] = {}
 
 _SOLD_SITE_LABELS: dict[str, str] = {
     "lmx":   "LoomixRugs",
@@ -835,6 +838,10 @@ def _urunler_sessiz_sync_nabzi():
     """
     if st.session_state.get("active_main_tab") != "urunler":
         return
+
+    _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+    if _aktif_magaza:
+        _magaza_hizli_arka_plan_sync_baslat(_aktif_magaza, force=False)
 
     try:
         from shared.store_manager import tum_magazalar as _tum_magazalar_sync
@@ -1200,7 +1207,6 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
 def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool = False):
     from shared.product_catalog import ProductCatalog, _supabase_ready
     from shared.product_sheet import ProductSheet
-    from shared.product_sheet_sync import start_product_sheet_sync_worker, sync_supabase_from_product_sheet
 
     cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
     cache_data = st.session_state.get("_urun_katalog_cache")
@@ -1214,33 +1220,16 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
 
     if _supabase_ready():
         _force_env = force_store_refresh
+        _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
         def _envanter_sync_job():
             try:
-                _magaza_envanterini_topla(force=_force_env)
+                hedefler = [_aktif_magaza] if _aktif_magaza else None
+                _magaza_envanterini_topla(force=_force_env, store_ids=hedefler)
             except Exception:
                 pass
         _threading.Thread(target=_envanter_sync_job, daemon=True, name="magaza-envanter-sync").start()
-
-    if _supabase_ready():
-        try:
-            start_product_sheet_sync_worker(interval_seconds=30)
-        except Exception:
-            pass
-        try:
-            simdi = _time.time()
-            son_sheet_sync = float(st.session_state.get("_urunler_last_sheet_sync_request_ts") or 0.0)
-            if force_source_sync or (simdi - son_sheet_sync) >= 60:
-                st.session_state["_urunler_last_sheet_sync_request_ts"] = simdi
-
-                def _sheet_sync_job():
-                    try:
-                        sync_supabase_from_product_sheet(force=force_source_sync)
-                    except Exception:
-                        pass
-
-                _threading.Thread(target=_sheet_sync_job, daemon=True, name="urunler-sheet-sync").start()
-        except Exception:
-            pass
+        if _aktif_magaza:
+            _magaza_hizli_arka_plan_sync_baslat(_aktif_magaza, force=force_store_refresh)
 
     try:
         mevcut = ProductCatalog().list_products() if _supabase_ready() else ProductSheet().read_products()
@@ -1248,6 +1237,7 @@ def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool =
         mevcut = _panel_urunleri_yerden_yukle()
 
     mevcut = _silinenleri_filtrele(mevcut)
+    _satilan_kodlarini_oturumda_guncelle(mevcut)
     st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
     st.session_state["_urun_katalog_cache_ts"] = _time.time()
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
@@ -1287,6 +1277,7 @@ def _urunleri_kaydet(products: list[dict], *, incremental: bool = False, sync_sh
             products = list(mevcut_map.values())
         _json_kaydet(_RUNTIME_DIR / "panel_products.json", products)
         st.toast("Yerel JSON'a kaydedildi (Supabase yapılandırılmamış)", icon="💾")
+    _satilan_kodlarini_oturumda_guncelle(products)
     st.session_state["_urun_katalog_cache"] = None
     st.session_state["_urun_katalog_cache_ts"] = 0.0
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
@@ -1315,6 +1306,7 @@ def _urunleri_cachede_uste_tut(urun: dict, *, remove_code: str | None = None):
     st.session_state["_urun_katalog_cache_ts"] = _time.time()
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
     _json_kaydet(_RUNTIME_DIR / "panel_products.json", yeni_liste)
+    _satilan_kodlarini_oturumda_guncelle(yeni_liste)
 
 
 def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True):
@@ -1449,6 +1441,68 @@ def _kuyruk_satirlari_cached(store_id: str):
     if satirlar is None:
         satirlar = _SK_QUEUE_CACHE(store_id).tum_satirlar_al()
     return satirlar or []
+
+
+def _magaza_kaydi_fiziksel_yuklu_mu(renk: str | None = None, durum: str | None = None) -> bool:
+    renk_norm = str(renk or "").strip().lower()
+    durum_norm = str(durum or "").strip().lower()
+    if renk_norm in {"red", "yellow"}:
+        return False
+    return renk_norm == "green" or durum_norm == "done"
+
+
+def _magaza_kaydi_ui_yuklu_mu(kod: str, renk: str | None = None, durum: str | None = None) -> bool:
+    norm_kod = _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
+    if norm_kod and norm_kod in _satilan_kodlar_kumesi():
+        return False
+    return _magaza_kaydi_fiziksel_yuklu_mu(renk, durum)
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _magaza_kuyruk_yuklu_sayisi_cached(store_id: str) -> int:
+    from shared.product_catalog import _supabase_ready
+    from shared.sheets import SheetsKatmani as _SK_QUEUE_COUNT
+
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return 0
+
+    satirlar = _kuyruk_satirlari_cached(store_id)
+    if not satirlar:
+        return 0
+
+    _sk = _SK_QUEUE_COUNT(store_id)
+    _yuklu_kodlar = _magaza_yuklu_kodlari_al(store_id, include_blocked=True)
+    _renk_durumlari = {
+        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
+        for k, v in (
+            (
+                {
+                    str(item.get("urun_id") or "").strip(): str(item.get("renk") or "").strip().lower()
+                    for item in satirlar
+                    if str(item.get("renk") or "").strip()
+                }
+            )
+            if _supabase_ready() and satirlar is not None
+            else _sk.urun_renk_durumlari_al()
+        ).items()
+    }
+
+    toplam = 0
+    for row in satirlar:
+        kod = _urun_kodu_normalize(row.get("urun_id", "")) or _urun_kodu_al(row.get("urun_id", ""))
+        if not kod:
+            continue
+        renk = str(row.get("renk") or _renk_durumlari.get(kod) or "").strip().lower()
+        mevcut_status = str(row.get("status", "")).strip().lower()
+        if kod in _satilan_kodlar_kumesi():
+            continue
+        if kod in _yuklu_kodlar or _magaza_kaydi_ui_yuklu_mu(kod, renk, mevcut_status):
+            toplam += 1
+            continue
+        if _magaza_kaydi_ui_yuklu_mu(kod, "", mevcut_status):
+            toplam += 1
+    return toplam
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1727,34 +1781,125 @@ def _guvenli_urun_kodu_bul(klasor_adi: str, dosya_adlari: list[str] | None = Non
     return _klasor_urun_kodu_al(klasor_adi) or _urun_kodu_al(klasor_adi) or str(klasor_adi or "").strip()
 
 
-def _sheet_renk_durumu(klasor_adi: str):
-    if _klasor_satilan_mi(klasor_adi):
-        return "red"
+def _urun_sec_renk_durumu(klasor_adi: str, *, klasor_id=None, kuyruk_status: str | None = None):
+    """
+    Urun Sec ekranindaki tek gercek renk semantigi:
+    red   -> satildi (tum magazalarda)
+    green -> secili magazada yuklendi
+    blue  -> secili magazanin sheet/kuyrugunda var ama yuklenmedi
+    none  -> renk yok / urun klasoru degil
+    """
     kod = _klasor_urun_kodu_al(klasor_adi)
     if not kod:
         return None
-    if kod in _manuel_kirmizi_kodlar():
+
+    store_id = str(st.session_state.get("hedef_magaza_id") or "").strip()
+    kid = str(klasor_id or "").strip()
+    return _urun_sec_magaza_durumu(
+        kod,
+        store_id=store_id,
+        klasor_id=kid,
+        kuyruk_status=kuyruk_status,
+    )
+
+
+def _urun_sec_magaza_durumu(
+    kod: str,
+    *,
+    store_id: str,
+    klasor_id: str = "",
+    kuyruk_status: str | None = None,
+) -> str | None:
+    key = str(kod or "").strip()
+    if not key:
+        return None
+
+    if key in _satilan_kodlar_kumesi():
         return "red"
-    renk = st.session_state.sheet_renk_durumlari.get(kod)
-    if renk:
-        return renk
-    if kod in _sheet_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
+
+    sheet_renk = ""
+    kid = str(klasor_id or "").strip()
+    if kid and kid in st.session_state.klasor_id_durumlari:
+        sheet_renk = str(st.session_state.klasor_id_durumlari.get(kid) or "").strip().lower()
+    if not sheet_renk:
+        sheet_renk = str(st.session_state.sheet_renk_durumlari.get(key) or "").strip().lower()
+
+    kuyruk_status_norm = str(kuyruk_status or "").strip().lower()
+    session_queue_status = str(st.session_state.get("kuyruga_eklenenler", {}).get(key) or "").strip().lower()
+
+    if (
+        key in _sheet_yuklu_kodlari_al(store_id)
+        or sheet_renk == "green"
+        or kuyruk_status_norm == "done"
+        or session_queue_status == "done"
+    ):
         return "green"
+
+    if kuyruk_status_norm or session_queue_status or sheet_renk in {"yellow", "red"}:
+        return "blue"
+
     return None
 
 
-def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str):
-    if _klasor_satilan_mi(klasor_adi):
-        return "red"
-    kod = _klasor_urun_kodu_al(klasor_adi)
-    if kod and kod in _manuel_kirmizi_kodlar():
-        return "red"
-    kid = str(klasor_id or "").strip()
-    if kid and kid in st.session_state.klasor_id_durumlari:
-        return st.session_state.klasor_id_durumlari.get(kid)
-    if kod and kod in _sheet_yuklu_kodlari_al(st.session_state.get("hedef_magaza_id", "")):
-        return "green"
-    return _sheet_renk_durumu(klasor_adi)
+def _urun_magazada_yuklu_mu(kod: str, store_id: str, canli_magaza_haritasi: dict[str, set[str]]) -> bool:
+    key = str(kod or "").strip()
+    sid = str(store_id or "").strip()
+    if not key or not sid:
+        return False
+    if key in _satilan_kodlar_kumesi():
+        return False
+    return sid in (canli_magaza_haritasi.get(key, set()) or set())
+
+
+def _magaza_ad_haritasi() -> dict[str, str]:
+    try:
+        from shared.store_manager import tum_magazalar as _tum_magaza_liste
+        return {
+            str(m.get("store_id") or "").strip(): str(m.get("store_name") or m.get("store_id") or "").strip()
+            for m in _tum_magaza_liste()
+            if str(m.get("store_id") or "").strip()
+        }
+    except Exception:
+        return {}
+
+
+def _urun_yuklu_magaza_adlari(
+    kod: str,
+    *,
+    canli_magaza_haritasi: dict[str, set[str]] | None = None,
+    haric_magazalar: list[str] | set[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    norm_kod = _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
+    if not norm_kod:
+        return []
+
+    if canli_magaza_haritasi is None:
+        try:
+            tum_magazalar = list(_magaza_ad_haritasi().keys())
+        except Exception:
+            tum_magazalar = []
+        canli_magaza_haritasi, _ = _canli_magaza_haritasi_hazir(tum_magazalar)
+
+    dislanacak = {
+        str(m or "").strip().lower()
+        for m in (haric_magazalar or [])
+        if str(m or "").strip()
+    }
+    ad_haritasi = _magaza_ad_haritasi()
+    magazalar = sorted(canli_magaza_haritasi.get(norm_kod, set()) or set())
+    return [
+        ad_haritasi.get(store_id, store_id)
+        for store_id in magazalar
+        if str(store_id or "").strip().lower() not in dislanacak
+    ]
+
+
+def _sheet_renk_durumu(klasor_adi: str):
+    return _urun_sec_renk_durumu(klasor_adi)
+
+
+def _sheet_renk_durumu_klasor(klasor_id, klasor_adi: str, kuyruk_status: str | None = None):
+    return _urun_sec_renk_durumu(klasor_adi, klasor_id=klasor_id, kuyruk_status=kuyruk_status)
 
 
 def _satilan_kod_cache_yenile():
@@ -1795,7 +1940,7 @@ def _klasor_bloklu_mu(klasor_adi: str) -> bool:
 def _secili_item_bloklu_mu(item: dict) -> bool:
     if not item.get("is_product_folder", True):
         return False
-    return _klasor_bloklu_mu(item.get("ad", ""))
+    return _klasor_satilan_mi(item.get("ad", ""))
 
 
 def _global_kirmizi_kodlari_yenile():
@@ -1865,7 +2010,7 @@ def _magaza_yuklu_kodlari_al(store_id: str, force: bool = False, include_blocked
             continue
         renk = str((urun or {}).get("renk", "")).strip().lower()
         durum = str((urun or {}).get("status", "")).strip().lower()
-        if renk == "green" or durum == "done":
+        if _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
             yuklu_kodlar.add(kod)
 
     st.session_state[cache_key] = sorted(yuklu_kodlar)
@@ -2085,7 +2230,7 @@ def _magaza_cache_stale_mi(cache: dict, store_id: str, ttl_sn: int = 120) -> boo
 
 
 def _sheetten_magaza_envanteri_oku(store_id: str, store_name: str) -> dict:
-    durum_haritasi = _sheetten_magaza_store_status_oku(store_id, store_name)
+    durum_haritasi, meta = _sheetten_magaza_store_status_detayi_oku(store_id, store_name)
 
     urunler = {}
     for kod, satir in durum_haritasi.items():
@@ -2101,30 +2246,37 @@ def _sheetten_magaza_envanteri_oku(store_id: str, store_name: str) -> dict:
 
     return {
         "store_name": store_name or store_id,
-        "count": len(urunler),
+        "count": int(meta.get("loaded_row_count") or 0),
         "urunler": urunler,
         "updated_at": _time.time(),
     }
 
 
-def _sheetten_magaza_store_status_oku(store_id: str, store_name: str = "") -> dict[str, dict]:
+def _sheetten_magaza_store_status_detayi_oku(store_id: str, store_name: str = "") -> tuple[dict[str, dict], dict]:
     from shared.sheets import SheetsKatmani as _SK_STATUS
 
     sk = _SK_STATUS(store_id)
     satirlar = sk.tum_satirlar_al()
-    renkler = {
-        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
+    renkler_raw = {
+        str(k or "").strip(): str(v or "").strip().lower()
         for k, v in sk.urun_renk_durumlari_al().items()
+        if str(k or "").strip()
+    }
+    renkler_norm = {
+        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): str(v or "").strip().lower()
+        for k, v in renkler_raw.items()
         if (_urun_kodu_normalize(k) or _urun_kodu_al(k))
     }
 
     sonuc = {}
+    loaded_row_count = 0
     for satir in satirlar:
-        kod = _urun_kodu_normalize(satir.get("urun_id", "")) or _urun_kodu_al(satir.get("urun_id", ""))
+        raw_urun_id = str(satir.get("urun_id", "")).strip()
+        kod = _urun_kodu_normalize(raw_urun_id) or _urun_kodu_al(raw_urun_id)
         if not kod:
             continue
 
-        renk = str(renkler.get(kod) or "").strip().lower()
+        renk = str(renkler_raw.get(raw_urun_id) or renkler_norm.get(kod) or "").strip().lower()
         status = str(satir.get("status", "") or "").strip().lower()
         if not renk and status not in {"pending", "ready", "downloading", "downloaded", "uploading", "done", "error"}:
             continue
@@ -2136,17 +2288,31 @@ def _sheetten_magaza_store_status_oku(store_id: str, store_name: str = "") -> di
         elif renk == "yellow" and not status:
             status = "error"
 
-        sonuc[kod] = {
+        if _magaza_kaydi_ui_yuklu_mu(kod, renk, status):
+            loaded_row_count += 1
+
+        yeni_kayit = {
             "store_id": str(store_id or "").strip(),
             "store_name": str(store_name or store_id or "").strip(),
-            "urun_id": str(satir.get("urun_id", "")).strip() or kod,
+            "urun_id": raw_urun_id or kod,
             "status": status,
             "renk": renk,
             "etsy_draft_url": str(satir.get("etsy_draft_url", "")).strip(),
             "islem_tarihi": str(satir.get("islem_tarihi", "")).strip(),
             "pcloud_klasor_id": str(satir.get("pcloud_klasor_id", "")).strip(),
         }
+        mevcut = sonuc.get(kod)
+        if mevcut:
+            mevcut_done = str(mevcut.get("renk") or "").strip().lower() == "green" or str(mevcut.get("status") or "").strip().lower() == "done"
+            yeni_done = renk == "green" or status == "done"
+            if mevcut_done and not yeni_done:
+                continue
+        sonuc[kod] = yeni_kayit
 
+    return sonuc, {"loaded_row_count": loaded_row_count}
+
+def _sheetten_magaza_store_status_oku(store_id: str, store_name: str = "") -> dict[str, dict]:
+    sonuc, _ = _sheetten_magaza_store_status_detayi_oku(store_id, store_name)
     return sonuc
 
 
@@ -2165,7 +2331,7 @@ def _sheet_green_kodlari_cached(store_id: str) -> list[str]:
             continue
         renk = str((satir or {}).get("renk") or "").strip().lower()
         durum = str((satir or {}).get("status") or "").strip().lower()
-        if renk == "green" or durum == "done":
+        if _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
             yuklu_kodlar.append(kod)
     return sorted(set(yuklu_kodlar))
 
@@ -2209,24 +2375,138 @@ def _canli_magaza_haritasi_dosyadan_yukle() -> dict:
     return _json_yukle(_CANLI_HARITA_DB, {"updated_at": 0, "data": {}, "store_ids": []})
 
 
+def _canli_magaza_haritasi_store_birlestir(store_id: str, product_codes: set[str] | list[str]) -> None:
+    sid = str(store_id or "").strip()
+    if not sid:
+        return
+
+    kodlar = {
+        str(code).strip()
+        for code in (product_codes or [])
+        if str(code).strip()
+    }
+    mevcut = _canli_magaza_haritasi_dosyadan_yukle()
+    ham_data = {
+        str(k): list(v or [])
+        for k, v in ((mevcut or {}).get("data") or {}).items()
+        if str(k).strip()
+    }
+
+    yeni_data: dict[str, list[str]] = {}
+    for kod, magazalar in ham_data.items():
+        kalan = [magaza for magaza in magazalar if str(magaza).strip() != sid]
+        if kalan:
+            yeni_data[kod] = kalan
+
+    for kod in sorted(kodlar):
+        yeni_data.setdefault(kod, []).append(sid)
+
+    store_ids = {
+        str(s).strip()
+        for s in ((mevcut or {}).get("store_ids") or [])
+        if str(s).strip()
+    }
+    store_ids.add(sid)
+    _json_kaydet(_CANLI_HARITA_DB, {
+        "updated_at": _time.time(),
+        "data": {kod: sorted(set(magazalar)) for kod, magazalar in yeni_data.items()},
+        "store_ids": sorted(store_ids),
+        "source": "supabase-bg-sync",
+    })
+
+
+def _canli_magaza_haritasindan_magaza_kodlarini_cikar(store_id: str, product_codes: set[str] | list[str]) -> None:
+    sid = str(store_id or "").strip()
+    if not sid:
+        return
+
+    kodlar = {
+        str(code).strip()
+        for code in (product_codes or [])
+        if str(code).strip()
+    }
+    if not kodlar:
+        return
+
+    mevcut = _canli_magaza_haritasi_dosyadan_yukle()
+    ham_data = {
+        str(k): list(v or [])
+        for k, v in ((mevcut or {}).get("data") or {}).items()
+        if str(k).strip()
+    }
+    yeni_data: dict[str, list[str]] = {}
+    for kod, magazalar in ham_data.items():
+        filtreli = list(magazalar or [])
+        if kod in kodlar:
+            filtreli = [magaza for magaza in filtreli if str(magaza).strip() != sid]
+        if filtreli:
+            yeni_data[kod] = filtreli
+
+    _json_kaydet(_CANLI_HARITA_DB, {
+        "updated_at": _time.time(),
+        "data": {kod: sorted(set(magazalar)) for kod, magazalar in yeni_data.items()},
+        "store_ids": sorted({
+            str(s).strip()
+            for s in ((mevcut or {}).get("store_ids") or [])
+            if str(s).strip()
+        }),
+        "source": "local-red-sync",
+    })
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _supabase_magaza_yuklu_sayilari_cached() -> dict[str, int]:
+    from shared.product_catalog import StoreCatalog, _supabase_ready
+
+    if not _supabase_ready():
+        return {}
+
+    sayilar: dict[str, int] = {}
+    try:
+        for row in StoreCatalog().list_by_store():
+            sid = str(row.get("store_id") or "").strip()
+            if not sid:
+                continue
+            kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
+            if not kod:
+                continue
+            renk = str(row.get("renk") or "").strip().lower()
+            durum = str(row.get("status") or "").strip().lower()
+            if _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
+                sayilar[sid] = sayilar.get(sid, 0) + 1
+    except Exception:
+        return {}
+    return sayilar
+
+
 def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
     """Supabase product_store_status'taki green/done satırları çekip store map döndürür. Aynı VPS → hızlı."""
     from shared.product_catalog import StoreCatalog
     harita: dict[str, set[str]] = {}
     try:
         for row in StoreCatalog().list_by_store():
-            renk = str(row.get("renk") or "").strip().lower()
-            durum = str(row.get("status") or "").strip().lower()
-            if renk != "green" and durum != "done":
-                continue
             raw_code = str(row.get("product_code") or "").strip()
             kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
             if not kod:
+                continue
+            renk = str(row.get("renk") or "").strip().lower()
+            durum = str(row.get("status") or "").strip().lower()
+            if not _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
                 continue
             harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
     except Exception:
         pass
     return harita
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _supabase_store_haritasi_cached() -> dict[str, tuple[str, ...]]:
+    harita = _supabase_store_haritasi_yukle()
+    return {
+        str(kod): tuple(sorted(set(magazalar)))
+        for kod, magazalar in (harita or {}).items()
+        if str(kod).strip()
+    }
 
 
 def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
@@ -2285,18 +2565,74 @@ def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
     _threading.Thread(target=_job, daemon=True, name="canli-harita-sync").start()
 
 
+def _magaza_hizli_arka_plan_sync_baslat(store_id: str, *, min_interval_seconds: int = 12, force: bool = False) -> bool:
+    sid = str(store_id or "").strip()
+    if not sid:
+        return False
+
+    try:
+        from shared.product_catalog import _supabase_ready
+    except Exception:
+        return False
+
+    if not _supabase_ready():
+        return False
+
+    simdi = _time.time()
+    with _STORE_BG_SYNC_GUARD:
+        kilit = _STORE_BG_SYNC_LOCKS.setdefault(sid, _threading.Lock())
+        son = float(_STORE_BG_SYNC_TS.get(sid) or 0.0)
+        if kilit.locked():
+            return False
+        if not force and son and (simdi - son) < max(3, int(min_interval_seconds)):
+            return False
+        _STORE_BG_SYNC_TS[sid] = simdi
+
+    def _job():
+        with kilit:
+            try:
+                cache = _magaza_envanterini_topla(force=True, store_ids=[sid])
+                store_data = ((cache or {}).get("stores") or {}).get(sid) or {}
+                urunler = (store_data.get("urunler") or {})
+                _canli_magaza_haritasi_store_birlestir(sid, set(urunler.keys()))
+                _supabase_magaza_yuklu_sayilari_cached.clear()
+                _kuyruk_satirlari_cached.clear()
+                _magaza_kuyruk_yuklu_sayisi_cached.clear()
+            except Exception:
+                pass
+
+    _threading.Thread(target=_job, daemon=True, name=f"store-bg-sync-{sid}").start()
+    return True
+
+
 def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[str]], bool]:
     """
     Anında dosyadan okur. Stale ise arka planda güncelleme başlatır.
     Ana thread'i hiç bloklamaz — her zaman dosyadaki son veriyi döndürür.
     """
+    try:
+        supabase_harita = {
+            kod: set(magazalar)
+            for kod, magazalar in _supabase_store_haritasi_cached().items()
+        }
+    except Exception:
+        supabase_harita = {}
+
     cached = _canli_magaza_haritasi_dosyadan_yukle()
     cached_ts = float((cached or {}).get("updated_at") or 0)
     is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
     if is_stale:
         _canli_magaza_haritasi_bg_guncelle(store_ids)
     raw_data = (cached or {}).get("data") or {}
-    return {k: set(v) for k, v in raw_data.items()}, is_stale
+    file_harita = {k: set(v) for k, v in raw_data.items()}
+
+    if not supabase_harita:
+        return file_harita, is_stale
+
+    birlesik = {kod: set(magazalar) for kod, magazalar in file_harita.items()}
+    for kod, magazalar in supabase_harita.items():
+        birlesik.setdefault(kod, set()).update(magazalar)
+    return birlesik, is_stale
 
 
 @st.fragment(run_every=10)
@@ -2672,6 +3008,117 @@ def _not_status_guncelle(note_key: str, yeni_status: str):
     _json_kaydet(_SOLD_NOTES_DB, db)
 
 
+def _magaza_kayitlarini_kirmizi_isaretle(magaza_urunleri: dict[str, set[str]]) -> tuple[int, list[str]]:
+    if not magaza_urunleri:
+        return 0, []
+
+    hatalar = []
+    toplam = 0
+
+    try:
+        from shared.sheets import SheetsKatmani as _SK_NOTE_UPDATE
+        from shared.product_catalog import StoreCatalog as _STORE_CATALOG_RED, _supabase_ready as _supabase_ready_red
+    except Exception as exc:
+        return 0, [str(exc)]
+
+    store_catalog = _STORE_CATALOG_RED() if _supabase_ready_red() else None
+
+    for store_id, urun_idleri in magaza_urunleri.items():
+        kodlar = sorted({
+            _urun_kodu_normalize(urun_id) or _urun_kodu_al(urun_id)
+            for urun_id in (urun_idleri or set())
+            if str(urun_id or "").strip()
+        })
+        kodlar = [kod for kod in kodlar if kod]
+        if not kodlar:
+            continue
+
+        try:
+            sonuc = _SK_NOTE_UPDATE(store_id).urunleri_renklendir(kodlar, "red")
+            toplam += int(sonuc.get("guncellenen") or 0)
+
+            if store_catalog is not None:
+                store_catalog.upsert([
+                    {
+                        "product_code": kod,
+                        "store_id": store_id,
+                        "status": "deleted",
+                        "renk": "red",
+                        "islem_tarihi": _time.strftime("%Y-%m-%d %H:%M"),
+                    }
+                    for kod in kodlar
+                ])
+
+            _canli_magaza_haritasindan_magaza_kodlarini_cikar(store_id, kodlar)
+        except Exception as exc:
+            hatalar.append(f"{store_id}: {exc}")
+
+    try:
+        _supabase_magaza_yuklu_sayilari_cached.clear()
+        _kuyruk_satirlari_cached.clear()
+        _magaza_kuyruk_yuklu_sayisi_cached.clear()
+        _supabase_store_haritasi_cached.clear()
+        _sheet_green_kodlari_cached.clear()
+        _sheet_green_haritasi_cached.clear()
+    except Exception:
+        pass
+
+    _global_kirmizi_kodlari_yenile()
+    if st.session_state.get("hedef_magaza_id"):
+        try:
+            _magaza_renk_cache_yenile(st.session_state.hedef_magaza_id)
+        except Exception:
+            pass
+
+    return toplam, hatalar
+
+
+def _satilan_urunleri_arkaplanda_kirmizila(urun_kodlari: list[str] | set[str]):
+    kodlar = sorted({
+        _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
+        for kod in (urun_kodlari or [])
+        if str(kod or "").strip()
+    })
+    kodlar = [kod for kod in kodlar if kod]
+    if not kodlar:
+        return
+
+    def _job():
+        try:
+            from shared.product_catalog import StoreCatalog as _STORE_CATALOG_BG, _supabase_ready as _supabase_ready_bg
+
+            magaza_urunleri: dict[str, set[str]] = {}
+            if _supabase_ready_bg():
+                for row in _STORE_CATALOG_BG().list_by_store():
+                    kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
+                    if kod not in kodlar:
+                        continue
+                    renk = str(row.get("renk") or "").strip().lower()
+                    durum = str(row.get("status") or "").strip().lower()
+                    if not _magaza_kaydi_fiziksel_yuklu_mu(renk, durum):
+                        continue
+                    sid = str(row.get("store_id") or "").strip()
+                    if sid:
+                        magaza_urunleri.setdefault(sid, set()).add(kod)
+            else:
+                envanter = _envanter_cache_yukle()
+                for sid, store_data in ((envanter or {}).get("stores") or {}).items():
+                    for raw_code, urun in ((store_data or {}).get("urunler") or {}).items():
+                        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+                        if kod not in kodlar:
+                            continue
+                        renk = str((urun or {}).get("renk") or "").strip().lower()
+                        durum = str((urun or {}).get("status") or "").strip().lower()
+                        if _magaza_kaydi_fiziksel_yuklu_mu(renk, durum):
+                            magaza_urunleri.setdefault(str(sid).strip(), set()).add(kod)
+
+            _magaza_kayitlarini_kirmizi_isaretle(magaza_urunleri)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="satilan-sheet-red-sync").start()
+
+
 def _notlari_silindi_isaretle(note_keyler: list[str]) -> tuple[int, list[str]]:
     db = _notlar_db_yukle()
     note_map = db.get("notes") or {}
@@ -2687,32 +3134,11 @@ def _notlari_silindi_isaretle(note_keyler: list[str]) -> tuple[int, list[str]]:
 
     if not magaza_urunleri:
         return 0, []
-
-    hatalar = []
-    toplam = 0
-
-    try:
-        from shared.sheets import SheetsKatmani as _SK_NOTE_UPDATE
-    except Exception as exc:
-        return 0, [str(exc)]
-
-    for store_id, urun_idleri in magaza_urunleri.items():
-        try:
-            sonuc = _SK_NOTE_UPDATE(store_id).urunleri_renklendir(sorted(urun_idleri), "red")
-            toplam += int(sonuc.get("guncellenen") or 0)
-        except Exception as exc:
-            hatalar.append(f"{store_id}: {exc}")
+    toplam, hatalar = _magaza_kayitlarini_kirmizi_isaretle(magaza_urunleri)
 
     if not hatalar:
         for note_key in note_keyler:
             _not_status_guncelle(note_key, "deleted")
-
-    _global_kirmizi_kodlari_yenile()
-    if st.session_state.get("hedef_magaza_id"):
-        try:
-            _magaza_renk_cache_yenile(st.session_state.hedef_magaza_id)
-        except Exception:
-            pass
 
     return toplam, hatalar
 
@@ -2783,17 +3209,58 @@ def _son_islem_raporu_goster():
 def _kod_normalize(kod: str) -> str:
     return _re.sub(r'[\+\!\*\s]+$', '', str(kod).strip()).strip()
 
+def _satilan_kodlarini_ayikla(products: list[dict] | None) -> set[str]:
+    sonuc = set()
+    for urun in (products or []):
+        try:
+            durum = str((urun or {}).get("status") or "").strip().lower()
+            if durum != "sold":
+                continue
+            norm = _urun_kodu_normalize((urun or {}).get("product_code", ""))
+            if norm:
+                sonuc.add(norm)
+        except Exception:
+            continue
+    return sonuc
+
+
+def _satilan_kodlarini_hizli_yukle() -> set[str]:
+    cache_urunler = st.session_state.get("_urun_katalog_cache")
+    if isinstance(cache_urunler, list) and cache_urunler:
+        satilan = _satilan_kodlarini_ayikla(cache_urunler)
+        if satilan:
+            return satilan
+
+    yerel = _panel_urunleri_yerden_yukle()
+    if yerel:
+        return _satilan_kodlarini_ayikla(yerel)
+    return set()
+
+
+def _satilan_kodlarini_oturumda_guncelle(products: list[dict] | None) -> set[str]:
+    satilan = _satilan_kodlarini_ayikla(products)
+    st.session_state.satilan_kodlar_cache = sorted(satilan)
+    return satilan
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _satilan_kodlar_cached() -> set[str]:
     try:
-        sonuc = set()
-        for urun in _urun_sheet_urunleri_yukle_cached():
-            if str(urun.get("status") or "").strip().lower() != "sold":
-                continue
-            norm = _urun_kodu_normalize(urun.get("product_code", ""))
-            if norm:
-                sonuc.add(norm)
-        return sonuc
+        from shared.product_catalog import ProductCatalog, _supabase_ready
+
+        if _supabase_ready():
+            return _satilan_kodlarini_ayikla(
+                ProductCatalog().list_products(include_store_presence=False)
+            )
+    except Exception:
+        pass
+
+    hizli = _satilan_kodlarini_hizli_yukle()
+    if hizli:
+        return hizli
+
+    try:
+        return _satilan_kodlarini_ayikla(_urun_sheet_urunleri_yukle_cached())
     except Exception:
         return set()
 
@@ -2801,7 +3268,8 @@ def _satilan_kodlar() -> set:
     return _satilan_kodlar_cached()
 
 
-_satilan_kod_cache_yenile()
+if not st.session_state.get("satilan_kodlar_cache"):
+    st.session_state.satilan_kodlar_cache = sorted(_satilan_kodlarini_hizli_yukle())
 
 # ── pCloud API ────────────────────────────────────────────────────────────────
 def pcloud_giris(email, sifre, kod=""):
@@ -3617,26 +4085,24 @@ if st.session_state.active_main_tab == "urun_sec":
                                 _chk_key = f"chk_form_{k['id']}"
                                 zaten_secili = k["id"] in secilen_ids
                                 urun_kodu = inferred_product_code
-                                satilmis_global = is_product_folder and _klasor_bloklu_mu(k["ad"])
+                                satilmis_global = is_product_folder and _klasor_satilan_mi(k["ad"])
                                 kuyruk_status = None
                                 if is_product_folder:
                                     kuyruk_status = st.session_state.kuyruga_eklenenler.get(urun_kodu)
                                     if kuyruk_status is None:
                                         kuyruk_status = known_folder_status
                                 sheet_renk = (
-                                    known_sheet_color
-                                    if is_product_folder and known_sheet_color is not None
-                                    else (_sheet_renk_durumu_klasor(k["id"], k["ad"]) if is_product_folder else None)
+                                    _sheet_renk_durumu_klasor(k["id"], k["ad"], kuyruk_status)
+                                    if is_product_folder
+                                    else None
                                 )
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
                                 if sheet_renk == "red":
                                     _ikon = "🔴"
                                 elif sheet_renk == "green" or kuyruk_status == "done":
                                     _ikon = "✅"
-                                elif sheet_renk == "yellow":
-                                    _ikon = "🟡"
-                                elif kuyruk_status == "error":
-                                    _ikon = "❌"
+                                elif sheet_renk == "blue":
+                                    _ikon = "🔵"
                                 elif zaten_kuyrukta:
                                     _ikon = "🔵"
                                 else:
@@ -3807,6 +4273,7 @@ if st.session_state.active_main_tab == "urun_sec":
 # ══ TAB 2 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "kuyruk":
     def _tab2_kuyruk():
+        _magaza_hizli_arka_plan_sync_baslat(st.session_state.hedef_magaza_id, force=False)
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
         _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui")) or _force_queue_refresh
         if _queue_loading_ui:
@@ -4332,33 +4799,44 @@ if st.session_state.active_main_tab == "urunler":
                 import pandas as pd
 
                 satirlar = []
-                magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
+                envanter_count_map = {
+                    str(store_id): int(((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count") or 0)
+                    for store_id in magaza_adlari
+                }
+                try:
+                    envanter_count_map.update(_supabase_magaza_yuklu_sayilari_cached())
+                except Exception:
+                    pass
+                _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+                if _aktif_magaza:
+                    try:
+                        envanter_count_map[_aktif_magaza] = _magaza_kuyruk_yuklu_sayisi_cached(_aktif_magaza)
+                    except Exception:
+                        pass
+                gorunen_magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
                 for urun in gosterilecek:
-                    stores = {
-                        s.strip()
-                        for s in str(urun.get("loaded_stores", "")).split(",")
-                        if s.strip()
-                    }
                     kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
-                    stores.update(canli_magaza_haritasi.get(kod, set()))
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
                         "cm": urun.get("size_cm", ""),
                         "m2": urun.get("area_m2", ""),
                         "ft": urun.get("size_ft", ""),
                         "kategori": urun.get("category", ""),
-                        "yüklü": len(stores),
+                        "yüklü": sum(
+                            1 for magaza in magaza_adlari
+                            if _urun_magazada_yuklu_mu(kod, magaza, canli_magaza_haritasi)
+                        ),
                     }
                     for magaza in magaza_adlari:
-                        yuklu_mu = magaza in stores
+                        yuklu_mu = _urun_magazada_yuklu_mu(kod, magaza, canli_magaza_haritasi)
                         satir[magaza] = "🟢" if yuklu_mu else "⚪"
                         if yuklu_mu:
-                            magaza_yuklu_sayilari[magaza] += 1
+                            gorunen_magaza_yuklu_sayilari[magaza] += 1
                     satirlar.append(satir)
 
                 if satirlar:
                     kolon_etiketleri = {
-                        magaza: f"{magaza} ({magaza_yuklu_sayilari.get(magaza, 0)})"
+                        magaza: f"{magaza} ({envanter_count_map.get(magaza) or gorunen_magaza_yuklu_sayilari.get(magaza, 0)})"
                         for magaza in magaza_adlari
                     }
                     tablo_satirlari = [
@@ -4549,10 +5027,17 @@ if st.session_state.active_main_tab == "urunler":
                                     yeni_liste.append(urun)
                             if secili_urun:
                                 _urunleri_kaydet(yeni_liste)
+                                _satilan_urunleri_arkaplanda_kirmizila([kod])
                                 st.session_state.satilan_urun_formu_acik = False
-                                yuklu = secili_urun.get("loaded_stores") or "Yüklü mağaza bulunamadı."
                                 st.success(f"{kod} satılan ürünlere eklendi.")
-                                st.info(f"Yüklü mağazalar: {yuklu}")
+                                diger_yuklu_magazalar = _urun_yuklu_magaza_adlari(
+                                    kod,
+                                    haric_magazalar=satilan_site,
+                                )
+                                if diger_yuklu_magazalar:
+                                    st.info(f"Diğer yüklü mağazalar: {', '.join(diger_yuklu_magazalar)}")
+                                else:
+                                    st.info("Başka yüklü mağaza görünmüyor.")
                                 st.rerun()
 
             st.markdown("##### Satılan Ürünler")
@@ -4638,8 +5123,24 @@ if st.session_state.active_main_tab == "urunler":
             try:
                 import pandas as pd
 
+                try:
+                    _satilan_canli_harita, _ = _canli_magaza_haritasi_hazir(_satilan_magaza_ops)
+                except Exception:
+                    _satilan_canli_harita = {}
+
                 satilan_satirlar = []
                 for urun in satilan_goster:
+                    kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
+                    satilan_site_listesi = [
+                        str(parca or "").strip()
+                        for parca in str(urun.get("sold_site", "")).split(",")
+                        if str(parca or "").strip()
+                    ]
+                    diger_yuklu_magazalar = _urun_yuklu_magaza_adlari(
+                        kod,
+                        canli_magaza_haritasi=_satilan_canli_harita,
+                        haric_magazalar=satilan_site_listesi,
+                    )
                     satilan_satirlar.append({
                         "Ürün Kodu": urun.get("product_code", ""),
                         "cm": urun.get("size_cm", ""),
@@ -4652,7 +5153,7 @@ if st.session_state.active_main_tab == "urunler":
                         "telefon": urun.get("customer_phone", ""),
                         "iletişim_ülke": urun.get("customer_contact_country", ""),
                         "adres": urun.get("customer_address", ""),
-                        "yüklü_mağazalar": urun.get("loaded_stores", ""),
+                        "diğer_yüklü_mağazalar": ", ".join(diger_yuklu_magazalar),
                         "not": urun.get("note", ""),
                     })
 
