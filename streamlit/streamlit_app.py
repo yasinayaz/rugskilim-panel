@@ -539,6 +539,7 @@ for k, v in [
     ("kuyruk_yuklendi", False), ("stok_indiriliyor", False),
     ("stok_indir_hata", None), ("_cikis_yapildi", False),
     ("magaza_id", None), ("magaza_ad", None),
+    ("klasor_ad", None),
     ("hedef_magaza_id", "PatchArts"), ("kuyruk_magaza_id", None), ("ayar_magaza_id", None),
     ("tum_magaza_sekmeleri_hazir", False),
     ("urun_formu_acik", False),
@@ -581,6 +582,7 @@ if st.query_params.get("logout") == "1":
     st.session_state.klasor_id = 0
     st.session_state.magaza_id = None
     st.session_state.magaza_ad = None
+    st.session_state.klasor_ad = None
     st.session_state["_cikis_yapildi"] = True
     st.query_params.clear()
     st.rerun()
@@ -2494,7 +2496,7 @@ def _klasor_icerigi_getir(token, host, klasor_id):
                         {
                             "id": item["folderid"],
                             "ad": item["name"],
-                            "is_product_folder": True,
+                            "is_product_folder": False,
                         }
                     )
                 else:
@@ -2779,12 +2781,14 @@ if st.session_state.active_main_tab == "urun_sec":
                 st.session_state.magaza_id = _magaza_id
                 st.session_state.magaza_ad = _magaza_ad
                 st.session_state.klasor_id = _magaza_id
+                st.session_state.klasor_ad = _magaza_ad
                 st.session_state.klasor_gecmisi = []
 
             def _magaza_secimine_don():
                 st.session_state.magaza_id = None
                 st.session_state.magaza_ad = None
                 st.session_state.klasor_id = 0
+                st.session_state.klasor_ad = None
                 st.session_state.klasor_gecmisi = []
 
             def _klasorde_geri_git():
@@ -2794,18 +2798,16 @@ if st.session_state.active_main_tab == "urun_sec":
                 _onceki = _gecmis.pop()
                 st.session_state.klasor_gecmisi = _gecmis
                 st.session_state.klasor_id = _onceki["id"]
+                st.session_state.klasor_ad = _onceki.get("ad") or st.session_state.magaza_ad
 
             def _klasoru_ac(_folder_id, _folder_ad):
-                _mevcut_klasor_ad = (
-                    st.session_state.klasor_gecmisi[-1]["ad"]
-                    if st.session_state.klasor_gecmisi
-                    else (st.session_state.magaza_ad or "")
-                )
+                _mevcut_klasor_ad = st.session_state.get("klasor_ad") or st.session_state.magaza_ad or ""
                 st.session_state.klasor_gecmisi = [
                     *st.session_state.klasor_gecmisi,
                     {"id": st.session_state.klasor_id, "ad": _mevcut_klasor_ad},
                 ]
                 st.session_state.klasor_id = _folder_id
+                st.session_state.klasor_ad = _folder_ad
                 st.rerun(scope="app")
 
             def _klasorleri_yenile():
@@ -3107,7 +3109,10 @@ if st.session_state.active_main_tab == "urun_sec":
                     )
 
                 # Breadcrumb — metin olarak göster; link kullanma yoksa tarayici yeni sekme aciyor.
-                _crumb_items = [_magaza_adi] + [g["ad"] for g in gecmis]
+                _aktif_klasor_adi = st.session_state.get("klasor_ad") or _magaza_adi
+                _crumb_items = [_magaza_adi] + [g["ad"] for g in gecmis if str(g.get("ad") or "").strip()]
+                if _aktif_klasor_adi and (_crumb_items[-1] if _crumb_items else None) != _aktif_klasor_adi:
+                    _crumb_items.append(_aktif_klasor_adi)
                 _bc_parts = []
                 for _ci, _label in enumerate(_crumb_items):
                     _short = (_label[:18] + "…") if len(_label) > 19 else _label
