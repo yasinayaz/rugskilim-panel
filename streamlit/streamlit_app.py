@@ -1367,10 +1367,16 @@ if st.session_state.get("kuyruk_magaza_id") != st.session_state.hedef_magaza_id:
 if not st.session_state.get("sheet_renk_durumlari") and st.session_state.get("kuyruga_eklenenler"):
     st.session_state.kuyruk_yuklendi = False
 
-if not st.session_state.get("kuyruk_yuklendi"):
+
+def _kuyruk_cache_hazirla(store_id: str | None = None, force: bool = False):
+    hedef_magaza = str(store_id or st.session_state.hedef_magaza_id or "").strip()
+    if not hedef_magaza:
+        return
+    if not force and st.session_state.get("kuyruk_yuklendi") and st.session_state.get("kuyruk_magaza_id") == hedef_magaza:
+        return
     try:
         from shared.sheets import SheetsKatmani
-        _sk_init = SheetsKatmani(st.session_state.hedef_magaza_id)
+        _sk_init = SheetsKatmani(hedef_magaza)
         _sk_init.sheet_hazirla()
         _satirlar_init = _sk_init.tum_satirlar_al()
 
@@ -1392,7 +1398,7 @@ if not st.session_state.get("kuyruk_yuklendi"):
         }
         st.session_state.sheet_renk_durumlari = {}
         st.session_state.klasor_id_durumlari = {}
-        st.session_state.kuyruk_magaza_id = st.session_state.hedef_magaza_id
+        st.session_state.kuyruk_magaza_id = hedef_magaza
     except Exception:
         pass
     st.session_state["kuyruk_yuklendi"] = True
@@ -1879,11 +1885,8 @@ def _sheet_green_kodlari_cached(store_id: str) -> list[str]:
     return sorted(set(yuklu_kodlar))
 
 
-def _urunler_tab_canli_magaza_haritasi(store_ids: list[str]) -> dict[str, set[str]]:
-    """
-    Sheet'te yesil olan urunleri magaza bazinda urunler tabi icin haritalar.
-    Boylesi envanter cache eksik/stale olsa bile urunler tabi dogru magazalari gosterir.
-    """
+@st.cache_data(ttl=90, show_spinner=False)
+def _sheet_green_haritasi_cached(store_ids: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
     sonuc: dict[str, set[str]] = {}
     for store_id in store_ids:
         sid = str(store_id or "").strip()
@@ -1893,9 +1896,28 @@ def _urunler_tab_canli_magaza_haritasi(store_ids: list[str]) -> dict[str, set[st
             for kod in _sheet_green_kodlari_cached(sid):
                 sonuc.setdefault(kod, set()).add(sid)
         except Exception:
-            # Bu tabloda tek magazanin hata vermesi tum ekrani bozmamali.
             continue
-    return sonuc
+    return {
+        kod: tuple(sorted(magazalar))
+        for kod, magazalar in sonuc.items()
+    }
+
+
+def _urunler_tab_canli_magaza_haritasi(store_ids: list[str]) -> dict[str, set[str]]:
+    """
+    Sheet'te yesil olan urunleri magaza bazinda urunler tabi icin haritalar.
+    Boylesi envanter cache eksik/stale olsa bile urunler tabi dogru magazalari gosterir.
+    """
+    temiz_store_ids = tuple(
+        sid for sid in (str(store_id or "").strip() for store_id in store_ids)
+        if sid
+    )
+    if not temiz_store_ids:
+        return {}
+    return {
+        kod: set(magazalar)
+        for kod, magazalar in _sheet_green_haritasi_cached(temiz_store_ids).items()
+    }
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -2915,7 +2937,7 @@ if st.session_state.active_main_tab == "urun_sec":
             if not st.session_state.magaza_id:
                 _tab_loading_gostergesi(
                     "Ürün Seç",
-                    35,
+                    20,
                     "Mağaza klasörleri hazırlanıyor. Yükleme tamamlanınca seçim yapabilirsiniz.",
                     ready=False,
                 )
@@ -2938,11 +2960,13 @@ if st.session_state.active_main_tab == "urun_sec":
                         )
 
             else:
+                if not st.session_state.get("kuyruk_yuklendi") or st.session_state.get("kuyruk_magaza_id") != st.session_state.hedef_magaza_id:
+                    _kuyruk_cache_hazirla(st.session_state.hedef_magaza_id)
                 _tab_loading_gostergesi(
                     "Ürün Seç",
-                    100,
-                    "Klasör gezgini hazır. Alt ve üst klasörler arasında geçiş yapabilirsiniz.",
-                    ready=True,
+                    65 if st.session_state.get("kuyruk_yuklendi") else 40,
+                    "Klasör gezgini ve mağaza durum işaretleri hazırlanıyor.",
+                    ready=bool(st.session_state.get("kuyruk_yuklendi")),
                 )
                 # ── KLASÖR GEZGİNİ ────────────────────────────────────────────
                 gecmis = st.session_state.klasor_gecmisi
@@ -3233,6 +3257,7 @@ if st.session_state.active_main_tab == "urun_sec":
 if st.session_state.active_main_tab == "kuyruk":
     @st.fragment
     def _tab2_kuyruk():
+        _kuyruk_cache_hazirla(st.session_state.hedef_magaza_id)
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
         _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui"))
         if _force_queue_refresh or _queue_loading_ui:
@@ -3526,24 +3551,6 @@ if st.session_state.active_main_tab == "urunler":
             _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > float((_envanter_cache_dosyadan_yukle() or {}).get("updated_at") or 0.0))
             _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
 
-        if _force_store_refresh or _urunler_loading_ui:
-            st.markdown(
-                """
-                <div class="loading-panel">
-                  <div class="loading-title">Urunler yukleniyor</div>
-                  <div class="loading-text">
-                    Urun listesi aciliyor. Magaza yuk durumlari arka planda yenileniyor;
-                    yesil noktalar ve yuklu sayilari kisa sure sonra netlesebilir.
-                  </div>
-                  <div class="loading-dots">
-                    <span class="loading-dot"></span>
-                    <span class="loading-dot"></span>
-                    <span class="loading-dot"></span>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
         try:
             with st.spinner("Urunler ve magaza durumlari yenileniyor..."):
                 urunler = _urunleri_yukle(
