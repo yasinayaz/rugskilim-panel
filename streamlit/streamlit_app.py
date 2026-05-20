@@ -803,7 +803,7 @@ def _urunler_sync_degisikligini_uygula() -> bool:
     st.session_state["_urunler_pending_sync_version"] = ""
     _urun_katalog_cache_temizle()
     st.session_state["_urunler_loading_ui"] = False
-    st.rerun()
+    st.rerun(scope="app")
     return True
 
 
@@ -3966,7 +3966,6 @@ if st.session_state.active_main_tab == "urunler":
         st.session_state.setdefault("_canli_harita_shown_ts", _harita_file_ts)
         _harita_stale_su_an = (_time.time() - _harita_file_ts) > _CANLI_HARITA_TTL_SN
         st.session_state["_urun_edit_dialog_acik"] = False
-        _urunler_sync_degisikligini_uygula()
 
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         _envanter_cache = _envanter_cache_dosyadan_yukle()
