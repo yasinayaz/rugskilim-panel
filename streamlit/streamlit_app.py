@@ -552,6 +552,7 @@ for k, v in [
     ("_urun_katalog_cache_ts", 0.0),
     ("_urun_katalog_cache_stok_mtime", 0.0),
     ("_urunler_magaza_refresh_started_at", 0.0),
+    ("active_main_tab", "urun_sec"),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1858,6 +1859,45 @@ def _sheetten_magaza_store_status_oku(store_id: str, store_name: str = "") -> di
     return sonuc
 
 
+@st.cache_data(ttl=90, show_spinner=False)
+def _sheet_green_kodlari_cached(store_id: str) -> list[str]:
+    """
+    Urunler tabinda magazaya yuklu urunleri gorurken tek gercek kaynak olarak
+    Sheet'teki green satirlari baz alir. Kisa sureli cache ile UI'yi bloklamamaya
+    calisir, ama cache bayatlayinca yeniden Sheet okur.
+    """
+    durumlar = _sheetten_magaza_store_status_oku(store_id, "")
+    yuklu_kodlar = []
+    for raw_code, satir in durumlar.items():
+        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+        if not kod:
+            continue
+        renk = str((satir or {}).get("renk") or "").strip().lower()
+        durum = str((satir or {}).get("status") or "").strip().lower()
+        if renk == "green" or durum == "done":
+            yuklu_kodlar.append(kod)
+    return sorted(set(yuklu_kodlar))
+
+
+def _urunler_tab_canli_magaza_haritasi(store_ids: list[str]) -> dict[str, set[str]]:
+    """
+    Sheet'te yesil olan urunleri magaza bazinda urunler tabi icin haritalar.
+    Boylesi envanter cache eksik/stale olsa bile urunler tabi dogru magazalari gosterir.
+    """
+    sonuc: dict[str, set[str]] = {}
+    for store_id in store_ids:
+        sid = str(store_id or "").strip()
+        if not sid:
+            continue
+        try:
+            for kod in _sheet_green_kodlari_cached(sid):
+                sonuc.setdefault(kod, set()).add(sid)
+        except Exception:
+            # Bu tabloda tek magazanin hata vermesi tum ekrani bozmamali.
+            continue
+    return sonuc
+
+
 def _supabase_kuyruk_satirlari(store_id: str):
     from shared.product_catalog import StoreCatalog, _supabase_ready
 
@@ -2457,6 +2497,35 @@ def _kuyruk_badge(status: str) -> str:
     cls, lbl = _KUYRUK_BADGE.get(status, ("badge-other", status))
     return f'<span class="folder-badge {cls}">{lbl}</span>'
 
+
+def _main_tab_sec(tab_id: str):
+    st.session_state.active_main_tab = tab_id
+
+
+def _tab_loading_gostergesi(title: str, percent: int, detail: str, ready: bool = False):
+    durum = "Hazır" if ready else f"%{max(0, min(100, int(percent)))}"
+    renk = "#22c55e" if ready else "#f59e0b"
+    oran = max(0, min(100, int(percent)))
+    st.markdown(
+        f"""
+        <div style="display:flex;justify-content:flex-end;margin:0 0 10px;">
+          <div style="min-width:250px;max-width:320px;background:#111827;border:1px solid #374151;
+                      border-radius:12px;padding:10px 12px;box-shadow:0 6px 18px rgba(0,0,0,0.22);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div style="font-size:0.82rem;font-weight:700;color:#e5e7eb;">{title}</div>
+              <div style="font-size:0.78rem;font-weight:700;color:{renk};">{durum}</div>
+            </div>
+            <div style="margin-top:8px;height:6px;border-radius:999px;background:#1f2937;overflow:hidden;">
+              <div style="width:{oran}%;height:100%;background:{renk};transition:width .18s ease;"></div>
+            </div>
+            <div style="margin-top:7px;font-size:0.74rem;color:#9ca3af;line-height:1.3;">{detail}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ── Image preview dialog ──────────────────────────────────────────────────────
 @st.dialog("🖼️ Resim Önizleme", width="large")
 def _onizleme_dialog(token, host, klasor):
@@ -2483,38 +2552,32 @@ def _onizleme_dialog(token, host, klasor):
 
 # ── TABLAR ────────────────────────────────────────────────────────────────────
 _okunmamis_not_sayisi = _okunmamis_not_sayisi_cacheden_al()
-if _okunmamis_not_sayisi:
-    st.markdown(
-        """
-        <style>
-        .stTabs [data-baseweb="tab-list"] > button:nth-child(5) {
-          background: #450a0a !important;
-          color: #fecaca !important;
-          border: 1px solid #ef4444 !important;
-        }
-        .stTabs [data-baseweb="tab-list"] > button:nth-child(5)[aria-selected="true"] {
-          background: #7f1d1d !important;
-          color: #ffffff !important;
-          border: 1px solid #ef4444 !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+_notlar_etiketi = f"📝  Notlar ({_okunmamis_not_sayisi})" if _okunmamis_not_sayisi else "📝  Notlar"
+
+_main_tabs = [
+    ("urun_sec", "📦  Ürün Seç"),
+    ("urunler", "🗂️  Ürünler"),
+    ("olcu_ara", "🔍  Ölçü Ara"),
+    ("kuyruk", "📋  Kuyruk"),
+    ("ayarlar", "⚙️  Ayarlar"),
+    ("notlar", _notlar_etiketi),
+]
+_tab_cols = st.columns(len(_main_tabs))
+for _col, (_tab_id, _tab_label) in zip(_tab_cols, _main_tabs):
+    _is_active = st.session_state.active_main_tab == _tab_id
+    _col.button(
+        _tab_label,
+        key=f"main_tab_btn_{_tab_id}",
+        width="stretch",
+        type="primary" if _is_active else "secondary",
+        on_click=_main_tab_sec,
+        args=(_tab_id,),
     )
 
-_notlar_etiketi = f"📝  Notlar ({_okunmamis_not_sayisi})" if _okunmamis_not_sayisi else "📝  Notlar"
-tab_urunler, tab_urun_sec, tab_olcu_ara, tab_kuyruk, tab_ayarlar, tab_notlar = st.tabs([
-    "🗂️  Ürünler",
-    "📦  Ürün Seç",
-    "🔍  Ölçü Ara",
-    "📋  Kuyruk",
-    "⚙️  Ayarlar",
-    _notlar_etiketi,
-])
-
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
-with tab_urun_sec:
+if st.session_state.active_main_tab == "urun_sec":
     if not st.session_state.pcloud_token:
+        _tab_loading_gostergesi("Ürün Seç", 100, "pCloud bağlantısı bekleniyor. Giriş ekranı hazır.", ready=True)
         # ── Login formu ──
         st.markdown("<div style='max-width:480px;margin:40px auto;'>", unsafe_allow_html=True)
         st.markdown("### pCloud Bağlantısı")
@@ -2849,6 +2912,12 @@ with tab_urun_sec:
 
             # ── KAYNAK MAĞAZA SEÇİMİ ──────────────────────────────────────────
             if not st.session_state.magaza_id:
+                _tab_loading_gostergesi(
+                    "Ürün Seç",
+                    35,
+                    "Mağaza klasörleri hazırlanıyor. Yükleme tamamlanınca seçim yapabilirsiniz.",
+                    ready=False,
+                )
                 _host_m = st.session_state.get("pcloud_host", "https://api.pcloud.com")
                 st.markdown("<div class='section-label'>pCloud Kaynak Klasörü</div>", unsafe_allow_html=True)
                 st.caption(f"Hedef: **{st.session_state.hedef_magaza_id}** — Ürünlerin bulunduğu pCloud mağaza klasörünü seçin.")
@@ -2868,6 +2937,12 @@ with tab_urun_sec:
                         )
 
             else:
+                _tab_loading_gostergesi(
+                    "Ürün Seç",
+                    100,
+                    "Klasör gezgini hazır. Alt ve üst klasörler arasında geçiş yapabilirsiniz.",
+                    ready=True,
+                )
                 # ── KLASÖR GEZGİNİ ────────────────────────────────────────────
                 gecmis = st.session_state.klasor_gecmisi
 
@@ -3154,7 +3229,7 @@ with tab_urun_sec:
 
 
 # ══ TAB 2 ════════════════════════════════════════════════════════════════════
-with tab_kuyruk:
+if st.session_state.active_main_tab == "kuyruk":
     @st.fragment
     def _tab2_kuyruk():
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
@@ -3337,7 +3412,7 @@ with tab_kuyruk:
 
 
 # ══ TAB 3 ════════════════════════════════════════════════════════════════════
-with tab_urunler:
+if st.session_state.active_main_tab == "urunler":
     @st.dialog("Ürün Düzenle", width="large")
     def _urun_edit_dialog(urun: dict):
         import time as _t
@@ -3437,6 +3512,21 @@ with tab_urunler:
         _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
         _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
+        _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
+        if _urunler_loading_ui:
+            _tab_loading_gostergesi(
+                "Ürünler",
+                55 if _urunler_cache_var else 20,
+                "Ürün listesi ve mağaza yük durumları arka planda güncelleniyor.",
+                ready=False,
+            )
+        else:
+            _tab_loading_gostergesi(
+                "Ürünler",
+                100,
+                "Ürün listesi hazır. Filtreleme ve düzenleme kullanılabilir.",
+                ready=True,
+            )
 
         if _force_store_refresh or _envanter_cache_stale_mi(_envanter_cache) or not ((_envanter_cache or {}).get("stores") or {}):
             _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
@@ -3685,17 +3775,7 @@ with tab_urunler:
                     if magaza.strip()
                 })
 
-            envanter_cache = _envanter_cache_dosyadan_yukle()
-            canli_magaza_haritasi = {}
-            for magaza in magaza_adlari:
-                store_data = ((envanter_cache.get("stores") or {}).get(magaza) or {})
-                for kod, magaza_urun in (store_data.get("urunler") or {}).items():
-                    norm_kod = _urun_kodu_normalize(kod) or _urun_kodu_al(kod)
-                    if not norm_kod:
-                        continue
-                    if str((magaza_urun or {}).get("renk") or "").strip().lower() != "green":
-                        continue
-                    canli_magaza_haritasi.setdefault(norm_kod, set()).add(magaza)
+            canli_magaza_haritasi = _urunler_tab_canli_magaza_haritasi(magaza_adlari)
 
             try:
                 import pandas as pd
@@ -4022,7 +4102,7 @@ with tab_urunler:
 
 
 # ══ TAB 4 ════════════════════════════════════════════════════════════════════
-with tab_ayarlar:
+if st.session_state.active_main_tab == "ayarlar":
     _store_tab, _api_tab = st.tabs(["Mağaza Yönetimi", "API"])
 
     with _api_tab:
@@ -4661,7 +4741,7 @@ with tab_ayarlar:
 
 
 # ══ TAB 5 ════════════════════════════════════════════════════════════════════
-with tab_olcu_ara:
+if st.session_state.active_main_tab == "olcu_ara":
     @st.fragment
     def _tab5_ara():
         import pandas as pd
@@ -4853,7 +4933,7 @@ with tab_olcu_ara:
 
 
 # ══ TAB 6 ════════════════════════════════════════════════════════════════════
-with tab_notlar:
+if st.session_state.active_main_tab == "notlar":
     @st.fragment
     def _tab6_notlar():
         st.markdown("#### Satılan Ürün Notları")
