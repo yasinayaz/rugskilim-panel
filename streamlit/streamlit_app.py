@@ -2503,6 +2503,8 @@ def _main_tab_sec(tab_id: str):
 
 
 def _tab_loading_gostergesi(title: str, percent: int, detail: str, ready: bool = False):
+    if ready:
+        return
     durum = "Hazır" if ready else f"%{max(0, min(100, int(percent)))}"
     renk = "#22c55e" if ready else "#f59e0b"
     oran = max(0, min(100, int(percent)))
@@ -2620,7 +2622,6 @@ if st.session_state.active_main_tab == "urun_sec":
                     st.warning("E-posta ve şifre girin.")
         st.markdown("</div>", unsafe_allow_html=True)
     else:
-        @st.fragment
         def _tab1_gezgin():
             token = st.session_state.pcloud_token
 
@@ -3504,7 +3505,6 @@ if st.session_state.active_main_tab == "urunler":
                 st.session_state.pop("_sil_onay", None)
                 st.rerun()
 
-    @st.fragment
     def _tab3_urunler():
         _force_store_refresh = bool(st.session_state.pop("_urunler_store_refresh", False))
         _envanter_cache = _envanter_cache_dosyadan_yukle()
@@ -3520,14 +3520,6 @@ if st.session_state.active_main_tab == "urunler":
                 "Ürün listesi ve mağaza yük durumları arka planda güncelleniyor.",
                 ready=False,
             )
-        else:
-            _tab_loading_gostergesi(
-                "Ürünler",
-                100,
-                "Ürün listesi hazır. Filtreleme ve düzenleme kullanılabilir.",
-                ready=True,
-            )
-
         if _force_store_refresh or _envanter_cache_stale_mi(_envanter_cache) or not ((_envanter_cache or {}).get("stores") or {}):
             _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
             _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
@@ -3588,7 +3580,7 @@ if st.session_state.active_main_tab == "urunler":
                 type="primary" if _liste_aktif else "secondary",
             ):
                 st.session_state.urun_alt_tab = "liste"
-                st.rerun(scope="fragment")
+                st.rerun()
             if _b2.button(
                 "Satılan Ürünler",
                 key="urun_alt_tab_satilan",
@@ -3596,7 +3588,7 @@ if st.session_state.active_main_tab == "urunler":
                 type="primary" if _satilan_aktif else "secondary",
             ):
                 st.session_state.urun_alt_tab = "satilan"
-                st.rerun(scope="fragment")
+                st.rerun()
         with _stats_col:
             st.markdown(
                 "<div class='compact-stats' style='justify-content:flex-start; flex-wrap:nowrap; margin:0;'>"
@@ -3612,7 +3604,7 @@ if st.session_state.active_main_tab == "urunler":
                 _urun_katalog_cache_temizle()
                 st.session_state["_urunler_loading_ui"] = True
                 st.session_state["_urunler_store_refresh"] = True
-                st.rerun(scope="fragment")
+                st.rerun()
         with _btn_col:
             if _liste_aktif:
                 if st.button(
@@ -3621,7 +3613,7 @@ if st.session_state.active_main_tab == "urunler":
                     key="urun_form_toggle_btn",
                 ):
                     st.session_state.urun_formu_acik = not st.session_state.urun_formu_acik
-                    st.rerun(scope="fragment")
+                    st.rerun()
 
         if st.session_state.urun_alt_tab == "liste":
             if st.session_state.urun_formu_acik:
@@ -3643,7 +3635,7 @@ if st.session_state.active_main_tab == "urunler":
                     if _fclr.button("🗑 Temizle", key="nuf_temizle_btn", use_container_width=True):
                         for _k, _dv in _NUF.items():
                             st.session_state[_k] = _dv
-                        st.rerun(scope="fragment")
+                        st.rerun()
 
                     with st.form("new_product_quick_add_form", clear_on_submit=True):
                         _f1, _f2, _f3 = st.columns(3)
@@ -3921,7 +3913,7 @@ if st.session_state.active_main_tab == "urunler":
                     use_container_width=True,
                 ):
                     st.session_state.satilan_urun_formu_acik = not st.session_state.satilan_urun_formu_acik
-                    st.rerun(scope="fragment")
+                    st.rerun()
 
                 if st.session_state.satilan_urun_formu_acik:
                     st.divider()
