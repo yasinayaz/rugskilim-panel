@@ -1133,10 +1133,11 @@ def _urunleri_kaydet(products: list[dict], *, incremental: bool = False, sync_sh
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
 
 
-def _urunleri_cachede_uste_tut(urun: dict):
+def _urunleri_cachede_uste_tut(urun: dict, *, remove_code: str | None = None):
     kod = str((urun or {}).get("product_code") or "").strip()
     if not kod:
         return
+    silinecek_eski = str(remove_code or "").strip()
 
     mevcut_cache = st.session_state.get("_urun_katalog_cache")
     if mevcut_cache is None:
@@ -1147,7 +1148,7 @@ def _urunleri_cachede_uste_tut(urun: dict):
     yeni_liste = [dict(urun)]
     yeni_liste.extend(
         item for item in mevcut
-        if str(item.get("product_code") or "").strip() != kod
+        if str(item.get("product_code") or "").strip() not in {kod, silinecek_eski}
     )
     yeni_liste = _silinenleri_filtrele(yeni_liste)
 
@@ -1188,6 +1189,70 @@ def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = Fal
     _threading.Thread(target=_job, daemon=True, name="urun-kaydet").start()
 
 
+def _urun_guncelle_arkaplanda(urun: dict, *, old_code: str | None = None):
+    payload = dict(urun or {})
+    eski_kod = str(old_code or "").strip()
+
+    def _job():
+        from shared.product_catalog import ProductCatalog as _PC_BG, _supabase_ready as _supabase_ready_bg
+        import requests as _req_bg
+
+        try:
+            if _supabase_ready_bg():
+                yeni_kod = str(payload.get("product_code") or "").strip()
+                if eski_kod and yeni_kod and eski_kod != yeni_kod:
+                    _supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+                    _supa_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                    _rename_resp = _req_bg.patch(
+                        f"{_supa_url}/rest/v1/products",
+                        headers={
+                            "apikey": _supa_key,
+                            "Authorization": f"Bearer {_supa_key}",
+                            "Content-Type": "application/json",
+                            "Prefer": "return=minimal",
+                        },
+                        params={"product_code": f"eq.{eski_kod}"},
+                        json={"product_code": yeni_kod},
+                        timeout=30,
+                    )
+                    _rename_resp.raise_for_status()
+                _PC_BG().upsert_products([payload])
+                _urun_sheet_sync_arkaplanda(force=True)
+            else:
+                _urunleri_kaydet([payload], incremental=True, sync_sheet=False)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urun-guncelle").start()
+
+
+def _urun_sil_arkaplanda(kod: str):
+    silinecek_kod = str(kod or "").strip()
+
+    def _job():
+        from shared.product_catalog import ProductCatalog as _PC_DEL, StoreCatalog as _SC_DEL, _supabase_ready as _supabase_ready_del
+
+        try:
+            if _supabase_ready_del():
+                _PC_DEL().delete_products([silinecek_kod])
+                try:
+                    for _magaza in _SC_DEL().as_inventory_cache().get("stores", {}).keys():
+                        _SC_DEL().delete(_magaza, [silinecek_kod])
+                except Exception:
+                    pass
+                _urun_sheet_sync_arkaplanda(force=True)
+            else:
+                _yerel = [
+                    item for item in _panel_urunleri_yerden_yukle()
+                    if str(item.get("product_code") or "").strip() != silinecek_kod
+                ]
+                _json_kaydet(_RUNTIME_DIR / "panel_products.json", _yerel)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urun-sil").start()
+
+
 def _urunler_magaza_yenilemesini_baslat(force: bool = False):
     dosya_cache = _envanter_cache_dosyadan_yukle()
     son_baslangic = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
@@ -1211,6 +1276,21 @@ def _urun_katalog_cache_temizle():
     st.session_state["_urun_katalog_cache"] = None
     st.session_state["_urun_katalog_cache_ts"] = 0.0
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _kuyruk_satirlari_cached(store_id: str):
+    from shared.product_catalog import _supabase_ready
+    from shared.sheets import SheetsKatmani as _SK_QUEUE_CACHE
+
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return []
+
+    satirlar = _supabase_kuyruk_satirlari(store_id) if _supabase_ready() else None
+    if satirlar is None:
+        satirlar = _SK_QUEUE_CACHE(store_id).tum_satirlar_al()
+    return satirlar or []
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2014,6 +2094,53 @@ def _supabase_kuyruk_satirlari(store_id: str):
         reverse=True,
     )
     return satirlar
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _olcu_ara_kaynaklari_cached(urunler_sig):
+    from shared.product_catalog import derive_category_from_dimensions
+
+    arama_kaynaklari = []
+    atlanan_ft = 0
+    toplam = 0
+    satilan = 0
+    for urun in [dict(item) for item in (urunler_sig or [])]:
+        toplam += 1
+        if str(urun.get("status", "")).strip().lower() == "sold":
+            satilan += 1
+            continue
+
+        width_ft = _float_or_none(urun.get("width_ft"))
+        length_ft = _float_or_none(urun.get("length_ft"))
+        if width_ft is None or length_ft is None:
+            atlanan_ft += 1
+            continue
+
+        category = str(urun.get("category") or "").strip() or derive_category_from_dimensions(
+            width_cm=urun.get("width_cm"),
+            length_cm=urun.get("length_cm"),
+            width_ft=width_ft,
+            length_ft=length_ft,
+            area_m2=urun.get("area_m2"),
+            source_tab=urun.get("source_tab", ""),
+        )
+        arama_kaynaklari.append({
+            "kod": str(urun.get("product_code") or "").strip(),
+            "cm": str(urun.get("size_cm") or "").strip(),
+            "ft": str(urun.get("size_ft") or _fmt_size(width_ft, length_ft, digits=1)).strip(),
+            "ft1": width_ft,
+            "ft2": length_ft,
+            "tur": _kategori_etiketi(category),
+            "loaded_store_count": int(urun.get("loaded_store_count") or 0),
+            "loaded_stores": str(urun.get("loaded_stores") or "").strip(),
+            "note": str(urun.get("note") or "").strip(),
+        })
+    return {
+        "arama_kaynaklari": arama_kaynaklari,
+        "atlanan_ft": atlanan_ft,
+        "toplam": toplam,
+        "satilan": satilan,
+    }
 
 
 def _magaza_envanterini_topla(force: bool = False, store_ids: list[str] | None = None):
@@ -3252,28 +3379,15 @@ if st.session_state.active_main_tab == "urun_sec":
 
 # ══ TAB 2 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "kuyruk":
-    @st.fragment
     def _tab2_kuyruk():
-        _kuyruk_cache_hazirla(st.session_state.hedef_magaza_id)
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
-        _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui"))
-        if _force_queue_refresh or _queue_loading_ui:
-            st.markdown(
-                """
-                <div class="loading-panel">
-                  <div class="loading-title">Kuyruk yenileniyor</div>
-                  <div class="loading-text">
-                    Sheets ve magaza durumlari yeniden okunuyor.
-                    Bu sirada tablo kisa sureli bos gorunse bile islem devam ediyor.
-                  </div>
-                  <div class="loading-dots">
-                    <span class="loading-dot"></span>
-                    <span class="loading-dot"></span>
-                    <span class="loading-dot"></span>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+        _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui")) or _force_queue_refresh
+        if _queue_loading_ui:
+            _tab_loading_gostergesi(
+                "Kuyruk",
+                45,
+                "Sheets ve mağaza durumları yenileniyor. Son bilinen tablo korunuyor.",
+                ready=False,
             )
         _t2h1, _t2h2 = st.columns([5, 1])
         _t2h1.markdown(
@@ -3286,21 +3400,23 @@ if st.session_state.active_main_tab == "kuyruk":
         if yenile_btn:
             st.session_state["_kuyruk_loading_ui"] = True
             st.session_state["_kuyruk_refresh_istek"] = True
-            st.rerun(scope="fragment")
+            _kuyruk_satirlari_cached.clear()
+            st.rerun()
 
         try:
-            try:
-                _magaza_renk_cache_yenile(st.session_state.hedef_magaza_id)
-            except Exception:
-                pass
             import pandas as pd
             from shared.product_catalog import _supabase_ready
             from shared.sheets import SheetsKatmani as _SK2
 
-            satirlar = _supabase_kuyruk_satirlari(st.session_state.hedef_magaza_id) if _supabase_ready() else None
+            if _force_queue_refresh:
+                _kuyruk_cache_hazirla(st.session_state.hedef_magaza_id, force=True)
+                try:
+                    _magaza_renk_cache_yenile(st.session_state.hedef_magaza_id)
+                except Exception:
+                    pass
+
+            satirlar = _kuyruk_satirlari_cached(st.session_state.hedef_magaza_id)
             _sk2 = _SK2(st.session_state.hedef_magaza_id)
-            if satirlar is None:
-                satirlar = _sk2.tum_satirlar_al()
             _yuklu_kodlar = _magaza_yuklu_kodlari_al(
                 st.session_state.hedef_magaza_id,
                 include_blocked=True,
@@ -3420,6 +3536,7 @@ if st.session_state.active_main_tab == "kuyruk":
                             st.session_state.kuyruk_klasor_durumlari = {}
                             st.session_state.klasor_id_durumlari = {}
                             st.session_state.kuyruk_yuklendi = False
+                            _kuyruk_satirlari_cached.clear()
                             st.success(f"✅ {silinen} satır silindi.")
                             st.rerun()
                         except Exception as e:
@@ -3449,8 +3566,6 @@ if st.session_state.active_main_tab == "urunler":
 
         _es1, _es2, _es3 = st.columns([2, 2, 1])
         if _es1.button("Kaydet", type="primary", use_container_width=True):
-            from shared.product_catalog import ProductCatalog as _PC
-            import requests as _req, os as _os
             _new_code = _yeni_kod.strip()
             _derived = _derived_product_fields(_cm_gen, _cm_uz)
             if not _new_code:
@@ -3469,22 +3584,11 @@ if st.session_state.active_main_tab == "urunler":
             }
             _old_code = urun.get("product_code", "")
             if _new_code and _new_code != _old_code:
-                _supa_url = _os.environ.get("SUPABASE_URL", "").rstrip("/")
-                _supa_key = _os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-                _rename_resp = _req.patch(
-                    f"{_supa_url}/rest/v1/products",
-                    headers={"apikey": _supa_key, "Authorization": f"Bearer {_supa_key}",
-                             "Content-Type": "application/json", "Prefer": "return=minimal"},
-                    params={"product_code": f"eq.{_old_code}"},
-                    json={"product_code": _new_code},
-                    timeout=30,
-                )
-                _rename_resp.raise_for_status()
                 _updated["product_code"] = _new_code
-            _PC().upsert_products([_updated])
-            _urun_sheet_sync_arkaplanda(force=True)
-            _urun_katalog_cache_temizle()
-            st.success("Kaydedildi.")
+            _silinen_urunden_cikar(_updated.get("product_code", ""))
+            _urunleri_cachede_uste_tut(_updated, remove_code=_old_code)
+            _urun_guncelle_arkaplanda(_updated, old_code=_old_code)
+            st.success("Kaydedildi. Kalıcı kayıt arka planda tamamlanıyor.")
             st.rerun()
         if _es2.button("İptal", use_container_width=True):
             st.rerun()
@@ -3499,25 +3603,18 @@ if st.session_state.active_main_tab == "urunler":
             st.warning(f"**{urun.get('product_code')}** silinecek. Emin misiniz?")
             _so1, _so2 = st.columns(2)
             if _so1.button("Evet, sil", type="primary", use_container_width=True):
-                from shared.product_catalog import ProductCatalog as _PC2, StoreCatalog as _SC2, _supabase_ready as _supabase_ready2
                 _silinecek_kod = str(urun.get("product_code") or "").strip()
                 try:
-                    if _supabase_ready2():
-                        _PC2().delete_products([_silinecek_kod])
-                        try:
-                            for _magaza in _SC2().as_inventory_cache().get("stores", {}).keys():
-                                _SC2().delete(_magaza, [_silinecek_kod])
-                        except Exception:
-                            pass
-                        _urun_sheet_sync_arkaplanda(force=True)
-                    else:
-                        _yerel = [
-                            item for item in _panel_urunleri_yerden_yukle()
-                            if str(item.get("product_code") or "").strip() != _silinecek_kod
-                        ]
-                        _json_kaydet(_RUNTIME_DIR / "panel_products.json", _yerel)
                     _silinen_urune_ekle(_silinecek_kod)
-                    _urun_katalog_cache_temizle()
+                    mevcut = [
+                        item for item in (_panel_urunleri_yerden_yukle() if st.session_state.get("_urun_katalog_cache") is None else st.session_state.get("_urun_katalog_cache") or [])
+                        if str(item.get("product_code") or "").strip() != _silinecek_kod
+                    ]
+                    st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
+                    st.session_state["_urun_katalog_cache_ts"] = _time.time()
+                    st.session_state["_urun_katalog_cache_stok_mtime"] = float(_stok_dosya_yolu().stat().st_mtime) if _stok_dosya_yolu().exists() else 0.0
+                    _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
+                    _urun_sil_arkaplanda(_silinecek_kod)
                     st.session_state.pop("_sil_onay", None)
                     st.session_state["_son_silinen_urun_kodu"] = _silinecek_kod
                     st.rerun()
@@ -4114,9 +4211,26 @@ if st.session_state.active_main_tab == "urunler":
 
 # ══ TAB 4 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "ayarlar":
-    _store_tab, _api_tab = st.tabs(["Mağaza Yönetimi", "API"])
+    st.session_state.setdefault("ayarlar_alt_tab", "magaza")
+    _ayar_btn1, _ayar_btn2 = st.columns(2)
+    if _ayar_btn1.button(
+        "Mağaza Yönetimi",
+        key="ayarlar_alt_magaza",
+        width="stretch",
+        type="primary" if st.session_state.ayarlar_alt_tab == "magaza" else "secondary",
+    ):
+        st.session_state.ayarlar_alt_tab = "magaza"
+        st.rerun()
+    if _ayar_btn2.button(
+        "API",
+        key="ayarlar_alt_api",
+        width="stretch",
+        type="primary" if st.session_state.ayarlar_alt_tab == "api" else "secondary",
+    ):
+        st.session_state.ayarlar_alt_tab = "api"
+        st.rerun()
 
-    with _api_tab:
+    if st.session_state.ayarlar_alt_tab == "api":
         st.markdown("#### API Ayarları")
         with st.form("env_form"):
             gemini = st.text_input("GEMINI_API_KEY", value=os.environ.get("GEMINI_API_KEY", ""), type="password")
@@ -4174,7 +4288,7 @@ if st.session_state.active_main_tab == "ayarlar":
                     unsafe_allow_html=True
                 )
 
-    with _store_tab:
+    if st.session_state.ayarlar_alt_tab == "magaza":
         try:
             from shared.store_manager import tum_magazalar as _tm, magaza_guncelle as _mg, magaza_ekle as _me
             import json as _json2
@@ -4575,9 +4689,34 @@ if st.session_state.active_main_tab == "ayarlar":
                     else:
                         st.info("Buradaki ayarlar tüm mağazaların ortak AI kurallarını belirler. Mağaza bazlı fiyat ve template seçimi mağaza kartlarında kalır.")
 
-                    _preview_tab, _rules_tab, _json_tab = st.tabs(["Ön İzleme", "AI Kurallar", "JSON Gör"])
+                    st.session_state.setdefault("ayarlar_template_tab", "preview")
+                    _tb1, _tb2, _tb3 = st.columns(3)
+                    if _tb1.button(
+                        "Ön İzleme",
+                        key=f"ayar_template_preview_{_secili['store_id']}",
+                        width="stretch",
+                        type="primary" if st.session_state.ayarlar_template_tab == "preview" else "secondary",
+                    ):
+                        st.session_state.ayarlar_template_tab = "preview"
+                        st.rerun()
+                    if _tb2.button(
+                        "AI Kurallar",
+                        key=f"ayar_template_rules_{_secili['store_id']}",
+                        width="stretch",
+                        type="primary" if st.session_state.ayarlar_template_tab == "rules" else "secondary",
+                    ):
+                        st.session_state.ayarlar_template_tab = "rules"
+                        st.rerun()
+                    if _tb3.button(
+                        "JSON Gör",
+                        key=f"ayar_template_json_{_secili['store_id']}",
+                        width="stretch",
+                        type="primary" if st.session_state.ayarlar_template_tab == "json" else "secondary",
+                    ):
+                        st.session_state.ayarlar_template_tab = "json"
+                        st.rerun()
 
-                    with _preview_tab:
+                    if st.session_state.ayarlar_template_tab == "preview":
                         _preview_cfg = _draft_cfg(_tmpl_cfg, _secili["store_id"])
                         if _editor_is_dirty:
                             st.warning("Kaydedilmemiş değişiklikler var. Kaydetmeden başka mağazaya geçemezsin.")
@@ -4650,7 +4789,7 @@ if st.session_state.active_main_tab == "ayarlar":
                                 unsafe_allow_html=True
                             )
 
-                    with _rules_tab:
+                    if st.session_state.ayarlar_template_tab == "rules":
                         if _is_global_ai_template(_tmpl_cfg):
                             st.info("Bu template ortak AI merkezidir. Title, tag, renk/pattern sınıflandırma ve genel prompt kuralları tüm mağazalar için buradan yönetilir.")
                             st.text_area(
@@ -4725,7 +4864,7 @@ if st.session_state.active_main_tab == "ayarlar":
                             st.success(f"✅ Template kaydedildi: {_tmpl_path.name}")
                             st.rerun()
 
-                    with _json_tab:
+                    if st.session_state.ayarlar_template_tab == "json":
                         st.caption("İleri seviye düzenleme. Gerekmedikçe Text Gör sekmesini kullanın.")
                         _tmpl_text = st.text_area(
                             "Template JSON",
@@ -4753,14 +4892,22 @@ if st.session_state.active_main_tab == "ayarlar":
 
 # ══ TAB 5 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "olcu_ara":
-    @st.fragment
     def _tab5_ara():
         import pandas as pd
-        from shared.product_catalog import derive_category_from_dimensions
+
+        _olcu_loading = bool(st.session_state.get("_olcu_ara_loading_ui"))
+        if _olcu_loading:
+            _tab_loading_gostergesi(
+                "Ölçü Ara",
+                35,
+                "Aktif ürün ölçüleri hazırlanıyor. Sonuçlar yerel kaynakla hızla açılacak.",
+                ready=False,
+            )
 
         _gc1, _gc2, _ = st.columns([2, 3, 3])
         if _gc1.button("🔄 Ürünleri Yenile"):
             st.session_state.ara_sonuclari = []
+            st.session_state["_olcu_ara_loading_ui"] = True
             st.rerun()
         _gc2.caption("Kaynak: Supabase `products` tablosundaki aktif ürünler")
 
@@ -4770,37 +4917,29 @@ if st.session_state.active_main_tab == "olcu_ara":
             st.error(f"Ürün kataloğu yüklenemedi: {exc}")
             return
 
-        arama_kaynaklari = []
-        atlanan_ft = 0
-        for urun in katalog_urunleri:
-            if str(urun.get("status", "")).strip().lower() == "sold":
-                continue
-
-            width_ft = _float_or_none(urun.get("width_ft"))
-            length_ft = _float_or_none(urun.get("length_ft"))
-            if width_ft is None or length_ft is None:
-                atlanan_ft += 1
-                continue
-
-            category = str(urun.get("category") or "").strip() or derive_category_from_dimensions(
-                width_cm=urun.get("width_cm"),
-                length_cm=urun.get("length_cm"),
-                width_ft=width_ft,
-                length_ft=length_ft,
-                area_m2=urun.get("area_m2"),
-                source_tab=urun.get("source_tab", ""),
+        _olcu_sig = tuple(
+            (
+                str(urun.get("product_code") or "").strip(),
+                str(urun.get("status") or "").strip(),
+                str(urun.get("size_cm") or "").strip(),
+                str(urun.get("size_ft") or "").strip(),
+                str(urun.get("category") or "").strip(),
+                str(urun.get("loaded_store_count") or "").strip(),
+                str(urun.get("loaded_stores") or "").strip(),
+                str(urun.get("note") or "").strip(),
+                str(urun.get("width_ft") or "").strip(),
+                str(urun.get("length_ft") or "").strip(),
+                str(urun.get("width_cm") or "").strip(),
+                str(urun.get("length_cm") or "").strip(),
+                str(urun.get("area_m2") or "").strip(),
+                str(urun.get("source_tab") or "").strip(),
             )
-            arama_kaynaklari.append({
-                "kod": str(urun.get("product_code") or "").strip(),
-                "cm": str(urun.get("size_cm") or "").strip(),
-                "ft": str(urun.get("size_ft") or _fmt_size(width_ft, length_ft, digits=1)).strip(),
-                "ft1": width_ft,
-                "ft2": length_ft,
-                "tur": _kategori_etiketi(category),
-                "loaded_store_count": int(urun.get("loaded_store_count") or 0),
-                "loaded_stores": str(urun.get("loaded_stores") or "").strip(),
-                "note": str(urun.get("note") or "").strip(),
-            })
+            for urun in katalog_urunleri
+        )
+        _olcu_kaynak = _olcu_ara_kaynaklari_cached(_olcu_sig)
+        arama_kaynaklari = list(_olcu_kaynak.get("arama_kaynaklari") or [])
+        atlanan_ft = int(_olcu_kaynak.get("atlanan_ft") or 0)
+        st.session_state["_olcu_ara_loading_ui"] = False
 
         if not arama_kaynaklari:
             st.warning("Ölçü arama için kullanılabilir aktif ürün bulunamadı.")
@@ -4815,8 +4954,8 @@ if st.session_state.active_main_tab == "olcu_ara":
 
         st.caption(
             f"Aktif ürün: **{len(arama_kaynaklari)}**"
-            f"  |  Toplam katalog: {len(katalog_urunleri)}"
-            f"  |  Satılan: {sum(1 for urun in katalog_urunleri if str(urun.get('status', '')).strip().lower() == 'sold')}"
+            f"  |  Toplam katalog: {_olcu_kaynak.get('toplam', len(katalog_urunleri))}"
+            f"  |  Satılan: {_olcu_kaynak.get('satilan', 0)}"
             f"  |  Ft ölçüsü eksik olduğu için atlanan: {atlanan_ft}"
         )
         st.caption(
@@ -4945,7 +5084,6 @@ if st.session_state.active_main_tab == "olcu_ara":
 
 # ══ TAB 6 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "notlar":
-    @st.fragment
     def _tab6_notlar():
         st.markdown("#### Satılan Ürün Notları")
         st.caption("SATILANLAR tabındaki ürünler ile mağaza envanteri eşleştirilir. Sadece `green` olan ürünler mağazada yüklü kabul edilir.")
@@ -4954,6 +5092,13 @@ if st.session_state.active_main_tab == "notlar":
         _n1, _n2, _n3 = st.columns([2, 1, 4])
         zorla_yenile = _n1.button("🔄 Envanteri Yenile", width="stretch")
         okunmamis_goster = _n2.toggle("Sadece okunmamış", value=False)
+        if zorla_yenile:
+            _tab_loading_gostergesi(
+                "Notlar",
+                50,
+                "Satılan kodlar ile mağaza envanteri yeniden eşleştiriliyor.",
+                ready=False,
+            )
 
         notlar_db, envanter, satilanlar = _satilan_notlarini_uret(force_refresh=zorla_yenile)
         notes = list((notlar_db.get("notes") or {}).values())
