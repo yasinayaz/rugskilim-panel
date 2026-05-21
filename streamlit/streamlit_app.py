@@ -2617,7 +2617,9 @@ def _supabase_magaza_yuklu_sayilari_cached() -> dict[str, int]:
     sayilar: dict[str, int] = {}
     for row in _store_status_rows_cached():
         sid = str(row.get("store_id") or "").strip()
-        if not sid or not _store_status_is_active_loaded(row):
+        # Fiziksel olarak Etsy'de duran ama silinmesi beklenen kayitlari da
+        # magazada yuklu say; ayri sekmede temizlenecekler olarak gosteriyoruz.
+        if not sid or not _store_status_is_loaded(row):
             continue
         sayilar[sid] = sayilar.get(sid, 0) + 1
     return sayilar
@@ -2640,7 +2642,7 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
     sayilar: dict[str, int] = {}
     for row in _store_status_rows_cached():
         sid = str(row.get("store_id") or "").strip()
-        if not sid or not _store_status_is_active_loaded(row):
+        if not sid or not _store_status_is_loaded(row):
             continue
         sayilar[sid] = sayilar.get(sid, 0) + 1
     return sayilar
@@ -2696,7 +2698,7 @@ def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
     for row in _store_status_rows_cached():
         raw_code = str(row.get("product_code") or "").strip()
         kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
-        if not kod or not _store_status_is_active_loaded(row):
+        if not kod or not _store_status_is_loaded(row):
             continue
         harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
     return harita
@@ -5361,7 +5363,7 @@ if st.session_state.active_main_tab == "urunler":
                 toplam_yuklu = sum(loaded_counts.values())
                 toplam_silinecek = len(pending_rows)
                 _m1, _m2 = st.columns(2)
-                _m1.metric("Toplam Aktif Yüklü", toplam_yuklu)
+                _m1.metric("Toplam Yüklü", toplam_yuklu)
                 _m2.metric("Silinmesi Gereken", toplam_silinecek)
 
                 magaza_ozet = []
@@ -5369,7 +5371,7 @@ if st.session_state.active_main_tab == "urunler":
                     magaza_ozet.append({
                         "store_id": store_id,
                         "Mağaza": store_name,
-                        "Aktif Yüklü": int(loaded_counts.get(store_id, 0)),
+                        "Yüklü": int(loaded_counts.get(store_id, 0)),
                         "Silinmesi Gereken": int(pending_counts.get(store_id, 0)),
                     })
 
@@ -5397,7 +5399,7 @@ if st.session_state.active_main_tab == "urunler":
                     detay_satirlari = []
                     for row in store_rows:
                         sid = str(row.get("store_id") or "").strip()
-                        if sid != secili_store or not _store_status_is_active_loaded(row):
+                        if sid != secili_store or not _store_status_is_loaded(row):
                             continue
                         kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
                         urun = urun_map.get(kod, {})
@@ -5424,7 +5426,7 @@ if st.session_state.active_main_tab == "urunler":
                             key=f"indir_magaza_{secili_store}",
                         )
                     else:
-                        st.info("Bu mağazada panelde aktif yüklü ürün görünmüyor.")
+                        st.info("Bu mağazada panelde yüklü ürün görünmüyor.")
             except Exception as exc:
                 st.warning(f"Mağazalar görünümü hazırlanamadı: {exc}")
 
