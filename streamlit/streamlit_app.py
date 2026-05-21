@@ -1494,7 +1494,7 @@ def _urunler_alt_tab_sec(tab_id: str):
 
     _overlay_state_temizle()
     st.session_state.urun_alt_tab = yeni_tab
-    st.session_state["_pending_urunler_alt_tab_render"] = yeni_tab
+    st.session_state["_pending_urunler_alt_tab_render"] = None
 
     if yeni_tab != "liste":
         st.session_state.urun_formu_acik = False
@@ -3911,41 +3911,11 @@ def _main_tab_gecis_ekrani():
 
 
 def _urunler_alt_tab_gecis_ekrani():
-    _tab_labels = {
-        "liste": "Ürün Listesi",
-        "satilan": "Satılan Ürünler",
-        "magazalar": "Mağazalar",
-        "silinecekler": "Silinmesi Gerekenler",
-    }
     aktif_tab = str(st.session_state.get("urun_alt_tab") or "").strip()
     hedef_tab = str(st.session_state.get("_pending_urunler_alt_tab_render") or "").strip()
-    if not aktif_tab or hedef_tab != aktif_tab:
-        return False
-
-    baslik = _tab_labels.get(aktif_tab, "Ürünler")
-    with st.container(key=f"urunler_alt_tab_transition_{aktif_tab}"):
-        st.markdown(
-            f"<div style='padding:4px 0 10px;font-size:0.95rem;font-weight:600;color:#e6edf3;'>{baslik}</div>",
-            unsafe_allow_html=True,
-        )
-        _tab_loading_gostergesi(
-            baslik,
-            18,
-            "Alt sekme hazırlanıyor. Eski içerik temizlenip yeni görünüm yükleniyor.",
-            ready=False,
-        )
-        st.markdown(
-            """
-            <div style="min-height:420px;background:#0d1117;border:1px solid #21262d;border-radius:18px;
-                        box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);"></div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.session_state["_pending_urunler_alt_tab_render"] = None
-    _time.sleep(0.05)
-    st.rerun()
-    return True
+    if aktif_tab and hedef_tab == aktif_tab:
+        st.session_state["_pending_urunler_alt_tab_render"] = None
+    return False
 
 
 # ── Image preview dialog ──────────────────────────────────────────────────────
