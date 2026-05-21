@@ -5537,24 +5537,25 @@ if st.session_state.active_main_tab == "urunler":
             except Exception:
                 satilan_site_opsiyonlari = []
 
-            with st.container(border=True):
+            _satilan_form_acik = bool(st.session_state.satilan_urun_formu_acik)
+            with st.container(border=True, key=f"satilan_urun_panel_{'open' if _satilan_form_acik else 'closed'}"):
                 _sold_hdr, _sold_btn = st.columns([6, 1.4], vertical_alignment="center")
                 _sold_hdr.markdown("##### Satılan Ürün Ekle")
                 _sold_hdr.caption(
                     "Kapalıyken yer kaplamaz, gerektiğinde açıp kayıt girebilirsiniz."
-                    if not st.session_state.satilan_urun_formu_acik
+                    if not _satilan_form_acik
                     else "Form açık. Kaydettikten sonra otomatik kapanır."
                 )
                 if _sold_btn.button(
-                    "Aç" if not st.session_state.satilan_urun_formu_acik else "Kapat",
+                    "Aç" if not _satilan_form_acik else "Kapat",
                     key="satilan_urun_form_toggle_btn",
                     use_container_width=True,
                 ):
-                    st.session_state.satilan_urun_formu_acik = not st.session_state.satilan_urun_formu_acik
+                    st.session_state.satilan_urun_formu_acik = not _satilan_form_acik
                     st.rerun()
 
-                if st.session_state.satilan_urun_formu_acik:
-                    st.divider()
+            if _satilan_form_acik:
+                with st.container(border=True, key="satilan_urun_form_panel"):
                     aktif_opsiyonlar = [
                         f"{u.get('product_code')}  |  {u.get('category') or 'Boş'}  |  {u.get('size_ft') or u.get('size_cm')}"
                         for u in aktifler
@@ -5586,46 +5587,46 @@ if st.session_state.active_main_tab == "urunler":
                         satilan_not = st.text_input("Not")
                         submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
 
-                    if submit_sold:
-                        kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
-                        if not kod:
-                            st.error("Ürün seçimi zorunlu.")
-                        elif not satilan_site:
-                            st.error("Satılan site zorunlu.")
-                        else:
-                            yeni_liste = []
-                            secili_urun = None
-                            for urun in urunler:
-                                if str(urun.get("product_code")) == kod:
-                                    copy = dict(urun)
-                                    copy["status"] = "sold"
-                                    copy["sold_at"] = satilan_tarih.strip() or _time.strftime("%Y-%m-%d %H:%M")
-                                    copy["sold_site"] = ", ".join(satilan_site)
-                                    copy["customer_name"] = musteri_adi.strip()
-                                    copy["customer_phone"] = musteri_telefon.strip()
-                                    copy["customer_address"] = musteri_adres.strip()
-                                    copy["customer_contact_country"] = iletisim_ulke.strip()
-                                    if satilan_not.strip():
-                                        copy["note"] = satilan_not.strip()
-                                    copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
-                                    secili_urun = copy
-                                    yeni_liste.append(copy)
-                                else:
-                                    yeni_liste.append(urun)
-                            if secili_urun:
-                                _urunleri_kaydet(yeni_liste)
-                                _store_delete_kuyruguna_ekle_arkaplanda([kod], reason="sold")
-                                st.session_state.satilan_urun_formu_acik = False
-                                st.success(f"{kod} satılan ürünlere eklendi.")
-                                diger_yuklu_magazalar = [
-                                    magaza for magaza in _urunun_tum_yuklu_magazalari(kod)
-                                    if str(magaza or "").strip() not in {str(item or "").strip() for item in satilan_site}
-                                ]
-                                if diger_yuklu_magazalar:
-                                    st.info(f"Diğer yüklü mağazalar: {', '.join(diger_yuklu_magazalar)}")
-                                else:
-                                    st.info("Başka yüklü mağaza görünmüyor.")
-                                st.rerun()
+                if submit_sold:
+                    kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
+                    if not kod:
+                        st.error("Ürün seçimi zorunlu.")
+                    elif not satilan_site:
+                        st.error("Satılan site zorunlu.")
+                    else:
+                        yeni_liste = []
+                        secili_urun = None
+                        for urun in urunler:
+                            if str(urun.get("product_code")) == kod:
+                                copy = dict(urun)
+                                copy["status"] = "sold"
+                                copy["sold_at"] = satilan_tarih.strip() or _time.strftime("%Y-%m-%d %H:%M")
+                                copy["sold_site"] = ", ".join(satilan_site)
+                                copy["customer_name"] = musteri_adi.strip()
+                                copy["customer_phone"] = musteri_telefon.strip()
+                                copy["customer_address"] = musteri_adres.strip()
+                                copy["customer_contact_country"] = iletisim_ulke.strip()
+                                if satilan_not.strip():
+                                    copy["note"] = satilan_not.strip()
+                                copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
+                                secili_urun = copy
+                                yeni_liste.append(copy)
+                            else:
+                                yeni_liste.append(urun)
+                        if secili_urun:
+                            _urunleri_kaydet(yeni_liste)
+                            _store_delete_kuyruguna_ekle_arkaplanda([kod], reason="sold")
+                            st.session_state.satilan_urun_formu_acik = False
+                            st.success(f"{kod} satılan ürünlere eklendi.")
+                            diger_yuklu_magazalar = [
+                                magaza for magaza in _urunun_tum_yuklu_magazalari(kod)
+                                if str(magaza or "").strip() not in {str(item or "").strip() for item in satilan_site}
+                            ]
+                            if diger_yuklu_magazalar:
+                                st.info(f"Diğer yüklü mağazalar: {', '.join(diger_yuklu_magazalar)}")
+                            else:
+                                st.info("Başka yüklü mağaza görünmüyor.")
+                            st.rerun()
 
             st.markdown("##### Satılan Ürünler")
             try:
