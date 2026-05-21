@@ -468,12 +468,25 @@ class StoreCatalog:
         return deleted
 
     def as_inventory_cache(self) -> dict:
+        def _row_is_loaded(row: dict) -> bool:
+            renk = _clean(row.get("renk")).lower()
+            durum = _clean(row.get("status")).lower()
+            if renk in {"red", "yellow"}:
+                return False
+            if durum in {"deleted", "removed"}:
+                return False
+            if durum.startswith("needs_delete_"):
+                return True
+            return renk == "green" or durum == "done"
+
         rows = self.list_by_store()
         stores: dict = {}
         for row in rows:
             sid = row.get("store_id", "")
             code = row.get("product_code", "")
             if not sid or not code:
+                continue
+            if not _row_is_loaded(row):
                 continue
             if sid not in stores:
                 stores[sid] = {"store_name": sid, "count": 0, "urunler": {}}
