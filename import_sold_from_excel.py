@@ -298,6 +298,7 @@ def merge_sold_with_existing(sold_products: list[dict]) -> list[dict]:
     for sold in sold_products:
         code = clean(sold.get("product_code"))
         current = existing_map.get(code, {})
+        sold_at = current.get("sold_at") or sold.get("sold_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         merged.append(
             {
                 "product_id": current.get("product_id") or sold.get("product_id"),
@@ -315,7 +316,7 @@ def merge_sold_with_existing(sold_products: list[dict]) -> list[dict]:
                 "source_row": sold.get("source_row") or current.get("source_row") or "",
                 "loaded_store_count": current.get("loaded_store_count") or "",
                 "loaded_stores": current.get("loaded_stores") or "",
-                "sold_at": current.get("sold_at") or sold.get("sold_at") or "",
+                "sold_at": sold_at,
                 "sold_site": sold.get("sold_site") or current.get("sold_site") or "",
                 "customer_name": sold.get("customer_name") or current.get("customer_name") or "",
                 "customer_phone": sold.get("customer_phone") or current.get("customer_phone") or "",
@@ -413,6 +414,11 @@ def main() -> int:
 
     result = catalog.upsert_products(merged)
     print(f"Supabase upsert tamamlandi: {len(result)} kayit")
+
+    from shared.product_sheet_sync import sync_product_sheet
+
+    sheet_changed = sync_product_sheet(force=True)
+    print(f"Product sheet sync tamamlandi: {'guncellendi' if sheet_changed else 'degisiklik yok'}")
 
     if args.sync_runtime_stok:
         sync_excel_copy(excel_path, RUNTIME_STOK)

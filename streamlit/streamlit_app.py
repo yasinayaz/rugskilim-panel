@@ -595,6 +595,7 @@ for k, v in [
     ("_urun_katalog_cache", None),
     ("_urun_katalog_cache_ts", 0.0),
     ("_urun_katalog_cache_stok_mtime", 0.0),
+    ("_urun_katalog_cache_refresh_started_at", 0.0),
     ("_urunler_magaza_refresh_started_at", 0.0),
     ("_urunler_seen_sync_version", ""),
     ("_urunler_pending_sync_version", ""),
@@ -1204,44 +1205,67 @@ def _urun_katalogunu_esitle(force: bool = False, kaynak_urunler: list[dict] | No
     return True
 
 
-def _urunleri_yukle(force_source_sync: bool = False, force_store_refresh: bool = False):
+def _urunleri_yukle(
+    force_source_sync: bool = False,
+    force_store_refresh: bool = False,
+    _ignore_cache: bool = False,
+):
     from shared.product_catalog import ProductCatalog, _supabase_ready
     from shared.product_sheet import ProductSheet
 
+    def _kaynak_oku() -> list[dict]:
+        if _supabase_ready():
+            _force_env = force_store_refresh
+            _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+
+            def _envanter_sync_job():
+                try:
+                    hedefler = [_aktif_magaza] if _aktif_magaza else None
+                    _magaza_envanterini_topla(force=_force_env, store_ids=hedefler)
+                except Exception:
+                    pass
+
+            _threading.Thread(target=_envanter_sync_job, daemon=True, name="magaza-envanter-sync").start()
+            if _aktif_magaza:
+                _magaza_hizli_arka_plan_sync_baslat(_aktif_magaza, force=force_store_refresh)
+
+        try:
+            mevcut_liste = ProductCatalog().list_products() if _supabase_ready() else ProductSheet().read_products()
+        except Exception:
+            mevcut_liste = _panel_urunleri_yerden_yukle()
+
+        mevcut_liste = _silinenleri_filtrele(mevcut_liste)
+        _satilan_kodlarini_oturumda_guncelle(mevcut_liste)
+        st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut_liste]
+        st.session_state["_urun_katalog_cache_ts"] = _time.time()
+        st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
+        st.session_state["_urun_katalog_cache_refresh_started_at"] = 0.0
+        return mevcut_liste
+
     cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
     cache_data = st.session_state.get("_urun_katalog_cache")
+    cache_var = cache_data is not None
+    cache_taze = cache_var and (_time.time() - cache_ts) <= 300
 
-    if (
-        not force_source_sync
-        and cache_data is not None
-        and (_time.time() - cache_ts) <= 300
-    ):
+    if cache_var and not _ignore_cache and not force_source_sync and not force_store_refresh:
+        if not cache_taze:
+            _urunler_cache_yenilemesini_baslat(
+                force_source_sync=True,
+                force_store_refresh=False,
+            )
         return [dict(item) for item in cache_data]
 
-    if _supabase_ready():
-        _force_env = force_store_refresh
-        _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
-        def _envanter_sync_job():
-            try:
-                hedefler = [_aktif_magaza] if _aktif_magaza else None
-                _magaza_envanterini_topla(force=_force_env, store_ids=hedefler)
-            except Exception:
-                pass
-        _threading.Thread(target=_envanter_sync_job, daemon=True, name="magaza-envanter-sync").start()
-        if _aktif_magaza:
-            _magaza_hizli_arka_plan_sync_baslat(_aktif_magaza, force=force_store_refresh)
+    if cache_var and not _ignore_cache and (force_source_sync or force_store_refresh):
+        if force_store_refresh:
+            _urunler_magaza_yenilemesini_baslat(force=True)
+        _urunler_cache_yenilemesini_baslat(
+            force_source_sync=True,
+            force_store_refresh=False,
+            min_interval_seconds=20,
+        )
+        return [dict(item) for item in cache_data]
 
-    try:
-        mevcut = ProductCatalog().list_products() if _supabase_ready() else ProductSheet().read_products()
-    except Exception:
-        mevcut = _panel_urunleri_yerden_yukle()
-
-    mevcut = _silinenleri_filtrele(mevcut)
-    _satilan_kodlarini_oturumda_guncelle(mevcut)
-    st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
-    st.session_state["_urun_katalog_cache_ts"] = _time.time()
-    st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
-    return mevcut
+    return _kaynak_oku()
 
 
 def _urun_sheet_sync_arkaplanda(force: bool = True):
@@ -1411,11 +1435,72 @@ def _urunler_magaza_yenilemesini_baslat(force: bool = False):
 
     def _job():
         try:
-            _magaza_envanterini_topla(force=force)
+            cache = _magaza_envanterini_topla(force=force)
+            tum_store_ids = sorted({
+                str(store_id or "").strip()
+                for store_id in (((cache or {}).get("stores") or {}).keys())
+                if str(store_id or "").strip()
+            })
+            envanter_haritasi = _envanter_cacheden_canli_magaza_haritasi(tum_store_ids, cache)
+            if envanter_haritasi:
+                _json_kaydet(_CANLI_HARITA_DB, {
+                    "updated_at": _time.time(),
+                    "data": {
+                        kod: sorted(magazalar)
+                        for kod, magazalar in sorted(envanter_haritasi.items())
+                    },
+                    "store_ids": tum_store_ids,
+                    "source": "store-inventory-refresh",
+                })
         except Exception:
             pass
 
     _threading.Thread(target=_job, daemon=True, name="urunler-magaza-refresh").start()
+
+
+def _urunler_cache_yenilemesini_baslat(
+    *,
+    force_source_sync: bool = False,
+    force_store_refresh: bool = False,
+    min_interval_seconds: int = 20,
+) -> bool:
+    simdi = _time.time()
+    son_baslangic = float(st.session_state.get("_urun_katalog_cache_refresh_started_at") or 0.0)
+    if son_baslangic and (simdi - son_baslangic) < max(3, int(min_interval_seconds)):
+        return False
+
+    st.session_state["_urun_katalog_cache_refresh_started_at"] = simdi
+
+    def _job():
+        try:
+            _urunleri_yukle(
+                force_source_sync=force_source_sync,
+                force_store_refresh=force_store_refresh,
+                _ignore_cache=True,
+            )
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name="urunler-katalog-refresh").start()
+    return True
+
+
+def _urunler_alt_tab_sec(tab_id: str):
+    yeni_tab = str(tab_id or "").strip()
+    if not yeni_tab or st.session_state.get("urun_alt_tab") == yeni_tab:
+        return
+
+    st.session_state.urun_alt_tab = yeni_tab
+    st.session_state["_edit_urun"] = None
+    st.session_state["_urun_edit_dialog_acik"] = False
+    st.session_state.pop("_sil_onay", None)
+
+    if yeni_tab != "liste":
+        st.session_state.urun_formu_acik = False
+    if yeni_tab != "satilan":
+        st.session_state.satilan_urun_formu_acik = False
+
+    st.session_state["_urunler_loading_ui"] = False
 
 
 def _urun_katalog_cache_temizle():
@@ -2405,6 +2490,48 @@ def _canli_magaza_haritasi_dosyadan_yukle() -> dict:
     return _json_yukle(_CANLI_HARITA_DB, {"updated_at": 0, "data": {}, "store_ids": []})
 
 
+def _envanter_cacheden_canli_magaza_haritasi(
+    store_ids: list[str],
+    cache: dict | None = None,
+) -> dict[str, set[str]]:
+    hedef_magazalar = {
+        str(store_id or "").strip()
+        for store_id in (store_ids or [])
+        if str(store_id or "").strip()
+    }
+    if not hedef_magazalar:
+        return {}
+
+    kaynak = cache if isinstance(cache, dict) else _envanter_cache_dosyadan_yukle()
+    stores = (kaynak or {}).get("stores") or {}
+    harita: dict[str, set[str]] = {}
+    for store_id in sorted(hedef_magazalar):
+        store_data = stores.get(store_id) or {}
+        for raw_code in ((store_data.get("urunler") or {}).keys()):
+            kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+            if not kod:
+                continue
+            harita.setdefault(kod, set()).add(store_id)
+    return harita
+
+
+def _canli_magaza_haritalarini_birlestir(
+    *haritalar: dict[str, list[str] | tuple[str, ...] | set[str]] | None,
+) -> dict[str, set[str]]:
+    sonuc: dict[str, set[str]] = {}
+    for harita in haritalar:
+        for kod, magazalar in (harita or {}).items():
+            temiz_kod = str(kod or "").strip()
+            if not temiz_kod:
+                continue
+            hedef = sonuc.setdefault(temiz_kod, set())
+            for magaza in (magazalar or []):
+                temiz_magaza = str(magaza or "").strip()
+                if temiz_magaza:
+                    hedef.add(temiz_magaza)
+    return sonuc
+
+
 def _canli_magaza_haritasi_store_birlestir(store_id: str, product_codes: set[str] | list[str]) -> None:
     sid = str(store_id or "").strip()
     if not sid:
@@ -2743,6 +2870,8 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
         for store_id in (store_ids or [])
     )
     file_harita = _canli_magaza_haritasi_filtrele((cached or {}).get("data") or {}, store_ids)
+    envanter_harita = _envanter_cacheden_canli_magaza_haritasi(store_ids)
+    file_harita = _canli_magaza_haritalarini_birlestir(file_harita, envanter_harita)
 
     # Urunler sekmesi ilk acilista dosya cache'i bos/stale ise beklemeden
     # Supabase store_status ile hizli bootstrap yap; Sheets dogrulamasi arka planda aksin.
@@ -2750,7 +2879,7 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
     if (not file_harita or is_stale or missing_store):
         hizli_harita = _supabase_haritayi_urunler_cacheine_yaz(store_ids)
         if hizli_harita:
-            file_harita = hizli_harita
+            file_harita = _canli_magaza_haritalarini_birlestir(hizli_harita, envanter_harita)
             supabase_bootstrap = True
 
     bg_sync_gerekli = is_stale or missing_store or supabase_bootstrap
@@ -4760,42 +4889,46 @@ if st.session_state.active_main_tab == "urunler":
         _magazalar_aktif = st.session_state.urun_alt_tab == "magazalar"
         _silinecekler_aktif = st.session_state.urun_alt_tab == "silinecekler"
         _tabs_col, _stats_col, _refresh_col, _btn_col = st.columns(
-            [4.0, 2.6, 1.6, 1.9], vertical_alignment="center"
+            [4.8, 2.3, 1.15, 1.35], vertical_alignment="center"
         )
         with _tabs_col:
-            _b1, _b2, _b3, _b4 = st.columns(4, vertical_alignment="center")
+            _b1, _b2, _b3, _b4 = st.columns([1.05, 1.05, 1.0, 1.1], vertical_alignment="center")
             if _b1.button(
                 "Ürün Listesi",
                 key="urun_alt_tab_liste",
                 width="stretch",
                 type="primary" if _liste_aktif else "secondary",
+                on_click=_urunler_alt_tab_sec,
+                args=("liste",),
             ):
-                st.session_state.urun_alt_tab = "liste"
-                st.rerun()
+                pass
             if _b2.button(
                 "Satılan Ürünler",
                 key="urun_alt_tab_satilan",
                 width="stretch",
                 type="primary" if _satilan_aktif else "secondary",
+                on_click=_urunler_alt_tab_sec,
+                args=("satilan",),
             ):
-                st.session_state.urun_alt_tab = "satilan"
-                st.rerun()
+                pass
             if _b3.button(
                 "Mağazalar",
                 key="urun_alt_tab_magazalar",
                 width="stretch",
                 type="primary" if _magazalar_aktif else "secondary",
+                on_click=_urunler_alt_tab_sec,
+                args=("magazalar",),
             ):
-                st.session_state.urun_alt_tab = "magazalar"
-                st.rerun()
+                pass
             if _b4.button(
                 "Silinmesi Gerekenler",
                 key="urun_alt_tab_silinecekler",
                 width="stretch",
                 type="primary" if _silinecekler_aktif else "secondary",
+                on_click=_urunler_alt_tab_sec,
+                args=("silinecekler",),
             ):
-                st.session_state.urun_alt_tab = "silinecekler"
-                st.rerun()
+                pass
         with _stats_col:
             st.markdown(
                 "<div class='compact-stats' style='justify-content:flex-start; flex-wrap:nowrap; margin:0;'>"
@@ -4985,10 +5118,9 @@ if st.session_state.active_main_tab == "urunler":
                 satirlar = []
                 supabase_count_map = _supabase_magaza_yuklu_sayilari_cached()
                 envanter_count_map = {
-                    str(store_id): int(
-                        supabase_count_map.get(str(store_id))
-                        or (((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count"))
-                        or 0
+                    str(store_id): max(
+                        int(supabase_count_map.get(str(store_id)) or 0),
+                        int((((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count")) or 0),
                     )
                     for store_id in magaza_adlari
                 }
