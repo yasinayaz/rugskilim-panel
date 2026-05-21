@@ -1915,6 +1915,15 @@ def _store_status_is_loaded(row_or_status, renk: str | None = None) -> bool:
     return renk == "green" or status == "done"
 
 
+def _store_status_is_active_loaded(row: dict) -> bool:
+    status = str((row or {}).get("status") or "").strip().lower()
+    if _store_status_delete_reason(status):
+        return False
+    kod = _urun_kodu_normalize((row or {}).get("product_code", "")) or _urun_kodu_al((row or {}).get("product_code", ""))
+    renk = str((row or {}).get("renk") or "").strip().lower()
+    return _magaza_kaydi_ui_yuklu_mu(kod, renk, status)
+
+
 def _sheet_renk_durumu(klasor_adi: str):
     return _urun_sec_renk_durumu(klasor_adi)
 
@@ -2477,26 +2486,12 @@ def _canli_magaza_haritasindan_magaza_kodlarini_cikar(store_id: str, product_cod
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _supabase_magaza_yuklu_sayilari_cached() -> dict[str, int]:
-    from shared.product_catalog import StoreCatalog, _supabase_ready
-
-    if not _supabase_ready():
-        return {}
-
     sayilar: dict[str, int] = {}
-    try:
-        for row in StoreCatalog().list_by_store():
-            sid = str(row.get("store_id") or "").strip()
-            if not sid:
-                continue
-            kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
-            if not kod:
-                continue
-            renk = str(row.get("renk") or "").strip().lower()
-            durum = str(row.get("status") or "").strip().lower()
-            if _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
-                sayilar[sid] = sayilar.get(sid, 0) + 1
-    except Exception:
-        return {}
+    for row in _store_status_rows_cached():
+        sid = str(row.get("store_id") or "").strip()
+        if not sid or not _store_status_is_active_loaded(row):
+            continue
+        sayilar[sid] = sayilar.get(sid, 0) + 1
     return sayilar
 
 
@@ -2517,7 +2512,7 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
     sayilar: dict[str, int] = {}
     for row in _store_status_rows_cached():
         sid = str(row.get("store_id") or "").strip()
-        if not sid or not _store_status_is_loaded(row):
+        if not sid or not _store_status_is_active_loaded(row):
             continue
         sayilar[sid] = sayilar.get(sid, 0) + 1
     return sayilar
@@ -2568,22 +2563,14 @@ def _urunun_tum_yuklu_magazalari(kod: str, *, include_store_ids: bool = False) -
 
 
 def _supabase_store_haritasi_yukle() -> dict[str, set[str]]:
-    """Supabase product_store_status'taki green/done satırları çekip store map döndürür. Aynı VPS → hızlı."""
-    from shared.product_catalog import StoreCatalog
+    """Supabase product_store_status cache'inden store map döndürür."""
     harita: dict[str, set[str]] = {}
-    try:
-        for row in StoreCatalog().list_by_store():
-            raw_code = str(row.get("product_code") or "").strip()
-            kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
-            if not kod:
-                continue
-            renk = str(row.get("renk") or "").strip().lower()
-            durum = str(row.get("status") or "").strip().lower()
-            if not _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
-                continue
-            harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
-    except Exception:
-        pass
+    for row in _store_status_rows_cached():
+        raw_code = str(row.get("product_code") or "").strip()
+        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+        if not kod or not _store_status_is_active_loaded(row):
+            continue
+        harita.setdefault(kod, set()).add(str(row.get("store_id") or ""))
     return harita
 
 
@@ -5201,15 +5188,14 @@ if st.session_state.active_main_tab == "urunler":
                     detay_satirlari = []
                     for row in store_rows:
                         sid = str(row.get("store_id") or "").strip()
-                        if sid != secili_store or not _store_status_is_loaded(row):
+                        if sid != secili_store or not _store_status_is_active_loaded(row):
                             continue
                         kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
                         urun = urun_map.get(kod, {})
-                        reason = _store_status_delete_reason(row.get("status"))
                         detay_satirlari.append({
                             "Ürün Kodu": kod,
-                            "Durum": "Silinmeli" if reason else "Yüklü",
-                            "Sebep": "Satıldı" if reason == "sold" else ("Panelden silindi" if reason == "deleted" else ""),
+                            "Durum": "Yüklü",
+                            "Sebep": "",
                             "Kategori": urun.get("category", ""),
                             "ft": urun.get("size_ft", ""),
                             "cm": urun.get("size_cm", ""),
