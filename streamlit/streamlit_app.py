@@ -605,6 +605,8 @@ for k, v in [
     ("_urun_edit_dialog_acik", False),
     ("active_main_tab", "urun_sec"),
     ("_pending_main_tab_render", None),
+    ("_pending_urunler_alt_tab_render", None),
+    ("_suppress_tab_autorefresh_once", False),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1490,10 +1492,9 @@ def _urunler_alt_tab_sec(tab_id: str):
     if not yeni_tab or st.session_state.get("urun_alt_tab") == yeni_tab:
         return
 
+    _overlay_state_temizle()
     st.session_state.urun_alt_tab = yeni_tab
-    st.session_state["_edit_urun"] = None
-    st.session_state["_urun_edit_dialog_acik"] = False
-    st.session_state.pop("_sil_onay", None)
+    st.session_state["_pending_urunler_alt_tab_render"] = yeni_tab
 
     if yeni_tab != "liste":
         st.session_state.urun_formu_acik = False
@@ -3777,8 +3778,44 @@ def _kuyruk_badge(status: str) -> str:
     return f'<span class="folder-badge {cls}">{lbl}</span>'
 
 
+def _overlay_state_temizle():
+    """
+    Sekme degisimi sirasinda onceki ekrandan kalan dialog/form state'lerini temizler.
+    Streamlit bazen ayni rerun icinde eski DOM'u bir kare daha tuttugu icin,
+    gecis oncesi state sifirlama kalinti riskini belirgin azaltir.
+    """
+    st.session_state["_edit_urun"] = None
+    st.session_state["_urun_edit_dialog_acik"] = False
+    st.session_state.pop("_sil_onay", None)
+    st.session_state.pop("_onizleme_klasor", None)
+    st.session_state.pop("_product_copy_preview", None)
+    st.session_state.pop("_clipboard_copy_request", None)
+
+
+def _tab_gecisinde_otomatik_yenilemeyi_atla() -> bool:
+    """
+    Ana tab degisiminden sonraki ilk render'da otomatik veri cekimini baskilar.
+    Boylece kullanici once son bilinen veriyi gorur; arka plan sync bir sonraki
+    dogal rerun'da veya manuel yenilemede calisir.
+    """
+    if not st.session_state.get("_suppress_tab_autorefresh_once"):
+        return False
+    st.session_state["_suppress_tab_autorefresh_once"] = False
+    return True
+
+
 def _main_tab_sec(tab_id: str):
-    st.session_state.active_main_tab = tab_id
+    yeni_tab = str(tab_id or "").strip()
+    if not yeni_tab or st.session_state.get("active_main_tab") == yeni_tab:
+        return
+
+    _overlay_state_temizle()
+    st.session_state.urun_formu_acik = False
+    st.session_state.satilan_urun_formu_acik = False
+    st.session_state["_pending_urunler_alt_tab_render"] = None
+    st.session_state["_pending_main_tab_render"] = yeni_tab
+    st.session_state["_suppress_tab_autorefresh_once"] = True
+    st.session_state.active_main_tab = yeni_tab
 
 
 def _tab_loading_gostergesi(title: str, percent: int, detail: str, ready: bool = False):
@@ -3843,6 +3880,44 @@ def _main_tab_gecis_ekrani():
 
     st.session_state["_pending_main_tab_render"] = None
     _time.sleep(0.06)
+    st.rerun()
+    return True
+
+
+def _urunler_alt_tab_gecis_ekrani():
+    _tab_labels = {
+        "liste": "Ürün Listesi",
+        "satilan": "Satılan Ürünler",
+        "magazalar": "Mağazalar",
+        "silinecekler": "Silinmesi Gerekenler",
+    }
+    aktif_tab = str(st.session_state.get("urun_alt_tab") or "").strip()
+    hedef_tab = str(st.session_state.get("_pending_urunler_alt_tab_render") or "").strip()
+    if not aktif_tab or hedef_tab != aktif_tab:
+        return False
+
+    baslik = _tab_labels.get(aktif_tab, "Ürünler")
+    with st.container(key=f"urunler_alt_tab_transition_{aktif_tab}"):
+        st.markdown(
+            f"<div style='padding:4px 0 10px;font-size:0.95rem;font-weight:600;color:#e6edf3;'>{baslik}</div>",
+            unsafe_allow_html=True,
+        )
+        _tab_loading_gostergesi(
+            baslik,
+            18,
+            "Alt sekme hazırlanıyor. Eski içerik temizlenip yeni görünüm yükleniyor.",
+            ready=False,
+        )
+        st.markdown(
+            """
+            <div style="min-height:420px;background:#0d1117;border:1px solid #21262d;border-radius:18px;
+                        box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);"></div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.session_state["_pending_urunler_alt_tab_render"] = None
+    _time.sleep(0.05)
     st.rerun()
     return True
 
@@ -4561,7 +4636,9 @@ if st.session_state.active_main_tab == "urun_sec":
 # ══ TAB 2 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "kuyruk":
     def _tab2_kuyruk():
-        _magaza_hizli_arka_plan_sync_baslat(st.session_state.hedef_magaza_id, force=False)
+        _tab_gecisinde_bekletme = _tab_gecisinde_otomatik_yenilemeyi_atla()
+        if not _tab_gecisinde_bekletme:
+            _magaza_hizli_arka_plan_sync_baslat(st.session_state.hedef_magaza_id, force=False)
         _force_queue_refresh = bool(st.session_state.pop("_kuyruk_refresh_istek", False))
         _queue_loading_ui = bool(st.session_state.get("_kuyruk_loading_ui")) or _force_queue_refresh
         if _queue_loading_ui:
@@ -4816,6 +4893,7 @@ if st.session_state.active_main_tab == "urunler":
                 st.rerun()
 
     def _tab3_urunler():
+        _tab_gecisinde_bekletme = _tab_gecisinde_otomatik_yenilemeyi_atla()
         # Bekleyen yenileme: form kapandıysa sessizce uygula
         _form_kapali = (
             not st.session_state.get("urun_formu_acik")
@@ -4851,7 +4929,14 @@ if st.session_state.active_main_tab == "urunler":
                 else "Ürün listesi arka planda güncelleniyor."
             )
             _tab_loading_gostergesi("Ürünler", _loading_percent, _loading_mesaj, ready=False)
-        if _force_store_refresh or _envanter_cache_stale_mi(_envanter_cache) or not ((_envanter_cache or {}).get("stores") or {}):
+        if (
+            not _tab_gecisinde_bekletme
+            and (
+                _force_store_refresh
+                or _envanter_cache_stale_mi(_envanter_cache)
+                or not ((_envanter_cache or {}).get("stores") or {})
+            )
+        ):
             _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
             _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
             _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > float((_envanter_cache_dosyadan_yukle() or {}).get("updated_at") or 0.0))
@@ -4955,6 +5040,9 @@ if st.session_state.active_main_tab == "urunler":
                 ):
                     st.session_state.urun_formu_acik = not st.session_state.urun_formu_acik
                     st.rerun()
+
+        if _urunler_alt_tab_gecis_ekrani():
+            return
 
         if st.session_state.urun_alt_tab == "liste":
             if st.session_state.urun_formu_acik:
@@ -5116,20 +5204,7 @@ if st.session_state.active_main_tab == "urunler":
                 import pandas as pd
 
                 satirlar = []
-                supabase_count_map = _supabase_magaza_yuklu_sayilari_cached()
-                envanter_count_map = {
-                    str(store_id): max(
-                        int(supabase_count_map.get(str(store_id)) or 0),
-                        int((((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count")) or 0),
-                    )
-                    for store_id in magaza_adlari
-                }
-                _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
-                if _aktif_magaza and not envanter_count_map.get(_aktif_magaza):
-                    try:
-                        envanter_count_map[_aktif_magaza] = _magaza_kuyruk_yuklu_sayisi_cached(_aktif_magaza)
-                    except Exception:
-                        pass
+                loaded_count_map = _store_status_loaded_counts_cached()
                 gorunen_magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
                 for urun in gosterilecek:
                     kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
@@ -5152,10 +5227,12 @@ if st.session_state.active_main_tab == "urunler":
                     satirlar.append(satir)
 
                 if satirlar:
-                    kolon_etiketleri = {
-                        magaza: f"{magaza} ({envanter_count_map.get(magaza) or gorunen_magaza_yuklu_sayilari.get(magaza, 0)})"
-                        for magaza in magaza_adlari
-                    }
+                    kolon_etiketleri = {}
+                    for magaza in magaza_adlari:
+                        kolon_sayisi = loaded_count_map.get(magaza)
+                        if kolon_sayisi is None:
+                            kolon_sayisi = gorunen_magaza_yuklu_sayilari.get(magaza, 0)
+                        kolon_etiketleri[magaza] = f"{magaza} ({int(kolon_sayisi or 0)})"
                     tablo_satirlari = [
                         {
                             (kolon_etiketleri.get(anahtar, anahtar)): deger
@@ -5645,7 +5722,8 @@ if st.session_state.active_main_tab == "urunler":
                 st.warning(f"Satılan ürün listesi çizilemedi: {exc}")
 
         # Arka planda harita güncellenince otomatik rerun (her 5 saniyede dosya mtime kontrolü)
-        _harita_degisim_izleyici()
+        if not _tab_gecisinde_bekletme:
+            _harita_degisim_izleyici()
     with st.container(key="main_tab_content_urunler"):
         _tab3_urunler()
 
@@ -6360,6 +6438,7 @@ if st.session_state.active_main_tab == "ayarlar":
 if st.session_state.active_main_tab == "olcu_ara":
     def _tab5_ara():
         import pandas as pd
+        _tab_gecisinde_bekletme = _tab_gecisinde_otomatik_yenilemeyi_atla()
 
         _olcu_loading = bool(st.session_state.get("_olcu_ara_loading_ui"))
         if _olcu_loading:
@@ -6380,7 +6459,13 @@ if st.session_state.active_main_tab == "olcu_ara":
         _gc2.caption("Kaynak: Supabase `products` tablosu. Supabase yoksa urun katalog sheet fallback kullanilir.")
 
         try:
-            _olcu_payload = _olcu_ara_urunleri_yukle_cached()
+            if _tab_gecisinde_bekletme and st.session_state.get("_urun_katalog_cache") is not None:
+                _olcu_payload = {
+                    "source": "session_product_cache",
+                    "products": _silinenleri_filtrele(st.session_state.get("_urun_katalog_cache") or []),
+                }
+            else:
+                _olcu_payload = _olcu_ara_urunleri_yukle_cached()
             katalog_urunleri = list(_olcu_payload.get("products") or [])
             _olcu_source = str(_olcu_payload.get("source") or "supabase")
         except Exception as exc:
@@ -6425,7 +6510,11 @@ if st.session_state.active_main_tab == "olcu_ara":
         _toplam = int(_olcu_kaynak.get("toplam") or len(katalog_urunleri))
         _satilan = int(_olcu_kaynak.get("satilan") or 0)
         _aktif_toplam = max(_toplam - _satilan, len(arama_kaynaklari))
-        _kaynak_etiketi = "Supabase products" if _olcu_source == "supabase" else "urun katalog sheet"
+        _kaynak_etiketi = (
+            "session urun cache"
+            if _olcu_source == "session_product_cache"
+            else ("Supabase products" if _olcu_source == "supabase" else "urun katalog sheet")
+        )
         st.caption(
             f"Kaynak: {_kaynak_etiketi}"
             f"  |  Aktif katalog: **{_aktif_toplam}**"
