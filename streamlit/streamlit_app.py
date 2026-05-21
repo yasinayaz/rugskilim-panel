@@ -2651,13 +2651,37 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
 @st.cache_data(ttl=30, show_spinner=False)
 def _store_status_pending_delete_rows_cached() -> list[dict]:
     rows = []
+    seen: set[tuple[str, str]] = set()
+
     for row in _store_status_rows_cached():
         reason = _store_status_delete_reason(row.get("status"))
         if not reason:
             continue
         copy = dict(row)
         copy["delete_reason"] = reason
+        kod = _urun_kodu_normalize(copy.get("product_code", "")) or _urun_kodu_al(copy.get("product_code", ""))
+        sid = str(copy.get("store_id") or "").strip()
+        if kod and sid:
+            seen.add((kod, sid))
         rows.append(copy)
+
+    sold_codes = _satilan_kodlar()
+    if not sold_codes:
+        return rows
+
+    for row in _store_status_rows_cached():
+        if not _store_status_is_loaded(row):
+            continue
+        kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
+        sid = str(row.get("store_id") or "").strip()
+        if not kod or not sid or kod not in sold_codes or (kod, sid) in seen:
+            continue
+        copy = dict(row)
+        copy["status"] = "needs_delete_sold"
+        copy["delete_reason"] = "sold"
+        rows.append(copy)
+        seen.add((kod, sid))
+
     return rows
 
 
@@ -5403,10 +5427,13 @@ if st.session_state.active_main_tab == "urunler":
                             continue
                         kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
                         urun = urun_map.get(kod, {})
+                        reason = _store_status_delete_reason(row.get("status"))
+                        if not reason and str(urun.get("status", "")).strip().lower() == "sold":
+                            reason = "sold"
                         detay_satirlari.append({
                             "Ürün Kodu": kod,
-                            "Durum": "Yüklü",
-                            "Sebep": "",
+                            "Durum": "Silinmeli" if reason else "Yüklü",
+                            "Sebep": "Satıldı" if reason == "sold" else ("Panelden silindi" if reason == "deleted" else ""),
                             "Kategori": urun.get("category", ""),
                             "ft": urun.get("size_ft", ""),
                             "cm": urun.get("size_cm", ""),

@@ -348,6 +348,34 @@ def _supabase_store_status_delete(store_id: str, product_codes: list[str] | None
         pass
 
 
+def _supabase_store_status_sync_green(store_id: str, product_codes: list[str], *, status: str = "done"):
+    """Sheet'te green olan urunleri store_status tablosuna da aninda yansit."""
+    try:
+        from shared.product_catalog import StoreCatalog, _supabase_ready
+        if not _supabase_ready():
+            return
+        temiz_kodlar = sorted({
+            str(code or "").strip()
+            for code in (product_codes or [])
+            if str(code or "").strip()
+        })
+        if not temiz_kodlar:
+            return
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        StoreCatalog().upsert([
+            {
+                "product_code": code,
+                "store_id": str(store_id or "").strip(),
+                "status": status,
+                "renk": "green",
+                "islem_tarihi": now_str,
+            }
+            for code in temiz_kodlar
+        ])
+    except Exception:
+        pass
+
+
 def _urun_satir_bul(ws, urun_id: str) -> int:
     """urun_id'ye göre satır numarası döndürür (1-tabanlı)."""
     urun_id_kol = _kolon_no(ws, "urun_id", default=KOL["urun_id"])
@@ -903,6 +931,16 @@ class SheetsKatmani:
         if requests:
             _yeniden_dene("Renk güncelleme", ws.spreadsheet.batch_update, {"requests": requests})
 
+        guncellenen_kodlar = [
+            str(urun_id or "").strip()
+            for urun_id in urun_idler
+            if str(urun_id or "").strip() and str(urun_id or "").strip() not in bulunamayan
+        ]
+        if renk == "green":
+            _supabase_store_status_sync_green(self.store_id, guncellenen_kodlar, status="done")
+        elif renk == "none":
+            _supabase_store_status_delete(self.store_id, guncellenen_kodlar)
+
         print(
             f"[Sheets:{self.store_id}] ✓ Renk güncellendi: "
             f"renk={renk} guncellenen={len(requests)} bulunamayan={len(bulunamayan)}"
@@ -1041,7 +1079,6 @@ class SheetsKatmani:
             _yeniden_dene("Satır silme", ws.delete_rows, satir_no)
 
         self._satir_haritasini_gecersiz_kil()
-        _supabase_store_status_delete(self.store_id, [str(uid) for uid in urun_idler if str(uid).strip()])
 
         print(f"[Sheets:{self.store_id}] {len(satir_nolari)} satır silindi.")
         return len(satir_nolari)
