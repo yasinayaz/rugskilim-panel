@@ -9,14 +9,20 @@ echo.
 
 REM ── Python kontrol ──────────────────────────────────────
 set "PYTHON_CMD="
-where python >nul 2>nul && set "PYTHON_CMD=python"
 if not defined PYTHON_CMD (
-  where py >nul 2>nul && set "PYTHON_CMD=py"
+  py -3 -V >nul 2>nul && set "PYTHON_CMD=py -3"
+)
+if not defined PYTHON_CMD (
+  py -V >nul 2>nul && set "PYTHON_CMD=py"
+)
+if not defined PYTHON_CMD (
+  python -V >nul 2>nul && set "PYTHON_CMD=python"
 )
 if not defined PYTHON_CMD (
   echo HATA: Python kurulu degil!
   echo Lutfen https://www.python.org/downloads/windows/ adresinden indirin.
   echo Kurulumda "Add Python to PATH" kutusunu isaretleyin.
+  echo Gerekirse Windows App Execution Aliases icinde python alias'ini kapatin.
   pause
   exit /b 1
 )
@@ -47,6 +53,11 @@ echo [OK] Repo hazir.
 REM ── Python bagimliliklar ─────────────────────────────────
 echo [..] Python paketleri kuruluyor...
 %PYTHON_CMD% -m pip install --quiet gspread google-auth httpx opencv-python numpy requests
+if errorlevel 1 (
+  echo HATA: Python paketleri kurulamadigi icin devam edilmiyor.
+  pause
+  exit /b 1
+)
 echo [OK] Paketler hazir.
 
 REM ── Gecici klasor ve INDIR butonu ───────────────────────

@@ -46,13 +46,17 @@ if not exist "%GOOGLE_CREDS_JSON%" (
 )
 
 if not defined PYTHON_CMD (
-  where python >nul 2>nul && set "PYTHON_CMD=python"
+  py -3 -V >nul 2>nul && set "PYTHON_CMD=py -3"
 )
 if not defined PYTHON_CMD (
-  where py >nul 2>nul && set "PYTHON_CMD=py"
+  py -V >nul 2>nul && set "PYTHON_CMD=py"
+)
+if not defined PYTHON_CMD (
+  python -V >nul 2>nul && set "PYTHON_CMD=python"
 )
 if not defined PYTHON_CMD (
   echo HATA: Python bulunamadi. Python 3.10+ kurulu olmali ve PATH'te olmali.
+  echo Cozum: Python'u python.org'dan kurun veya Windows App Execution Aliases icinde python alias'ini kapatin.
   pause
   exit /b 1
 )

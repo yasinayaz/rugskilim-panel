@@ -1933,6 +1933,7 @@ def _urun_magazada_yuklu_mu(kod: str, store_id: str, canli_magaza_haritasi: dict
     return sid in (canli_magaza_haritasi.get(key, set()) or set())
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _magaza_ad_haritasi() -> dict[str, str]:
     try:
         from shared.store_manager import tum_magazalar as _tum_magaza_liste
@@ -2703,16 +2704,12 @@ def _urunun_tum_yuklu_magazalari(kod: str, *, include_store_ids: bool = False) -
     if not norm_kod:
         return []
 
-    ad_haritasi = _magaza_ad_haritasi()
-    store_ids = sorted({
-        str(row.get("store_id") or "").strip()
-        for row in _store_status_rows_cached()
-        if ((
-            _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
-        ) == norm_kod) and _store_status_is_loaded(row)
-    })
+    store_map = _supabase_store_haritasi_cached()
+    store_ids = list(store_map.get(norm_kod, ()) or ())
     if include_store_ids:
         return store_ids
+
+    ad_haritasi = _magaza_ad_haritasi()
     return [ad_haritasi.get(store_id, store_id) for store_id in store_ids]
 
 
@@ -4104,6 +4101,13 @@ if st.session_state.active_main_tab == "urun_sec":
                 ana_yol = ""
                 _sk = SheetsKatmani(st.session_state.hedef_magaza_id)
                 _sk.sheet_hazirla()
+                _mevcut_sheet_kayitlari: dict[str, list[dict]] = {}
+                for _sheet_satiri in _sk.tum_satirlar_al():
+                    _sheet_urun_id = str(_sheet_satiri.get("urun_id") or "").strip()
+                    _sheet_kod = _urun_kodu_normalize(_sheet_urun_id) or _urun_kodu_al(_sheet_urun_id)
+                    if not _sheet_kod:
+                        continue
+                    _mevcut_sheet_kayitlari.setdefault(_sheet_kod, []).append(_sheet_satiri)
                 prog = st.progress(0)
                 hatalar = []
                 islem_raporu = []
@@ -4134,6 +4138,22 @@ if st.session_state.active_main_tab == "urun_sec":
                                 dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
                                 dosya_adlari = [f["name"] for f in dosyalar]
                                 secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
+                                secili_urun_kodu_norm = (
+                                    _urun_kodu_normalize(secili_urun_kodu)
+                                    or _urun_kodu_al(secili_urun_kodu)
+                                )
+                                mevcut_kayitlar = _mevcut_sheet_kayitlari.get(secili_urun_kodu_norm, [])
+                                if mevcut_kayitlar:
+                                    mevcut_durumlar = sorted({
+                                        str((_kayit or {}).get("status") or "").strip().lower()
+                                        for _kayit in mevcut_kayitlar
+                                        if str((_kayit or {}).get("status") or "").strip()
+                                    })
+                                    durum_ozeti = ", ".join(mevcut_durumlar) if mevcut_durumlar else "bilinmeyen durum"
+                                    raise Exception(
+                                        f"{secili_urun_kodu} zaten excele yüklü. "
+                                        f"Sheet'te {len(mevcut_kayitlar)} kayıt bulundu ({durum_ozeti})."
+                                    )
                                 st.write(f"✅ {len(dosyalar)} dosya bulundu")
 
                                 st.write("📐 Boyut ve fiyat hesaplanıyor...")
@@ -5681,10 +5701,8 @@ if st.session_state.active_main_tab == "urunler":
             try:
                 import pandas as pd
 
-                try:
-                    _satilan_canli_harita, _ = _canli_magaza_haritasi_hazir(_satilan_magaza_ops)
-                except Exception:
-                    _satilan_canli_harita = {}
+                ad_haritasi = _magaza_ad_haritasi()
+                store_map = _supabase_store_haritasi_cached()
 
                 satilan_satirlar = []
                 for urun in satilan_goster:
@@ -5694,9 +5712,16 @@ if st.session_state.active_main_tab == "urunler":
                         for parca in str(urun.get("sold_site", "")).split(",")
                         if str(parca or "").strip()
                     ]
+                    satilan_site_kumesi = {
+                        str(site or "").strip()
+                        for site in satilan_site_listesi
+                        if str(site or "").strip()
+                    }
                     diger_yuklu_magazalar = [
-                        magaza for magaza in _urunun_tum_yuklu_magazalari(kod)
-                        if str(magaza or "").strip() not in set(satilan_site_listesi)
+                        ad_haritasi.get(store_id, store_id)
+                        for store_id in (store_map.get(kod, ()) or ())
+                        if str(store_id or "").strip() not in satilan_site_kumesi
+                        and str(ad_haritasi.get(store_id, store_id) or "").strip() not in satilan_site_kumesi
                     ]
                     satilan_satirlar.append({
                         "Ürün Kodu": urun.get("product_code", ""),
