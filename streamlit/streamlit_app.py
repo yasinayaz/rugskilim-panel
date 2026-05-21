@@ -2632,11 +2632,10 @@ def _harita_degisim_izleyici():
     _shown = float(st.session_state.get("_canli_harita_shown_ts") or 0)
     if _ts > _shown:
         st.session_state["_canli_harita_shown_ts"] = _ts
-        if st.session_state.get("urun_formu_acik") or st.session_state.get("_edit_urun"):
-            # Kullanıcı form/edit modunda — şimdi rerun yapma, işartle
-            st.session_state["_urunler_pending_refresh"] = True
-        else:
-            st.rerun(scope="app")
+        # Arka plan mağaza sync'i yüzünden tam sayfa rerun ekranı beyaz/siyah
+        # titreşimine neden olmasın. Yeni veriyi sessizce işaretle; kullanıcı
+        # etkileşiminde veya manuel yenilemede doğal olarak uygulanır.
+        st.session_state["_urunler_pending_refresh"] = True
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -4533,7 +4532,8 @@ if st.session_state.active_main_tab == "urunler":
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
         _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui"))
         _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
-        if _urunler_loading_ui:
+        _ilk_yukleme_bekleniyor = _urunler_loading_ui and not _urunler_cache_var
+        if _ilk_yukleme_bekleniyor:
             _loading_percent = 20 if not _urunler_cache_var else 55
             _loading_mesaj = (
                 "Mağaza yük durumları yükleniyor..."
