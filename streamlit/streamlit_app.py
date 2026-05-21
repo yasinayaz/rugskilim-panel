@@ -733,7 +733,7 @@ _PRODUCT_SOURCE_SYNC_DB = _RUNTIME_DIR / "product_source_sync.json"
 _DELETED_PRODUCTS_DB = _RUNTIME_DIR / "deleted_products.json"
 _STORE_INVENTORY_TTL_SN = 1800
 _CANLI_HARITA_DB = _RUNTIME_DIR / "canli_magaza_haritasi.json"
-_CANLI_HARITA_TTL_SN = 90
+_CANLI_HARITA_TTL_SN = 60
 _CANLI_HARITA_LOCK = _threading.Lock()
 _STORE_BG_SYNC_GUARD = _threading.Lock()
 _STORE_BG_SYNC_LOCKS: dict[str, _threading.Lock] = {}
@@ -2509,6 +2509,59 @@ def _supabase_store_haritasi_cached() -> dict[str, tuple[str, ...]]:
     }
 
 
+def _canli_magaza_haritasi_filtrele(
+    harita: dict[str, list[str] | tuple[str, ...] | set[str]] | None,
+    store_ids: list[str],
+) -> dict[str, set[str]]:
+    izinli = {
+        str(store_id or "").strip()
+        for store_id in (store_ids or [])
+        if str(store_id or "").strip()
+    }
+    if not izinli:
+        return {}
+
+    sonuc: dict[str, set[str]] = {}
+    for kod, magazalar in (harita or {}).items():
+        temiz_kod = str(kod or "").strip()
+        if not temiz_kod:
+            continue
+        eslesen = {
+            str(magaza or "").strip()
+            for magaza in (magazalar or [])
+            if str(magaza or "").strip() in izinli
+        }
+        if eslesen:
+            sonuc[temiz_kod] = eslesen
+    return sonuc
+
+
+def _supabase_haritayi_urunler_cacheine_yaz(store_ids: list[str]) -> dict[str, set[str]]:
+    try:
+        from shared.product_catalog import _supabase_ready
+    except Exception:
+        return {}
+
+    if not _supabase_ready():
+        return {}
+
+    harita = _canli_magaza_haritasi_filtrele(_supabase_store_haritasi_cached(), store_ids)
+    if not harita:
+        return {}
+
+    _json_kaydet(_CANLI_HARITA_DB, {
+        "updated_at": _time.time(),
+        "data": {kod: sorted(magazalar) for kod, magazalar in harita.items()},
+        "store_ids": sorted({
+            str(store_id or "").strip()
+            for store_id in (store_ids or [])
+            if str(store_id or "").strip()
+        }),
+        "source": "supabase-inline",
+    })
+    return harita
+
+
 def _canli_magaza_haritasi_bg_guncelle(store_ids: list[str]):
     """
     Background thread: önce Supabase'den hızlıca (aynı VPS, ~100ms), ardından
@@ -2612,12 +2665,31 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
     """
     cached = _canli_magaza_haritasi_dosyadan_yukle()
     cached_ts = float((cached or {}).get("updated_at") or 0)
+    cache_store_ids = {
+        str(store_id or "").strip()
+        for store_id in ((cached or {}).get("store_ids") or [])
+        if str(store_id or "").strip()
+    }
     is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
-    if is_stale:
+    missing_store = any(
+        str(store_id or "").strip() and str(store_id or "").strip() not in cache_store_ids
+        for store_id in (store_ids or [])
+    )
+    file_harita = _canli_magaza_haritasi_filtrele((cached or {}).get("data") or {}, store_ids)
+
+    # Urunler sekmesi ilk acilista dosya cache'i bos/stale ise beklemeden
+    # Supabase store_status ile hizli bootstrap yap; Sheets dogrulamasi arka planda aksin.
+    supabase_bootstrap = False
+    if (not file_harita or is_stale or missing_store):
+        hizli_harita = _supabase_haritayi_urunler_cacheine_yaz(store_ids)
+        if hizli_harita:
+            file_harita = hizli_harita
+            supabase_bootstrap = True
+
+    bg_sync_gerekli = is_stale or missing_store or supabase_bootstrap
+    if bg_sync_gerekli:
         _canli_magaza_haritasi_bg_guncelle(store_ids)
-    raw_data = (cached or {}).get("data") or {}
-    file_harita = {k: set(v) for k, v in raw_data.items()}
-    return file_harita, is_stale
+    return file_harita, bg_sync_gerekli
 
 
 @st.fragment(run_every=10)
@@ -4613,6 +4685,8 @@ if st.session_state.active_main_tab == "urunler":
         with _refresh_col:
             if st.button("🔄 Yenile", width="stretch", key="urun_list_refresh_btn"):
                 _urun_katalog_cache_temizle()
+                _supabase_store_haritasi_cached.clear()
+                _supabase_magaza_yuklu_sayilari_cached.clear()
                 st.session_state["_urunler_loading_ui"] = True
                 st.session_state["_urunler_store_refresh"] = True
                 st.rerun()
@@ -4786,12 +4860,17 @@ if st.session_state.active_main_tab == "urunler":
                 import pandas as pd
 
                 satirlar = []
+                supabase_count_map = _supabase_magaza_yuklu_sayilari_cached()
                 envanter_count_map = {
-                    str(store_id): int(((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count") or 0)
+                    str(store_id): int(
+                        supabase_count_map.get(str(store_id))
+                        or (((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count"))
+                        or 0
+                    )
                     for store_id in magaza_adlari
                 }
                 _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
-                if _aktif_magaza:
+                if _aktif_magaza and not envanter_count_map.get(_aktif_magaza):
                     try:
                         envanter_count_map[_aktif_magaza] = _magaza_kuyruk_yuklu_sayisi_cached(_aktif_magaza)
                     except Exception:
