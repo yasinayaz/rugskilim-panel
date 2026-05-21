@@ -2610,14 +2610,6 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
     Anında dosyadan okur. Stale ise arka planda güncelleme başlatır.
     Ana thread'i hiç bloklamaz — her zaman dosyadaki son veriyi döndürür.
     """
-    try:
-        supabase_harita = {
-            kod: set(magazalar)
-            for kod, magazalar in _supabase_store_haritasi_cached().items()
-        }
-    except Exception:
-        supabase_harita = {}
-
     cached = _canli_magaza_haritasi_dosyadan_yukle()
     cached_ts = float((cached or {}).get("updated_at") or 0)
     is_stale = (_time.time() - cached_ts) > _CANLI_HARITA_TTL_SN
@@ -2625,14 +2617,7 @@ def _canli_magaza_haritasi_hazir(store_ids: list[str]) -> tuple[dict[str, set[st
         _canli_magaza_haritasi_bg_guncelle(store_ids)
     raw_data = (cached or {}).get("data") or {}
     file_harita = {k: set(v) for k, v in raw_data.items()}
-
-    if not supabase_harita:
-        return file_harita, is_stale
-
-    birlesik = {kod: set(magazalar) for kod, magazalar in file_harita.items()}
-    for kod, magazalar in supabase_harita.items():
-        birlesik.setdefault(kod, set()).update(magazalar)
-    return birlesik, is_stale
+    return file_harita, is_stale
 
 
 @st.fragment(run_every=10)
@@ -4546,7 +4531,7 @@ if st.session_state.active_main_tab == "urunler":
         _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
         _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
-        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
+        _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui"))
         _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
         if _urunler_loading_ui:
             _loading_percent = 20 if not _urunler_cache_var else 55
@@ -4560,7 +4545,6 @@ if st.session_state.active_main_tab == "urunler":
             _urunler_magaza_yenilemesini_baslat(force=_force_store_refresh)
             _refresh_started = float(st.session_state.get("_urunler_magaza_refresh_started_at") or 0.0)
             _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > float((_envanter_cache_dosyadan_yukle() or {}).get("updated_at") or 0.0))
-            _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui")) or _magaza_refresh_suruyor
 
         try:
             _katalog_cache_gecerli = (
@@ -4803,10 +4787,6 @@ if st.session_state.active_main_tab == "urunler":
                     str(store_id): int(((_envanter_cache or {}).get("stores") or {}).get(store_id, {}).get("count") or 0)
                     for store_id in magaza_adlari
                 }
-                try:
-                    envanter_count_map.update(_supabase_magaza_yuklu_sayilari_cached())
-                except Exception:
-                    pass
                 _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
                 if _aktif_magaza:
                     try:
