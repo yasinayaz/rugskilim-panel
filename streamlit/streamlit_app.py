@@ -824,11 +824,11 @@ def _urunler_sync_degisikligini_uygula() -> bool:
 
     st.session_state["_urunler_seen_sync_version"] = mevcut_versiyon
     st.session_state["_urunler_pending_sync_version"] = ""
-    # Sadece mağaza haritası değişti — ürün listesini yeniden çekmeye gerek yok.
-    # Cache temizlenmez; rerun ile mevcut ürünler + yeni yeşil noktalar gösterilir.
+    # Arka plan senkronu kullaniciya gorunmeden toplansin.
+    # Yeni veri bir sonraki dogal rerun'da uygulanir; tam sayfa yenileme yapilmaz.
     st.session_state["_urunler_loading_ui"] = False
-    st.rerun(scope="app")
-    return True
+    st.session_state["_urunler_pending_refresh"] = True
+    return False
 
 
 def _urunler_sessiz_sync_nabzi():
@@ -3471,9 +3471,6 @@ def _kuyruk_badge(status: str) -> str:
 
 
 def _main_tab_sec(tab_id: str):
-    mevcut_tab = str(st.session_state.get("active_main_tab") or "").strip()
-    if mevcut_tab != tab_id:
-        st.session_state._pending_main_tab_render = tab_id
     st.session_state.active_main_tab = tab_id
 
 
@@ -4531,6 +4528,12 @@ if st.session_state.active_main_tab == "urunler":
         _cache_updated = float((_envanter_cache or {}).get("updated_at") or 0.0)
         _magaza_refresh_suruyor = bool(_refresh_started and _refresh_started > _cache_updated)
         _urunler_loading_ui = bool(st.session_state.get("_urunler_loading_ui"))
+        if st.session_state.get("_urun_katalog_cache") is None:
+            _yerel_hizli_katalog = _panel_urunleri_yerden_yukle()
+            if _yerel_hizli_katalog:
+                st.session_state["_urun_katalog_cache"] = [dict(item) for item in _yerel_hizli_katalog]
+                st.session_state["_urun_katalog_cache_ts"] = _time.time()
+                st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
         _urunler_cache_var = st.session_state.get("_urun_katalog_cache") is not None
         _ilk_yukleme_bekleniyor = _urunler_loading_ui and not _urunler_cache_var
         if _ilk_yukleme_bekleniyor:
