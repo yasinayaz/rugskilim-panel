@@ -4032,6 +4032,27 @@ if _main_tab_gecis_ekrani():
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
+    _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
+    if _aktif_magaza and st.session_state.get("pcloud_token"):
+        _kuyruk_hazir = (
+            bool(st.session_state.get("kuyruk_yuklendi"))
+            and st.session_state.get("kuyruk_magaza_id") == _aktif_magaza
+        )
+        _renk_hazir = (
+            st.session_state.get("sheet_renk_magaza_id") == _aktif_magaza
+            and bool(st.session_state.get("sheet_renk_durumlari"))
+        )
+        if not _kuyruk_hazir:
+            try:
+                _kuyruk_cache_hazirla(_aktif_magaza, force=True)
+            except Exception:
+                pass
+        if (not _renk_hazir) or _sheet_renk_cache_bayatti():
+            try:
+                _magaza_renk_cache_yenile(_aktif_magaza)
+            except Exception:
+                pass
+
     if not st.session_state.pcloud_token:
         with st.container(key="main_tab_content_urun_sec"):
             _tab_loading_gostergesi("Ürün Seç", 100, "pCloud bağlantısı bekleniyor. Giriş ekranı hazır.", ready=True)
@@ -4111,7 +4132,6 @@ if st.session_state.active_main_tab == "urun_sec":
                 ]
                 st.session_state.klasor_id = _folder_id
                 st.session_state.klasor_ad = _folder_ad
-                st.rerun(scope="app")
 
             def _klasorleri_yenile():
                 _klasorleri_getir.clear()
