@@ -830,6 +830,89 @@ def description_olustur(ai: dict, boyut_ft: str, boyut_cm: str, metrekare: float
     ]))
 
 
+def _rate_limit_fallback_ai(
+    urun_id: str,
+    boyut_ft: str,
+    boyut_cm: str,
+    metrekare: float,
+    fiyat_usd: int,
+    genislik_cm=None,
+    uzunluk_cm=None,
+    template_config: dict = None,
+) -> dict:
+    norm_template = template_config_normallestir(template_config)
+    rounded_ft = _rounded_ft_etiketi(boyut_ft)
+    tip = _tip_tahmin(boyut_ft)
+    renk1 = "Beige"
+    renk2 = "Brown"
+    pattern_etsy = "Oriental"
+    pattern = "Traditional"
+    stil = "Vintage Oushak"
+    koken = "Turkish"
+    home_style = "Bohemian & eclectic"
+    shop_section = _shop_section_tahmin(boyut_ft, metrekare, tip, pattern_etsy, stil)
+    ana_resim_tag = "-".join([
+        rounded_ft.lower(),
+        "ft",
+        "vintage",
+        "turkish",
+        tip.lower(),
+        "rug",
+        "beige",
+        "brown",
+        "wool",
+        "handmade",
+    ])
+    ai = {
+        "baslik": _fallback_baslik_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section),
+        "taglar": _fallback_taglari_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section),
+        "renk1": renk1,
+        "renk2": renk2,
+        "renk_scheme": "Neutral Beige, Warm Brown",
+        "pattern": pattern,
+        "tahmini_yil": "Vintage",
+        "pile_cm": "",
+        "stil": stil,
+        "koken": koken,
+        "opening": (
+            f"This {boyut_ft} ft vintage Turkish {tip.lower()} brings a collected, time-softened character "
+            f"that works beautifully when you need warmth, texture, and one-of-a-kind scale."
+        ),
+        "hikaye": "\n\n".join([
+            "Selected with a practical fallback when Gemini was temporarily unavailable, this piece is queued with safe default listing content so your workflow can continue without interruption.",
+            f"At {boyut_ft} ft, and approximately {rounded_ft} in rounded size, it is well suited to spaces that benefit from a long, grounded textile presence and vintage character.",
+            "Its handmade wool construction and traditional Turkish rug language make it easy to place in layered interiors, from collected bohemian rooms to softer farmhouse settings.",
+            "You can refine the title, colors, and story later if needed, but this draft is structured to stay valid for Etsy fields and keep the product moving through the queue.",
+        ]),
+        "ana_resim_tag": ana_resim_tag,
+        "pattern_etsy": pattern_etsy,
+        "tip": tip,
+        "home_style": home_style,
+        "shop_section": shop_section,
+    }
+    ai = _ai_sonuc_normallestir(ai, norm_template)
+    ai = _etsy_alanlarini_tamamla(ai, boyut_ft, metrekare)
+    _validate(ai, norm_template)
+    aciklama = description_olustur(
+        ai,
+        boyut_ft,
+        boyut_cm,
+        metrekare,
+        genislik_cm,
+        uzunluk_cm,
+        norm_template,
+        urun_id=urun_id,
+    )
+    return {
+        **ai,
+        "aciklama": aciklama,
+        "basarili": True,
+        "hata": None,
+        "fallback_kullanildi": True,
+        "uyari": "Gemini 429 nedeniyle yedek listing icerigi kullanildi.",
+    }
+
+
 # ── Gemini API ────────────────────────────────────────────────────────────────
 
 def gorsel_to_base64(dosya_yolu: str) -> str:
@@ -1115,6 +1198,17 @@ def ai_icerik_url(
             print(f"[AI:{urun_id}] URL uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
+        if son_hata and "rate limit (429)" in str(son_hata).lower():
+            return _rate_limit_fallback_ai(
+                urun_id=urun_id,
+                boyut_ft=boyut_ft,
+                boyut_cm=boyut_cm,
+                metrekare=metrekare,
+                fiyat_usd=fiyat_usd,
+                genislik_cm=genislik_cm,
+                uzunluk_cm=uzunluk_cm,
+                template_config=norm_template,
+            )
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
         print(f"[AI:{urun_id}] URL uretim dis hata -> {type(e).__name__}: {e}")
@@ -1158,6 +1252,17 @@ def ai_icerik_uret(
             print(f"[AI:{urun_id}] Dosya uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
+        if son_hata and "rate limit (429)" in str(son_hata).lower():
+            return _rate_limit_fallback_ai(
+                urun_id=urun_id,
+                boyut_ft=boyut_ft,
+                boyut_cm=boyut_cm,
+                metrekare=metrekare,
+                fiyat_usd=fiyat_usd,
+                genislik_cm=genislik_cm,
+                uzunluk_cm=uzunluk_cm,
+                template_config=norm_template,
+            )
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
         print(f"[AI:{urun_id}] Dosya uretim dis hata -> {type(e).__name__}: {e}")
