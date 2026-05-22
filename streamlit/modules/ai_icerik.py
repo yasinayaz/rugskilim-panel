@@ -165,6 +165,19 @@ _DEFAULT_STATIC_TEXTS = {
     "footer": _SABIT_ALT,
 }
 
+
+def _description_framework_olustur(static_texts: dict) -> str:
+    blocks = ["{opening}"]
+    if str((static_texts or {}).get("no_extra_fees", "") or "").strip():
+        blocks.append("{no_extra_fees_block}")
+    blocks.append("{details_block}")
+    if str((static_texts or {}).get("easy_returns", "") or "").strip():
+        blocks.append("{easy_returns_block}")
+    blocks.append("{hikaye}")
+    if str((static_texts or {}).get("footer", "") or "").strip():
+        blocks.append("{footer_block}")
+    return "\n\n".join(blocks)
+
 TEMPLATE_PLACEHOLDERS = {
     "boyut_ft": "Ham ft olcusu. Ornek: 2.8x9.9",
     "rounded_ft": "Yuvarlanmis ft olcusu. Ornek: 3x10",
@@ -271,6 +284,8 @@ def template_config_normallestir(template_config: dict = None,
     for _key in ["title_brief", "tag_strategy", "description_brief", "description_example_template",
                  "title_rules", "tag_rules", "opening_rules", "story_rules"]:
         prompt_rules[_key] = str(prompt_rules.get(_key, "") or "")
+    if not prompt_rules["description_example_template"].strip():
+        prompt_rules["description_example_template"] = _description_framework_olustur(static_texts)
 
     return {
         "template_id": raw.get("template_id", template_id),
