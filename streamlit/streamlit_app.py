@@ -25,6 +25,11 @@ _TEMPLATE_DIRS = [
 ]
 
 
+def _urun_sec_rozet_cache_yolu(store_id: str) -> Path:
+    temiz = str(store_id or "").strip() or "default"
+    return _RUNTIME_DIR / f"urun_sec_badges__{temiz}.json"
+
+
 def _template_yollari():
     return [p for p in _TEMPLATE_DIRS if p.exists()]
 
@@ -397,7 +402,7 @@ section.main { background-color: var(--bg-0) !important; }
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 38px;
+  min-height: 76px;
 }
 .urun-sec-checkbox [data-testid="stCheckbox"] {
   display: flex;
@@ -407,6 +412,14 @@ section.main { background-color: var(--bg-0) !important; }
 }
 .urun-sec-checkbox [data-testid="stCheckbox"] label {
   margin: 0;
+}
+.urun-sec-status {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 76px;
+  font-size: 1rem;
+  text-align: center;
 }
 
 /* ── Inputs ── */
@@ -668,6 +681,9 @@ for k, v in [
     ("_urunler_last_sheet_sync_request_ts", 0.0),
     ("_urunler_last_sheet_signature", ""),
     ("_urun_edit_dialog_acik", False),
+    ("_urun_sec_badge_refresh_started_at", 0.0),
+    ("_urun_sec_badge_refresh_store_id", ""),
+    ("_urun_sec_badge_cache_seen_ts", 0.0),
     ("active_main_tab", "urun_sec"),
     ("_pending_main_tab_render", None),
     ("_pending_urunler_alt_tab_render", None),
@@ -2272,6 +2288,99 @@ def _sheet_renk_cache_bayatti(ttl_sn: int = 90) -> bool:
         return True
 
 
+def _urun_sec_rozet_cache_uygula(store_id: str) -> bool:
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return False
+
+    payload = _json_yukle(_urun_sec_rozet_cache_yolu(store_id), {})
+    if not isinstance(payload, dict):
+        return False
+
+    updated_at = float(payload.get("updated_at") or 0.0)
+    seen_ts = float(st.session_state.get("_urun_sec_badge_cache_seen_ts") or 0.0)
+    if updated_at and updated_at <= seen_ts and st.session_state.get("sheet_renk_magaza_id") == store_id:
+        return False
+
+    st.session_state.kuyruga_eklenenler = dict(payload.get("kuyruga_eklenenler") or {})
+    st.session_state.kuyruk_klasor_durumlari = dict(payload.get("kuyruk_klasor_durumlari") or {})
+    st.session_state.sheet_renk_durumlari = dict(payload.get("sheet_renk_durumlari") or {})
+    st.session_state.klasor_id_durumlari = dict(payload.get("klasor_id_durumlari") or {})
+    st.session_state[f"sheet_loaded_codes::{store_id}"] = list(payload.get("sheet_loaded_codes") or [])
+    st.session_state[f"sheet_loaded_codes::{store_id}::ts"] = updated_at or _time.time()
+    st.session_state.kuyruk_magaza_id = store_id
+    st.session_state.kuyruk_yuklendi = bool(payload.get("kuyruk_yuklendi", True))
+    st.session_state.sheet_renk_magaza_id = store_id
+    st.session_state.sheet_renk_cache_ts = updated_at or _time.time()
+    st.session_state["_urun_sec_badge_cache_seen_ts"] = updated_at or _time.time()
+    return True
+
+
+def _urun_sec_rozet_yenilemesini_baslat(store_id: str, force: bool = False) -> bool:
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return False
+
+    simdi = _time.time()
+    son_magaza = str(st.session_state.get("_urun_sec_badge_refresh_store_id") or "").strip()
+    son_baslangic = float(st.session_state.get("_urun_sec_badge_refresh_started_at") or 0.0)
+    if not force and son_magaza == store_id and son_baslangic and (simdi - son_baslangic) < 20:
+        return False
+
+    st.session_state["_urun_sec_badge_refresh_store_id"] = store_id
+    st.session_state["_urun_sec_badge_refresh_started_at"] = simdi
+
+    def _job():
+        try:
+            from shared.sheets import SheetsKatmani
+
+            _sk = SheetsKatmani(store_id)
+            _satirlar = _sk.tum_satirlar_al()
+            _renkler = {
+                (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
+                for k, v in _sk.urun_renk_durumlari_al().items()
+            }
+
+            def _ilk_kod(_deger):
+                _metin = str(_deger or "").strip()
+                _es = _re.match(r"^([A-Za-z]{0,3})\s*(\d+)\b", _metin)
+                if _es:
+                    return f"{(_es.group(1) or '').lower()}{_es.group(2)}"
+                return _metin
+
+            payload = {
+                "updated_at": _time.time(),
+                "store_id": store_id,
+                "kuyruga_eklenenler": {
+                    _ilk_kod(str(s.get("urun_id", ""))): str(s.get("status", "pending"))
+                    for s in _satirlar if s.get("urun_id")
+                },
+                "kuyruk_klasor_durumlari": {
+                    str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "pending")).strip().lower()
+                    for s in _satirlar
+                    if str(s.get("pcloud_klasor_id", "")).strip()
+                },
+                "sheet_renk_durumlari": _renkler,
+                "klasor_id_durumlari": {
+                    str(s.get("pcloud_klasor_id", "")).strip(): _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+                    for s in _satirlar
+                    if str(s.get("pcloud_klasor_id", "")).strip()
+                    and _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+                },
+                "sheet_loaded_codes": sorted({
+                    kod for kod, renk in _renkler.items()
+                    if str(renk or "").strip().lower() == "green"
+                }),
+                "kuyruk_yuklendi": True,
+            }
+            _json_kaydet(_urun_sec_rozet_cache_yolu(store_id), payload)
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name=f"urun-sec-badges-{store_id}").start()
+    return True
+
+
 def _json_yukle(path: Path, default):
     try:
         if not path.exists():
@@ -2991,6 +3100,17 @@ def _harita_degisim_izleyici():
         # titreşimine neden olmasın. Yeni veriyi sessizce işaretle; kullanıcı
         # etkileşiminde veya manuel yenilemede doğal olarak uygulanır.
         st.session_state["_urunler_pending_refresh"] = True
+
+
+@st.fragment(run_every=5)
+def _urun_sec_rozet_izleyici():
+    if st.session_state.get("active_main_tab") != "urun_sec":
+        return
+    store_id = str(st.session_state.get("hedef_magaza_id") or "").strip()
+    if not store_id:
+        return
+    if _urun_sec_rozet_cache_uygula(store_id):
+        st.rerun(scope="app")
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -4032,26 +4152,17 @@ if _main_tab_gecis_ekrani():
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
+    _urun_sec_rozet_izleyici()
     _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
     if _aktif_magaza and st.session_state.get("pcloud_token"):
-        _kuyruk_hazir = (
-            bool(st.session_state.get("kuyruk_yuklendi"))
-            and st.session_state.get("kuyruk_magaza_id") == _aktif_magaza
+        _urun_sec_rozet_cache_uygula(_aktif_magaza)
+        _rozet_stale = (
+            st.session_state.get("sheet_renk_magaza_id") != _aktif_magaza
+            or not st.session_state.get("kuyruk_yuklendi")
+            or _sheet_renk_cache_bayatti()
         )
-        _renk_hazir = (
-            st.session_state.get("sheet_renk_magaza_id") == _aktif_magaza
-            and bool(st.session_state.get("sheet_renk_durumlari"))
-        )
-        if not _kuyruk_hazir:
-            try:
-                _kuyruk_cache_hazirla(_aktif_magaza, force=True)
-            except Exception:
-                pass
-        if (not _renk_hazir) or _sheet_renk_cache_bayatti():
-            try:
-                _magaza_renk_cache_yenile(_aktif_magaza)
-            except Exception:
-                pass
+        if _rozet_stale:
+            _urun_sec_rozet_yenilemesini_baslat(_aktif_magaza, force=False)
 
     if not st.session_state.pcloud_token:
         with st.container(key="main_tab_content_urun_sec"):
@@ -4147,6 +4258,7 @@ if st.session_state.active_main_tab == "urun_sec":
                 if _mevcut_magaza:
                     st.session_state.pop(f"sheet_loaded_codes::{_mevcut_magaza}", None)
                     st.session_state.pop(f"sheet_loaded_codes::{_mevcut_magaza}::ts", None)
+                    _urun_sec_rozet_yenilemesini_baslat(_mevcut_magaza, force=True)
 
             def _ai_kuyruga_ekle():
                 bloklu_secimler = [
@@ -4593,7 +4705,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                 })
 
                             if not _queue_badges_ready:
-                                st.caption("Klasör listesi hazır. Mağaza durum işaretleri son bilinen veriden gösteriliyor.")
+                                st.caption("Klasör listesi hazır. Mağaza durum işaretleri arka planda yükleniyor; görünmeleri birkaç saniye sürebilir.")
 
                             for _row in _satir_meta:
                                 k = _row["item"]
@@ -4602,7 +4714,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                 with _c_chk:
                                     if _row["zaten_kuyrukta"]:
                                         st.markdown(
-                                            f"<div style='padding:6px 0;font-size:1rem;text-align:center;'>{_row['ikon']}</div>",
+                                            f"<div class='urun-sec-status'>{_row['ikon']}</div>",
                                             unsafe_allow_html=True,
                                         )
                                     else:
