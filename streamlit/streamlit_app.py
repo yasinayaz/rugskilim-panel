@@ -6248,6 +6248,14 @@ if st.session_state.active_main_tab == "ayarlar":
                                     "template": _nt,
                                     "active": _na,
                                 })
+                                if _tmpl_path is not None:
+                                    _kayit_tmpl_path = _template_yolu(_nt)
+                                    _norm = _tmpl_norm(
+                                        _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                        template_id=_nt,
+                                        template_name=_m_name.strip() or _secili["store_id"],
+                                    )
+                                    _kayit_tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
                                 try:
                                     from shared.sheets import SheetsKatmani as _SettingsSheets
                                     _SettingsSheets(_secili["store_id"]).sheet_hazirla()
