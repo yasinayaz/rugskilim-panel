@@ -44,6 +44,55 @@ def _template_yolu(template_id: str) -> Path:
     return _TEMPLATE_DIRS[0] / f"{template_id}.json"
 
 
+def _template_config_key(template_id: str) -> str:
+    return f"TEMPLATE_JSON__{str(template_id or '').strip()}"
+
+
+def _template_json_oku(template_id: str) -> dict:
+    try:
+        from shared.sheets import config_oku as _config_oku
+
+        raw = str((_config_oku() or {}).get(_template_config_key(template_id), "") or "").strip()
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+
+    _tmpl_path = _template_yolu(template_id)
+    if _tmpl_path.exists():
+        try:
+            return json.loads(_tmpl_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _template_session_overlay(template_cfg: dict, store_id: str, store_name: str = "") -> tuple[dict, str]:
+    cfg = json.loads(json.dumps(template_cfg or {}, ensure_ascii=False)) if template_cfg else {}
+    source = "saved_template"
+    draft_description = str(st.session_state.get(f"editor_{store_id}_description_example_template", "") or "").strip()
+    if draft_description:
+        cfg.setdefault("prompt_rules", {})
+        cfg["prompt_rules"]["description_example_template"] = draft_description
+        cfg["template_id"] = cfg.get("template_id") or store_id
+        cfg["template_name"] = cfg.get("template_name") or store_name or store_id
+        source = "session_draft"
+    return cfg, source
+
+
+def _template_json_kaydet(template_id: str, payload: dict) -> Path:
+    _tmpl_path = _template_yolu(template_id)
+    _text = json.dumps(payload, ensure_ascii=False, indent=2)
+    _tmpl_path.write_text(_text, encoding="utf-8")
+    try:
+        from shared.sheets import config_yaz as _config_yaz
+
+        _config_yaz(_template_config_key(template_id), _text)
+    except Exception:
+        pass
+    return _tmpl_path
+
+
 @st.cache_data(show_spinner=False, ttl=30)
 def _sheet_baglanti_durumu(store_id: str, google_sheet_id: str, sheet_tab: str):
     """Magazanin hedef Google Sheet/sekmesine erisilebiliyor mu kontrol eder."""
@@ -342,6 +391,22 @@ section.main { background-color: var(--bg-0) !important; }
 
 [data-testid="stCheckbox"] input {
   accent-color: var(--success);
+}
+
+.urun-sec-checkbox {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 38px;
+}
+.urun-sec-checkbox [data-testid="stCheckbox"] {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+}
+.urun-sec-checkbox [data-testid="stCheckbox"] label {
+  margin: 0;
 }
 
 /* ── Inputs ── */
@@ -1912,8 +1977,6 @@ def _urun_sec_magaza_durumu(
     if (
         key in _sheet_yuklu_kodlari_al(store_id)
         or sheet_renk == "green"
-        or kuyruk_status_norm == "done"
-        or session_queue_status == "done"
     ):
         return "green"
 
@@ -2057,7 +2120,7 @@ def _klasor_bloklu_mu(klasor_adi: str) -> bool:
 def _secili_item_bloklu_mu(item: dict) -> bool:
     if not item.get("is_product_folder", True):
         return False
-    return _klasor_satilan_mi(item.get("ad", ""))
+    return _klasor_bloklu_mu(item.get("ad", ""))
 
 
 def _global_kirmizi_kodlari_yenile():
@@ -3640,6 +3703,7 @@ def _klasor_icerigi_getir(token, host, klasor_id):
                         {
                             "id": item["folderid"],
                             "ad": item["name"],
+                            "entry_type": "folder",
                             "is_product_folder": False,
                         }
                     )
@@ -4086,11 +4150,17 @@ if st.session_state.active_main_tab == "urun_sec":
 
                 try:
                     from shared.store_manager import get_store as _gs2
-                    _tmpl_id = _gs2(st.session_state.hedef_magaza_id).get("template", "default_v1")
-                    _tmpl_path = _template_yolu(_tmpl_id)
-                    _template_cfg = _json.loads(_tmpl_path.read_text(encoding="utf-8")) if _tmpl_path.exists() else {}
+                    _store_cfg = _gs2(st.session_state.hedef_magaza_id)
+                    _tmpl_id = _store_cfg.get("template", "default_v1")
+                    _template_cfg_raw = _template_json_oku(_tmpl_id)
+                    _template_cfg, _template_source = _template_session_overlay(
+                        _template_cfg_raw,
+                        st.session_state.hedef_magaza_id,
+                        _store_cfg.get("store_name", st.session_state.hedef_magaza_id),
+                    )
                 except Exception:
                     _template_cfg = {}
+                    _template_source = "fallback_empty"
 
                 try:
                     from shared.store_manager import get_store as _gs
@@ -4208,6 +4278,10 @@ if st.session_state.active_main_tab == "urun_sec":
                                 )
                                 if not ai["basarili"]:
                                     raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
+                                if _template_source == "session_draft":
+                                    st.info("Bu ürün için ayarlardaki kaydedilmemiş description taslağı kullanıldı.")
+                                if ai.get("fallback_kullanildi"):
+                                    st.warning(ai.get("uyari") or "Gemini yerine yedek listing icerigi kullanildi.")
                                 st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
 
                                 st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
@@ -4454,11 +4528,14 @@ if st.session_state.active_main_tab == "urun_sec":
                                 known_folder_status = st.session_state.kuyruk_klasor_durumlari.get(folder_id)
                                 known_sheet_color = st.session_state.klasor_id_durumlari.get(folder_id)
                                 inferred_product_code = _klasor_urun_kodu_al(k["ad"])
+                                is_folder_entry = str(k.get("entry_type") or "folder").strip().lower() == "folder"
                                 is_product_folder = bool(
-                                    k.get("is_product_folder") is True
-                                    or inferred_product_code is not None
-                                    or known_folder_status is not None
-                                    or known_sheet_color is not None
+                                    is_folder_entry and (
+                                        k.get("is_product_folder") is True
+                                        or inferred_product_code is not None
+                                        or known_folder_status is not None
+                                        or known_sheet_color is not None
+                                    )
                                 )
                                 row_item = {**k, "is_product_folder": is_product_folder}
                                 _chk_key = f"chk_form_{k['id']}"
@@ -4476,9 +4553,9 @@ if st.session_state.active_main_tab == "urun_sec":
                                     else None
                                 )
                                 zaten_kuyrukta = (kuyruk_status is not None) or (sheet_renk is not None)
-                                if sheet_renk == "red":
+                                if satilmis_global or sheet_renk == "red":
                                     _ikon = "🔴"
-                                elif sheet_renk == "green" or kuyruk_status == "done":
+                                elif sheet_renk == "green":
                                     _ikon = "✅"
                                 elif sheet_renk == "blue":
                                     _ikon = "🔵"
@@ -4513,6 +4590,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                             st.session_state[_row["chk_key"]] = False
                                         elif _row["chk_key"] not in st.session_state:
                                             st.session_state[_row["chk_key"]] = _row["zaten_secili"]
+                                        st.markdown("<div class='urun-sec-checkbox'>", unsafe_allow_html=True)
                                         st.checkbox(
                                             "seç",
                                             key=_row["chk_key"],
@@ -4521,6 +4599,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                             on_change=_secim_toggle,
                                             args=(_row["item"], _row["chk_key"]),
                                         )
+                                        st.markdown("</div>", unsafe_allow_html=True)
 
                                 with _c_name:
                                     st.button(
@@ -6101,7 +6180,7 @@ if st.session_state.active_main_tab == "ayarlar":
             if _secili:
                 _tmpl_path = _template_yolu(_secili.get("template", "default_v1"))
                 try:
-                    _tmpl_raw = _json2.loads(_tmpl_path.read_text(encoding="utf-8")) if _tmpl_path.exists() else {}
+                    _tmpl_raw = _template_json_oku(_secili.get("template", "default_v1"))
                 except Exception as _tmpl_err:
                     _tmpl_raw = {}
                     st.warning(f"Template okunamadi, varsayilan sema gosteriliyor: {_tmpl_err}")
@@ -6259,13 +6338,12 @@ if st.session_state.active_main_tab == "ayarlar":
                                     "active": _na,
                                 })
                                 if _tmpl_path is not None:
-                                    _kayit_tmpl_path = _template_yolu(_nt)
                                     _norm = _tmpl_norm(
                                         _aktif_template_taslagi(_tmpl_json, _secili["store_id"], _secili.get("template", "default_v1")),
                                         template_id=_nt,
                                         template_name=_m_name.strip() or _secili["store_id"],
                                     )
-                                    _kayit_tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
+                                    _template_json_kaydet(_nt, _norm)
                                 try:
                                     from shared.sheets import SheetsKatmani as _SettingsSheets
                                     _SettingsSheets(_secili["store_id"]).sheet_hazirla()
@@ -6314,8 +6392,8 @@ if st.session_state.active_main_tab == "ayarlar":
                                     template_id=_tmpl_cfg["template_id"],
                                     template_name=_tmpl_cfg["template_name"],
                                 )
-                                _tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
-                                st.success(f"✅ Template kaydedildi: {_tmpl_path.name}")
+                                _kaydedilen_path = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                                st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                                 st.rerun()
                             if _wd2.button("↺ Değişiklikleri Geri Al", key=f"reset_dirty_{_secili['store_id']}"):
                                 _defaults = _editor_defaults(_tmpl_cfg)
@@ -6356,9 +6434,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                         template_id=_tmpl_cfg["template_id"],
                                         template_name=_tmpl_cfg["template_name"],
                                     )
-                                    _tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
+                                    _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
                                     _toggle_preview_edit(_secili["store_id"], False)
-                                    st.success(f"✅ Ön izleme şablonu kaydedildi: {_tmpl_path.name}")
+                                    st.success(f"✅ Ön izleme şablonu kaydedildi: {_tmpl_cfg['template_id']}.json")
                                     st.rerun()
                                 if _iptal:
                                     st.session_state[f"editor_{_secili['store_id']}_description_example_template"] = _editor_defaults(_tmpl_cfg)["description_example_template"]
@@ -6447,8 +6525,8 @@ if st.session_state.active_main_tab == "ayarlar":
                                 template_id=_tmpl_cfg["template_id"],
                                 template_name=_tmpl_cfg["template_name"],
                             )
-                            _tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
-                            st.success(f"✅ Template kaydedildi: {_tmpl_path.name}")
+                            _kaydedilen_path = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                            st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                             st.rerun()
 
                     if st.session_state.ayarlar_template_tab == "json":
@@ -6467,8 +6545,8 @@ if st.session_state.active_main_tab == "ayarlar":
                                     template_id=_secili.get("template", "default_v1"),
                                     template_name=_secili.get("store_name", _secili["store_id"]),
                                 )
-                                _tmpl_path.write_text(_json2.dumps(_norm, ensure_ascii=False, indent=2), encoding="utf-8")
-                                st.success(f"✅ Template kaydedildi: {_tmpl_path.name}")
+                                _kaydedilen_path = _template_json_kaydet(_secili.get("template", "default_v1"), _norm)
+                                st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                                 st.rerun()
                             except Exception as _e_tmpl:
                                 st.error(f"❌ Template kaydedilemedi: {_e_tmpl}")
