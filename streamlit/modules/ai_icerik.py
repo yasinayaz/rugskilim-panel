@@ -148,11 +148,12 @@ HARD RULES:
 - Every tag must reflect what you actually observe — color, pattern, texture — for THIS rug.""",
     "opening_rules": """ONE punchy sentence that hooks the reader.
 CRITICAL: This sentence must describe what you actually see in THIS rug's photo — a specific color, pattern detail, texture, or wear characteristic unique to this piece. Do NOT write a sentence that could apply to any rug.
-Include size, origin, and one concrete visual observation from the photo.
+Include the ROUNDED size, origin, and one concrete visual observation from the photo.
+Do NOT use raw decimal ft sizes like 3.6x9.2 in the opening sentence. Use rounded sizes like 4x9 ft in prose.
 Example: "This 3x10 ft Turkish Runner stops you — its deep rust medallions fading into worn ivory give it the kind of patina that takes decades, not months." """,
     "story_rules": """Write 4–5 short paragraphs following the store's description template style.
 - Para 1: Open with a cinematic hook, then describe this rug's specific visual character — its actual colors, pattern density, fading or wear you observe in the photo. Make the reader picture THIS exact rug.
-- Para 2: Size — what spaces it fits, how it anchors a room. Mention the raw ft size naturally. Also use the rounded size (e.g. "3x11") at least once here.
+- Para 2: Size — what spaces it fits, how it anchors a room. In prose, prefer the rounded ft size (e.g. "4x9 ft", "3x11 runner"). Do NOT lead with raw decimal sizes like 3.6x9.2 ft in normal sentences.
 - Para 3: Material — what makes this rug honest and tactile. Wool? Cotton? Both?
 - Para 4: Style versatility + room recommendations (Living room, Bedroom, Entryway, etc.) + decoration style fit (Bohemian, Country & farmhouse, etc.)
 Use \\n between paragraphs. Do NOT use bullet points here. Keep it conversational, human, and warm.
@@ -729,6 +730,22 @@ def _hikaye_paragraflari(hikaye: str) -> list:
     return [p.strip() for p in re.split(r"\n+", str(hikaye or "").strip().strip('"')) if p.strip()]
 
 
+def _duzyazi_boyut_normallestir(text: str, boyut_ft: str) -> str:
+    metin = str(text or "").strip()
+    raw_size = str(boyut_ft or "").replace(" ft", "").strip()
+    rounded_size = _rounded_ft_etiketi(boyut_ft)
+    if not metin or not raw_size or not rounded_size or raw_size == rounded_size:
+        return metin
+    patterns = [
+        rf"\b{re.escape(raw_size)}\s*ft\b",
+        rf"\b{re.escape(raw_size)}\b",
+    ]
+    for pattern in patterns:
+        metin = re.sub(pattern, f"{rounded_size} ft", metin, flags=re.IGNORECASE)
+    metin = re.sub(rf"\b{re.escape(rounded_size)}\s*ft\s*ft\b", f"{rounded_size} ft", metin, flags=re.IGNORECASE)
+    return metin
+
+
 def _template_context(ai: dict, urun_id: str, boyut_ft: str, boyut_cm: str, metrekare: float) -> dict:
     rounded_ft = _rounded_ft_etiketi(boyut_ft)
     sqft = round(metrekare * 10.764, 2) if metrekare else ""
@@ -798,7 +815,9 @@ def description_olustur(ai: dict, boyut_ft: str, boyut_cm: str, metrekare: float
     )
 
     opening = ai.get("opening", "").strip().strip('"')
+    opening = _duzyazi_boyut_normallestir(opening, boyut_ft)
     hikaye_paragraflari = _hikaye_paragraflari(ai.get("hikaye", ""))
+    hikaye_paragraflari = [_duzyazi_boyut_normallestir(paragraf, boyut_ft) for paragraf in hikaye_paragraflari]
     size_story_template = _render_template_text(static_texts.get("story_size_template", ""), ctx)
     if size_story_template:
         if len(hikaye_paragraflari) >= 2:
@@ -875,14 +894,14 @@ def _rate_limit_fallback_ai(
         "stil": stil,
         "koken": koken,
         "opening": (
-            f"This {boyut_ft} ft vintage Turkish {tip.lower()} brings a collected, time-softened character "
+            f"This {rounded_ft} ft vintage Turkish {tip.lower()} brings a collected, time-softened character "
             f"that works beautifully when you need warmth, texture, and one-of-a-kind scale."
         ),
         "hikaye": "\n\n".join([
-            "Selected with a practical fallback when Gemini was temporarily unavailable, this piece is queued with safe default listing content so your workflow can continue without interruption.",
-            f"At {boyut_ft} ft, and approximately {rounded_ft} in rounded size, it is well suited to spaces that benefit from a long, grounded textile presence and vintage character.",
-            "Its handmade wool construction and traditional Turkish rug language make it easy to place in layered interiors, from collected bohemian rooms to softer farmhouse settings.",
-            "You can refine the title, colors, and story later if needed, but this draft is structured to stay valid for Etsy fields and keep the product moving through the queue.",
+            "Its time-softened palette and vintage Turkish character create an easy, collected look that feels warm rather than overly formal.",
+            f"With its versatile {rounded_ft} ft proportions, it works beautifully in interiors that need a longer visual line, soft texture, and authentic handmade presence.",
+            "Handmade wool construction gives the piece a durable, tactile quality that feels honest underfoot and easy to layer into daily living spaces.",
+            "It suits bohemian, farmhouse, rustic, and quietly traditional rooms while still feeling distinctive enough to stand out as a one-of-a-kind vintage find.",
         ]),
         "ana_resim_tag": ana_resim_tag,
         "pattern_etsy": pattern_etsy,

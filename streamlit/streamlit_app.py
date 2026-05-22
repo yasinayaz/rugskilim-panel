@@ -30,6 +30,11 @@ def _urun_sec_rozet_cache_yolu(store_id: str) -> Path:
     return _RUNTIME_DIR / f"urun_sec_badges__{temiz}.json"
 
 
+def _urun_sec_sheet_imza_yolu(store_id: str) -> Path:
+    temiz = str(store_id or "").strip() or "default"
+    return _RUNTIME_DIR / f"urun_sec_badges_sig__{temiz}.json"
+
+
 def _template_yollari():
     return [p for p in _TEMPLATE_DIRS if p.exists()]
 
@@ -684,6 +689,8 @@ for k, v in [
     ("_urun_sec_badge_refresh_started_at", 0.0),
     ("_urun_sec_badge_refresh_store_id", ""),
     ("_urun_sec_badge_cache_seen_ts", 0.0),
+    ("_urun_sec_sig_check_started_at", 0.0),
+    ("_urun_sec_sig_check_store_id", ""),
     ("active_main_tab", "urun_sec"),
     ("_pending_main_tab_render", None),
     ("_pending_urunler_alt_tab_render", None),
@@ -2288,6 +2295,20 @@ def _sheet_renk_cache_bayatti(ttl_sn: int = 90) -> bool:
         return True
 
 
+def _urun_sec_sheet_degisim_imzasi_al(store_id: str) -> str:
+    try:
+        from shared.sheets import drive_file_degisim_imzasi
+        from shared.store_manager import get_store as _get_store_sig
+
+        store = _get_store_sig(store_id)
+        sheet_id = str(store.get("google_sheet_id") or os.environ.get("GOOGLE_SHEET_ID", "")).strip()
+        if not sheet_id:
+            return ""
+        return drive_file_degisim_imzasi(sheet_id)
+    except Exception:
+        return ""
+
+
 def _urun_sec_rozet_cache_uygula(store_id: str) -> bool:
     store_id = str(store_id or "").strip()
     if not store_id:
@@ -2316,6 +2337,51 @@ def _urun_sec_rozet_cache_uygula(store_id: str) -> bool:
     return True
 
 
+def _urun_sec_rozet_payload_uret(store_id: str, sheet_signature: str = "") -> dict:
+    from shared.sheets import SheetsKatmani
+
+    _sk = SheetsKatmani(store_id)
+    _satirlar = _sk.tum_satirlar_al()
+    _renkler = {
+        (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
+        for k, v in _sk.urun_renk_durumlari_al().items()
+    }
+
+    def _ilk_kod(_deger):
+        _metin = str(_deger or "").strip()
+        _es = _re.match(r"^([A-Za-z]{0,3})\s*(\d+)\b", _metin)
+        if _es:
+            return f"{(_es.group(1) or '').lower()}{_es.group(2)}"
+        return _metin
+
+    return {
+        "updated_at": _time.time(),
+        "store_id": store_id,
+        "sheet_signature": str(sheet_signature or "").strip(),
+        "kuyruga_eklenenler": {
+            _ilk_kod(str(s.get("urun_id", ""))): str(s.get("status", "pending"))
+            for s in _satirlar if s.get("urun_id")
+        },
+        "kuyruk_klasor_durumlari": {
+            str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "pending")).strip().lower()
+            for s in _satirlar
+            if str(s.get("pcloud_klasor_id", "")).strip()
+        },
+        "sheet_renk_durumlari": _renkler,
+        "klasor_id_durumlari": {
+            str(s.get("pcloud_klasor_id", "")).strip(): _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+            for s in _satirlar
+            if str(s.get("pcloud_klasor_id", "")).strip()
+            and _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
+        },
+        "sheet_loaded_codes": sorted({
+            kod for kod, renk in _renkler.items()
+            if str(renk or "").strip().lower() == "green"
+        }),
+        "kuyruk_yuklendi": True,
+    }
+
+
 def _urun_sec_rozet_yenilemesini_baslat(store_id: str, force: bool = False) -> bool:
     store_id = str(store_id or "").strip()
     if not store_id:
@@ -2332,52 +2398,55 @@ def _urun_sec_rozet_yenilemesini_baslat(store_id: str, force: bool = False) -> b
 
     def _job():
         try:
-            from shared.sheets import SheetsKatmani
-
-            _sk = SheetsKatmani(store_id)
-            _satirlar = _sk.tum_satirlar_al()
-            _renkler = {
-                (_urun_kodu_normalize(k) or _urun_kodu_al(k)): v
-                for k, v in _sk.urun_renk_durumlari_al().items()
-            }
-
-            def _ilk_kod(_deger):
-                _metin = str(_deger or "").strip()
-                _es = _re.match(r"^([A-Za-z]{0,3})\s*(\d+)\b", _metin)
-                if _es:
-                    return f"{(_es.group(1) or '').lower()}{_es.group(2)}"
-                return _metin
-
-            payload = {
+            mevcut_sig = _urun_sec_sheet_degisim_imzasi_al(store_id)
+            payload = _urun_sec_rozet_payload_uret(store_id, sheet_signature=mevcut_sig)
+            _json_kaydet(_urun_sec_rozet_cache_yolu(store_id), payload)
+            _json_kaydet(_urun_sec_sheet_imza_yolu(store_id), {
                 "updated_at": _time.time(),
                 "store_id": store_id,
-                "kuyruga_eklenenler": {
-                    _ilk_kod(str(s.get("urun_id", ""))): str(s.get("status", "pending"))
-                    for s in _satirlar if s.get("urun_id")
-                },
-                "kuyruk_klasor_durumlari": {
-                    str(s.get("pcloud_klasor_id", "")).strip(): str(s.get("status", "pending")).strip().lower()
-                    for s in _satirlar
-                    if str(s.get("pcloud_klasor_id", "")).strip()
-                },
-                "sheet_renk_durumlari": _renkler,
-                "klasor_id_durumlari": {
-                    str(s.get("pcloud_klasor_id", "")).strip(): _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
-                    for s in _satirlar
-                    if str(s.get("pcloud_klasor_id", "")).strip()
-                    and _renkler.get(_urun_kodu_normalize(s.get("urun_id", "")) or _urun_kodu_al(s.get("urun_id", "")))
-                },
-                "sheet_loaded_codes": sorted({
-                    kod for kod, renk in _renkler.items()
-                    if str(renk or "").strip().lower() == "green"
-                }),
-                "kuyruk_yuklendi": True,
-            }
-            _json_kaydet(_urun_sec_rozet_cache_yolu(store_id), payload)
+                "sheet_signature": mevcut_sig,
+            })
         except Exception:
             pass
 
     _threading.Thread(target=_job, daemon=True, name=f"urun-sec-badges-{store_id}").start()
+    return True
+
+
+def _urun_sec_sheet_imza_kontrolunu_baslat(store_id: str, force: bool = False) -> bool:
+    store_id = str(store_id or "").strip()
+    if not store_id:
+        return False
+
+    simdi = _time.time()
+    son_magaza = str(st.session_state.get("_urun_sec_sig_check_store_id") or "").strip()
+    son_baslangic = float(st.session_state.get("_urun_sec_sig_check_started_at") or 0.0)
+    if not force and son_magaza == store_id and son_baslangic and (simdi - son_baslangic) < 60:
+        return False
+
+    st.session_state["_urun_sec_sig_check_store_id"] = store_id
+    st.session_state["_urun_sec_sig_check_started_at"] = simdi
+
+    def _job():
+        try:
+            mevcut_sig = _urun_sec_sheet_degisim_imzasi_al(store_id)
+            if not mevcut_sig:
+                return
+            sig_payload = _json_yukle(_urun_sec_sheet_imza_yolu(store_id), {})
+            onceki_sig = str((sig_payload or {}).get("sheet_signature") or "").strip()
+            if onceki_sig == mevcut_sig:
+                return
+            payload = _urun_sec_rozet_payload_uret(store_id, sheet_signature=mevcut_sig)
+            _json_kaydet(_urun_sec_rozet_cache_yolu(store_id), payload)
+            _json_kaydet(_urun_sec_sheet_imza_yolu(store_id), {
+                "updated_at": _time.time(),
+                "store_id": store_id,
+                "sheet_signature": mevcut_sig,
+            })
+        except Exception:
+            pass
+
+    _threading.Thread(target=_job, daemon=True, name=f"urun-sec-badges-sig-{store_id}").start()
     return True
 
 
@@ -4143,14 +4212,15 @@ if _main_tab_gecis_ekrani():
 if st.session_state.active_main_tab == "urun_sec":
     _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
     if _aktif_magaza and st.session_state.get("pcloud_token"):
-        _urun_sec_rozet_cache_uygula(_aktif_magaza)
-        _rozet_stale = (
-            st.session_state.get("sheet_renk_magaza_id") != _aktif_magaza
-            or not st.session_state.get("kuyruk_yuklendi")
-            or _sheet_renk_cache_bayatti()
+        _cache_var = _urun_sec_rozet_cache_uygula(_aktif_magaza)
+        _rozet_hazir = (
+            st.session_state.get("sheet_renk_magaza_id") == _aktif_magaza
+            and bool(st.session_state.get("kuyruk_yuklendi"))
         )
-        if _rozet_stale:
+        if not _rozet_hazir:
             _urun_sec_rozet_yenilemesini_baslat(_aktif_magaza, force=False)
+        elif _cache_var:
+            _urun_sec_sheet_imza_kontrolunu_baslat(_aktif_magaza, force=False)
 
     if not st.session_state.pcloud_token:
         with st.container(key="main_tab_content_urun_sec"):
