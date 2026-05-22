@@ -3102,17 +3102,6 @@ def _harita_degisim_izleyici():
         st.session_state["_urunler_pending_refresh"] = True
 
 
-@st.fragment(run_every=5)
-def _urun_sec_rozet_izleyici():
-    if st.session_state.get("active_main_tab") != "urun_sec":
-        return
-    store_id = str(st.session_state.get("hedef_magaza_id") or "").strip()
-    if not store_id:
-        return
-    if _urun_sec_rozet_cache_uygula(store_id):
-        st.rerun(scope="app")
-
-
 def _supabase_kuyruk_satirlari(store_id: str):
     from shared.product_catalog import ProductCatalog, StoreCatalog, _supabase_ready
 
@@ -4152,7 +4141,6 @@ if _main_tab_gecis_ekrani():
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
-    _urun_sec_rozet_izleyici()
     _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
     if _aktif_magaza and st.session_state.get("pcloud_token"):
         _urun_sec_rozet_cache_uygula(_aktif_magaza)
@@ -4747,6 +4735,31 @@ if st.session_state.active_main_tab == "urun_sec":
                                     if st.button("🖼", key=f"oniz{k['id']}", help="Resimleri gör"):
                                         st.session_state._onizleme_klasor = k
                                         st.rerun(scope="app")
+
+                            _secili_harita = {
+                                str(s.get("id")): s
+                                for s in st.session_state.secilen
+                                if str(s.get("id", "")).strip()
+                            }
+                            _senk_degisti = False
+                            for _row in _satir_meta:
+                                if _row["zaten_kuyrukta"]:
+                                    continue
+                                _item = dict(_row["item"])
+                                _item_id = str(_item.get("id") or "").strip()
+                                if not _item_id:
+                                    continue
+                                _is_checked = bool(st.session_state.get(_row["chk_key"]))
+                                if _is_checked:
+                                    mevcut = _secili_harita.get(_item_id)
+                                    if mevcut is None or bool(mevcut.get("is_product_folder")) != bool(_item.get("is_product_folder")):
+                                        _secili_harita[_item_id] = _item
+                                        _senk_degisti = True
+                                elif _item_id in _secili_harita:
+                                    _secili_harita.pop(_item_id, None)
+                                    _senk_degisti = True
+                            if _senk_degisti:
+                                st.session_state.secilen = list(_secili_harita.values())
 
                             if st.session_state.get("_secim_limit_hatasi"):
                                 st.error(st.session_state["_secim_limit_hatasi"])
