@@ -6011,6 +6011,16 @@ if st.session_state.active_main_tab == "ayarlar":
                     }
                 return _kayit
 
+            def _json_editor_key(_store_id, _template_id):
+                return f"tj_{_store_id}_{_template_id}"
+
+            def _aktif_template_taslagi(_tmpl_text, _store_id, _template_id):
+                _json_key = _json_editor_key(_store_id, _template_id)
+                _json_text = str(st.session_state.get(_json_key, "") or "").strip()
+                if _json_text and _json_text != str(_tmpl_text or "").strip():
+                    return _json2.loads(_json_text)
+                return _template_editor_payload(_tmpl_text, _store_id)
+
             def _toggle_preview_edit(_store_id, _value=None):
                 _key = f"preview_edit_mode_{_store_id}"
                 _mevcut = bool(st.session_state.get(_key, False))
@@ -6251,7 +6261,7 @@ if st.session_state.active_main_tab == "ayarlar":
                                 if _tmpl_path is not None:
                                     _kayit_tmpl_path = _template_yolu(_nt)
                                     _norm = _tmpl_norm(
-                                        _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                        _aktif_template_taslagi(_tmpl_json, _secili["store_id"], _secili.get("template", "default_v1")),
                                         template_id=_nt,
                                         template_name=_m_name.strip() or _secili["store_id"],
                                     )
@@ -6300,7 +6310,7 @@ if st.session_state.active_main_tab == "ayarlar":
                             _wd1, _wd2 = st.columns([1, 1])
                             if _wd1.button("💾 Taslağı Kaydet", key=f"save_dirty_{_secili['store_id']}", type="primary"):
                                 _norm = _tmpl_norm(
-                                    _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                    _aktif_template_taslagi(_tmpl_json, _secili["store_id"], _secili.get("template", "default_v1")),
                                     template_id=_tmpl_cfg["template_id"],
                                     template_name=_tmpl_cfg["template_name"],
                                 )
@@ -6342,7 +6352,7 @@ if st.session_state.active_main_tab == "ayarlar":
                                 _iptal = _pe2.form_submit_button("Vazgeç")
                                 if _kaydetildi:
                                     _norm = _tmpl_norm(
-                                        _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                        _aktif_template_taslagi(_tmpl_json, _secili["store_id"], _secili.get("template", "default_v1")),
                                         template_id=_tmpl_cfg["template_id"],
                                         template_name=_tmpl_cfg["template_name"],
                                     )
@@ -6433,7 +6443,7 @@ if st.session_state.active_main_tab == "ayarlar":
 
                         if st.button("💾 AI Metin Ayarlarını Kaydet", key=f"save_text_editor_{_secili['store_id']}", type="primary"):
                             _norm = _tmpl_norm(
-                                _template_editor_payload(_tmpl_json, _secili["store_id"]),
+                                _aktif_template_taslagi(_tmpl_json, _secili["store_id"], _secili.get("template", "default_v1")),
                                 template_id=_tmpl_cfg["template_id"],
                                 template_name=_tmpl_cfg["template_name"],
                             )
@@ -6447,7 +6457,7 @@ if st.session_state.active_main_tab == "ayarlar":
                             "Template JSON",
                             value=_tmpl_json,
                             height=620,
-                            key=f"tj_{_secili['store_id']}_{_secili.get('template', 'default_v1')}",
+                            key=_json_editor_key(_secili['store_id'], _secili.get('template', 'default_v1')),
                         )
                         if st.button("💾 JSON Template Kaydet", key=f"mts_{_secili['store_id']}"):
                             try:
