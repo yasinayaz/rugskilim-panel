@@ -59,6 +59,9 @@ Hazir ornek dosya repo icinde vardir:
 Windows'ta `.env.example` dosyasi acilmazsa veya ugrastirirsa su kolay acilan dosyayi kullan:
 `C:\rugskilim-panel\vds\OLDNEWRUGS_env.txt`
 
+LoomixRugs bilgisayari icin hazir dosya:
+`C:\rugskilim-panel\vds\LOOMIXRUGS_env.txt`
+
 Yapilacak islem:
 1. `OLDNEWRUGS_env.txt` dosyasini ac
 2. `Farkli Kaydet` ile ayni klasore `.env` olarak kaydet
@@ -84,6 +87,18 @@ C:\rugskilim-panel\vds\OLDNEWRUGS_BASLAT.bat
 ```
 
 Bu dosya `STORE_ID=OldNewRugs` ile otomatik baslatir.
+
+LoomixRugs bilgisayari icin ilk kurulum / guncelleme baslaticisi:
+```
+C:\rugskilim-panel\vds\LOOMIXRUGS_KUR_VE_BASLAT.bat
+```
+
+Bu dosya:
+- repo'yu `git pull` ile gunceller
+- gerekli Python paketlerini kurar
+- `C:\etsy_temp\LoomixRugs` klasorunu hazirlar
+- `C:\etsy_temp\LoomixRugs_INDIR.bat` kisayolunu olusturur
+- worker'i `STORE_ID=LoomixRugs` ile baslatir
 
 ---
 

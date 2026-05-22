@@ -1,0 +1,98 @@
+@echo off
+setlocal
+title LoomixRugs - Kurulum ve Baslatici
+
+echo =======================================================
+echo   LoomixRugs - Otomatik Kurulum ve Baslatici
+echo =======================================================
+echo.
+
+REM ── Python kontrol ──────────────────────────────────────
+set "PYTHON_CMD="
+if not defined PYTHON_CMD (
+  py -3 -V >nul 2>nul && set "PYTHON_CMD=py -3"
+)
+if not defined PYTHON_CMD (
+  py -V >nul 2>nul && set "PYTHON_CMD=py"
+)
+if not defined PYTHON_CMD (
+  python -V >nul 2>nul && set "PYTHON_CMD=python"
+)
+if not defined PYTHON_CMD (
+  echo HATA: Python kurulu degil!
+  echo Lutfen https://www.python.org/downloads/windows/ adresinden indirin.
+  echo Kurulumda "Add Python to PATH" kutusunu isaretleyin.
+  echo Gerekirse Windows App Execution Aliases icinde python alias'ini kapatin.
+  pause
+  exit /b 1
+)
+echo [OK] Python bulundu: %PYTHON_CMD%
+
+REM ── Git kontrol ─────────────────────────────────────────
+where git >nul 2>nul
+if errorlevel 1 (
+  echo HATA: Git kurulu degil!
+  echo Lutfen https://git-scm.com/download/win adresinden indirin.
+  pause
+  exit /b 1
+)
+echo [OK] Git bulundu.
+
+REM ── Repo indir veya guncelle ────────────────────────────
+if exist "C:\rugskilim-panel\.git" (
+  echo [..] Repo guncelleniyor...
+  cd /d C:\rugskilim-panel
+  git pull
+) else (
+  echo [..] Repo indiriliyor...
+  cd /d C:\
+  git clone https://github.com/yasinayaz/rugskilim-panel.git
+)
+echo [OK] Repo hazir.
+
+REM ── Python bagimliliklar ─────────────────────────────────
+echo [..] Python paketleri kuruluyor...
+%PYTHON_CMD% -m pip install --quiet gspread google-auth httpx opencv-python numpy requests
+if errorlevel 1 (
+  echo HATA: Python paketleri kurulamadigi icin devam edilmiyor.
+  pause
+  exit /b 1
+)
+echo [OK] Paketler hazir.
+
+REM ── Gecici klasor ve INDIR butonu ───────────────────────
+if not exist "C:\etsy_temp\LoomixRugs" mkdir "C:\etsy_temp\LoomixRugs"
+echo [OK] Klasor hazir: C:\etsy_temp\LoomixRugs
+
+if not exist "C:\etsy_temp\LoomixRugs_INDIR.bat" (
+  (
+    echo @echo off
+    echo title LoomixRugs - Otomasyon
+    echo call "C:\rugskilim-panel\vds\LOOMIXRUGS_KUR_VE_BASLAT.bat"
+  ) > "C:\etsy_temp\LoomixRugs_INDIR.bat"
+  echo [OK] INDIR.bat olusturuldu: C:\etsy_temp\LoomixRugs_INDIR.bat
+)
+
+REM ── .env kontrol ─────────────────────────────────────────
+if not exist "C:\rugskilim-panel\vds\.env" (
+  copy "C:\rugskilim-panel\vds\LOOMIXRUGS_env.txt" "C:\rugskilim-panel\vds\.env" >nul
+  echo [OK] .env olusturuldu.
+  echo.
+  echo !! DIKKAT: C:\rugskilim-panel\vds\.env dosyasini Not Defteri ile acip
+  echo !! PCLOUD_TOKEN satirina gercek token degerini yazin, sonra tekrar calistirin.
+  pause
+  exit /b 0
+)
+echo [OK] .env mevcut.
+
+REM ── Worker baslat ────────────────────────────────────────
+echo.
+echo =======================================================
+echo   Baslatiliyor...
+echo =======================================================
+set "STORE_ID=LoomixRugs"
+set "GOOGLE_SHEET_ID=12zcGd3Ila-y_aZWCldNZUeJp-1yBrz_Uvh4Yf3U0f7o"
+set "GOOGLE_CREDS_JSON=C:\rugskilim-panel\streamlit\credentials.json"
+set "TEMP_DIR=C:\etsy_temp\LoomixRugs"
+
+call "C:\rugskilim-panel\vds\baslat.bat"
