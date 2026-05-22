@@ -22,6 +22,8 @@ from pathlib import Path
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_RETRY_ATTEMPTS = 4
+GEMINI_RETRY_BACKOFFS = (5, 12, 24)
 
 
 # ── Sabit metin blokları ──────────────────────────────────────────────────────
@@ -843,6 +845,21 @@ def url_to_base64(url: str) -> tuple[str, str]:
     return base64.b64encode(r.content).decode("utf-8"), ct
 
 
+def _gemini_hata_mesaji(response: httpx.Response) -> str:
+    try:
+        veri = response.json()
+    except Exception:
+        veri = {}
+    detay = ""
+    if isinstance(veri, dict):
+        error = veri.get("error", {})
+        if isinstance(error, dict):
+            detay = str(error.get("message", "") or "").strip()
+    if not detay:
+        detay = str(response.text or "").strip()[:300]
+    return detay
+
+
 def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
     import time
     key = os.environ.get("GEMINI_API_KEY", "")
@@ -859,27 +876,49 @@ def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
         "generationConfig": {"temperature": 0.5, "maxOutputTokens": 8192}
     }
 
-    with httpx.Client(timeout=60.0) as client:
-        response = client.post(
-            GEMINI_URL,
-            params={"key": key},
-            json=payload,
-            headers={"Content-Type": "application/json"}
-        )
-    if response.status_code == 429:
-        time.sleep(10)
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                GEMINI_URL,
-                params={"key": key},
-                json=payload,
-                headers={"Content-Type": "application/json"}
+    son_hata = None
+    for deneme in range(GEMINI_RETRY_ATTEMPTS):
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(
+                    GEMINI_URL,
+                    params={"key": key},
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+        except httpx.TimeoutException as e:
+            son_hata = e
+            if deneme < GEMINI_RETRY_ATTEMPTS - 1:
+                time.sleep(GEMINI_RETRY_BACKOFFS[min(deneme, len(GEMINI_RETRY_BACKOFFS) - 1)])
+                continue
+            raise Exception("Gemini istegi zaman asimina ugradi. Ag veya servis yogun olabilir; biraz sonra tekrar deneyin.") from e
+        except httpx.HTTPError as e:
+            son_hata = e
+            if deneme < GEMINI_RETRY_ATTEMPTS - 1:
+                time.sleep(GEMINI_RETRY_BACKOFFS[min(deneme, len(GEMINI_RETRY_BACKOFFS) - 1)])
+                continue
+            raise
+
+        if response.status_code == 429:
+            son_hata = Exception(_gemini_hata_mesaji(response) or "Gemini rate limit (429)")
+            if deneme < GEMINI_RETRY_ATTEMPTS - 1:
+                time.sleep(GEMINI_RETRY_BACKOFFS[min(deneme, len(GEMINI_RETRY_BACKOFFS) - 1)])
+                continue
+            raise Exception(
+                "Gemini rate limit (429). Kota veya billing limiti dolu olabilir. "
+                "aistudio.google.com/apikey tarafinda billing ve quota ayarlarini kontrol edin."
             )
-    if response.status_code == 429:
-        raise Exception("Gemini rate limit (429). Billing aktif mi? aistudio.google.com/apikey kontrol edin.")
-    if response.status_code == 403:
-        raise Exception("Gemini API key yetkisiz (403). Key geçerli mi ve Generative Language API aktif mi? aistudio.google.com/apikey adresini kontrol edin.")
-    response.raise_for_status()
+        if response.status_code == 403:
+            raise Exception("Gemini API key yetkisiz (403). Key geçerli mi ve Generative Language API aktif mi? aistudio.google.com/apikey adresini kontrol edin.")
+        if response.status_code >= 500:
+            son_hata = Exception(_gemini_hata_mesaji(response) or f"Gemini sunucu hatasi ({response.status_code})")
+            if deneme < GEMINI_RETRY_ATTEMPTS - 1:
+                time.sleep(GEMINI_RETRY_BACKOFFS[min(deneme, len(GEMINI_RETRY_BACKOFFS) - 1)])
+                continue
+        response.raise_for_status()
+        break
+    else:
+        raise son_hata or Exception("Gemini istegi basarisiz oldu.")
 
     veri    = response.json()
     icerik  = veri["candidates"][0]["content"]["parts"][0]["text"]
@@ -1070,6 +1109,8 @@ def ai_icerik_url(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
+                if "rate limit (429)" in str(e).lower():
+                    break
         if son_hata:
             print(f"[AI:{urun_id}] URL uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
@@ -1111,6 +1152,8 @@ def ai_icerik_uret(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
+                if "rate limit (429)" in str(e).lower():
+                    break
         if son_hata:
             print(f"[AI:{urun_id}] Dosya uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
