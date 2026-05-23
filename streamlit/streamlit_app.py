@@ -6225,6 +6225,73 @@ if st.session_state.active_main_tab == "ayarlar":
                     _render_preview_text(_cfg["static_texts"].get("footer", ""), _ctx),
                 ]))
 
+            def _preview_text_to_template(_text, _cfg):
+                _raw = str(_text or "")
+                if "{" in _raw and "}" in _raw:
+                    return _raw
+
+                _ctx = _preview_context()
+                _opening = (
+                    f"This {_ctx['boyut_ft']} ft Vintage Turkish {_ctx['tip']} with its faded "
+                    f"{_ctx['renk_scheme']} {_ctx['pattern']} pattern carries the quiet confidence "
+                    f"of a piece that has traveled decades to find the right room."
+                )
+                _details = (
+                    "📋 Product Details:\n"
+                    f"Color Scheme: {_ctx['renk_scheme']}\n"
+                    f"Size: {_ctx['boyut_ft']} ft - {_ctx['boyut_cm']} cm\n"
+                    f"Total SQFT: {_ctx['sqft']}\n"
+                    f"Total SQM: {_ctx['metrekare']}\n"
+                    f"Made in: {_ctx['tahmini_yil']}\n"
+                    f"Pattern: {_ctx['pattern']}\n"
+                    "Pile: 0.50 cm"
+                )
+                _story_template = _cfg["static_texts"].get("story_size_template", "")
+                _story_size = _render_preview_text(_story_template, _ctx) if _story_template else (
+                    f"Measuring {_ctx['boyut_ft']} ft, this versatile {_ctx['rounded_ft']} {_ctx['tip_lower']} "
+                    "works beautifully in a hallway, kitchen aisle, or entryway."
+                )
+                _hikaye = "\n\n".join([
+                    "Some rugs just fill a space. This brings soul. Its faded palette and floral movement feel quietly collected rather than loud.",
+                    _story_size,
+                    "Handwoven wool gives it an honest, tactile surface that feels warm underfoot and visually rich in layered interiors.",
+                    "It suits bohemian, antique, collected, and soft traditional spaces while still feeling easy to place in daily life.",
+                ])
+                _replacements = [
+                    (_opening, "{opening}"),
+                    (_details, "{details_block}"),
+                    (_hikaye, "{hikaye}"),
+                    (_render_preview_text(_cfg["static_texts"].get("no_extra_fees", ""), _ctx), "{no_extra_fees_block}"),
+                    (_render_preview_text(_cfg["static_texts"].get("easy_returns", ""), _ctx), "{easy_returns_block}"),
+                    (_render_preview_text(_cfg["static_texts"].get("footer", ""), _ctx), "{footer_block}"),
+                    (_story_size, "{story_size_paragraph}"),
+                    (_ctx["rounded_ft_label"], "{rounded_ft_label}"),
+                    (_ctx["rounded_ft"], "{rounded_ft}"),
+                    (_ctx["boyut_ft"], "{boyut_ft}"),
+                    (_ctx["boyut_cm"], "{boyut_cm}"),
+                    (_ctx["metrekare"], "{metrekare}"),
+                    (_ctx["sqft"], "{sqft}"),
+                    (_ctx["urun_id"], "{urun_id}"),
+                    (_ctx["tip_lower"], "{tip_lower}"),
+                    (_ctx["tip"], "{tip}"),
+                    (_ctx["renk_scheme"], "{renk_scheme}"),
+                    (_ctx["renk1"], "{renk1}"),
+                    (_ctx["renk2"], "{renk2}"),
+                    (_ctx["pattern"], "{pattern}"),
+                    (_ctx["tahmini_yil"], "{tahmini_yil}"),
+                    (_ctx["stil"], "{stil}"),
+                    (_ctx["koken"], "{koken}"),
+                    (_ctx["home_style"], "{home_style}"),
+                    (_ctx["shop_section"], "{shop_section}"),
+                    (_ctx["ana_resim_tag"], "{ana_resim_tag}"),
+                    (_ctx["baslik"], "{baslik}"),
+                ]
+                _converted = _raw
+                for _from, _to in sorted(_replacements, key=lambda item: len(item[0]), reverse=True):
+                    if _from:
+                        _converted = _converted.replace(_from, _to)
+                return _converted
+
             def _default_preview_framework(_cfg):
                 _blocks = ["{opening}"]
                 if _cfg["static_texts"].get("no_extra_fees", "").strip():
@@ -6308,7 +6375,10 @@ if st.session_state.active_main_tab == "ayarlar":
                     _kayit["prompt_rules"] = {
                         **_kayit["prompt_rules"],
                         "description_brief": st.session_state.get(f"editor_{_store_id}_description_brief", ""),
-                        "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"],
+                        "description_example_template": _preview_text_to_template(
+                            st.session_state[f"editor_{_store_id}_description_example_template"],
+                            _kayit,
+                        ),
                     }
                 return _kayit
 
@@ -6370,9 +6440,12 @@ if st.session_state.active_main_tab == "ayarlar":
                             f"editor_{_store_id}_description_brief",
                             _cfg["prompt_rules"].get("description_brief", "")
                         ),
-                        "description_example_template": st.session_state.get(
-                            f"editor_{_store_id}_description_example_template",
-                            _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
+                        "description_example_template": _preview_text_to_template(
+                            st.session_state.get(
+                                f"editor_{_store_id}_description_example_template",
+                                _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
+                            ),
+                            _cfg,
                         )
                     }
                 return _tmpl_norm(_cfg, template_id=_cfg.get("template_id", "default_v1"), template_name=_cfg.get("template_name", "Default"))
