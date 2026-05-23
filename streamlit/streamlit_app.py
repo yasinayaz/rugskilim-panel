@@ -6133,7 +6133,10 @@ if st.session_state.active_main_tab == "ayarlar":
         try:
             from shared.store_manager import tum_magazalar as _tm, magaza_guncelle as _mg, magaza_ekle as _me
             import json as _json2
-            from modules.ai_icerik import template_config_normallestir as _tmpl_norm
+            from modules.ai_icerik import (
+                template_config_normallestir as _tmpl_norm,
+                _ornek_desci_dinamik_sablona_cevir as _desc_to_dynamic_template,
+            )
             from pathlib import Path as _Path2
 
             class _SafeDict(dict):
@@ -6290,7 +6293,7 @@ if st.session_state.active_main_tab == "ayarlar":
                 for _from, _to in sorted(_replacements, key=lambda item: len(item[0]), reverse=True):
                     if _from:
                         _converted = _converted.replace(_from, _to)
-                return _converted
+                return _desc_to_dynamic_template(_converted)
 
             def _default_preview_framework(_cfg):
                 _blocks = ["{opening}"]
