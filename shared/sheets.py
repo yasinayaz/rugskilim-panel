@@ -314,6 +314,142 @@ def _kolon_no_from_positions(pozisyonlar: dict, baslik: str, occurrence: int = 0
     return default
 
 
+def _template_json_yukle(template_id: str) -> dict:
+    template_id = str(template_id or "").strip() or "default_v1"
+    try:
+        raw = str((config_oku() or {}).get(f"TEMPLATE_JSON__{template_id}", "") or "").strip()
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+
+    repo_kok = Path(__file__).resolve().parent.parent
+    aday = repo_kok / "streamlit" / "templates" / f"{template_id}.json"
+    if aday.exists():
+        try:
+            return json.loads(aday.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _sayiyi_float_yap(value):
+    try:
+        temiz = str(value or "").strip().replace(",", ".")
+        return float(temiz) if temiz else 0.0
+    except Exception:
+        return 0.0
+
+
+def _row_dict_from_ws(ws, satir_no: int) -> dict:
+    basliklar = _basliklar_al(ws)
+    satir = _yeniden_dene("Satır okuma", ws.row_values, satir_no)
+    veri = {}
+    for idx, baslik in enumerate(basliklar):
+        anahtar = str(baslik or "").strip()
+        if not anahtar:
+            continue
+        veri.setdefault(anahtar, satir[idx] if idx < len(satir) else "")
+    return veri
+
+
+def _eksik_aciklamayi_uret(store_id: str, row_data: dict, ai_sonuc: dict, default_template: bool = False) -> str:
+    try:
+        from shared.store_manager import get_store
+        repo_kok = Path(__file__).resolve().parent.parent
+        streamlit_kok = str((repo_kok / "streamlit").resolve())
+        import sys
+        if streamlit_kok not in sys.path:
+            sys.path.insert(0, streamlit_kok)
+        from modules.ai_icerik import (
+            _ai_sonuc_normallestir,
+            _etsy_alanlarini_tamamla,
+            _rate_limit_fallback_ai,
+            _rounded_ft_etiketi,
+            description_olustur,
+            template_config_normallestir,
+        )
+
+        store = get_store(store_id)
+        template_id = "default_v1" if default_template else store.get("template", "default_v1")
+        template_name = "Default (Standart)" if default_template else store.get("store_name", store_id)
+        template_config = template_config_normallestir(_template_json_yukle(template_id), template_id=template_id, template_name=template_name)
+
+        boyut_ft = str((row_data or {}).get("boyut_ft") or "")
+        boyut_cm = str((row_data or {}).get("boyut_cm") or "")
+        metrekare = _sayiyi_float_yap((row_data or {}).get("metrekare"))
+        fiyat_usd = int(round(_sayiyi_float_yap((row_data or {}).get("fiyat_usd"))))
+        urun_id = str((row_data or {}).get("urun_id") or "")
+
+        temel = _rate_limit_fallback_ai(
+            urun_id=urun_id,
+            boyut_ft=boyut_ft,
+            boyut_cm=boyut_cm,
+            metrekare=metrekare,
+            fiyat_usd=fiyat_usd,
+            genislik_cm=None,
+            uzunluk_cm=None,
+            template_config=template_config,
+        )
+        temel.pop("aciklama", None)
+        temel.pop("basarili", None)
+        temel.pop("hata", None)
+        temel.pop("fallback_kullanildi", None)
+        temel.pop("uyari", None)
+
+        birlesik = dict(temel)
+        birlesik.update(ai_sonuc or {})
+        if not str(birlesik.get("baslik") or "").strip():
+            birlesik["baslik"] = str((row_data or {}).get("baslik") or "")
+        if not birlesik.get("taglar"):
+            taglar_virgul = str((row_data or {}).get("taglar_virgul") or "")
+            birlesik["taglar"] = [p.strip() for p in taglar_virgul.split(",") if p.strip()]
+        for alan in ["renk1", "renk2", "pattern_etsy", "shop_section", "tip", "ana_resim_tag"]:
+            if not str(birlesik.get(alan) or "").strip():
+                birlesik[alan] = str((row_data or {}).get(alan) or "")
+
+        rounded_ft = _rounded_ft_etiketi(boyut_ft)
+        tip = str(birlesik.get("tip") or "Area").strip() or "Area"
+        tip_lower = tip.lower()
+        renk_scheme = str(birlesik.get("renk_scheme") or "Neutral tones").strip()
+        style_hint = str(birlesik.get("stil") or "vintage Turkish").strip()
+        room_hint = {
+            "Runner": "hallways, kitchens, and entry corridors",
+            "Accent": "entryways, bedsides, and layered corners",
+            "Area": "living rooms, bedrooms, and collected sitting areas",
+        }.get(tip, "collected interiors")
+        kaynak_opening = str((ai_sonuc or {}).get("opening") or "").strip()
+        kaynak_hikaye = str((ai_sonuc or {}).get("hikaye") or "").strip()
+        if not kaynak_opening:
+            birlesik["opening"] = (
+                f"This {rounded_ft} ft Turkish {tip_lower} stands out with its {renk_scheme.lower()} palette "
+                f"and the one-of-a-kind vintage character collectors look for in an authentic handmade piece."
+            )
+        if not kaynak_hikaye:
+            birlesik["hikaye"] = "\n\n".join([
+                f"Its time-softened look and {style_hint.lower()} spirit give the piece an easy, collected presence rather than a mass-produced feel.",
+                f"With its {rounded_ft} ft proportions, it works especially well in {room_hint} where texture and authentic age make the strongest impact.",
+                "Handmade construction adds tactile warmth and a durable, lived-in surface that layers naturally into everyday interiors.",
+                "It blends comfortably with bohemian, rustic, farmhouse, and softly traditional rooms while still reading as a true one-of-a-kind vintage find.",
+            ])
+
+        birlesik = _ai_sonuc_normallestir(birlesik, template_config)
+        birlesik = _etsy_alanlarini_tamamla(birlesik, boyut_ft, metrekare)
+        return description_olustur(
+            birlesik,
+            boyut_ft,
+            boyut_cm,
+            metrekare,
+            None,
+            None,
+            template_config,
+            urun_id=urun_id,
+        )
+    except Exception as exc:
+        print(f"[Sheets:{store_id}] ⚠ Açıklama backfill üretilemedi: {type(exc).__name__}: {exc}")
+        return ""
+
+
 def _supabase_store_status_upsert(store_id: str, row: dict):
     try:
         from shared.product_catalog import StoreCatalog, _supabase_ready
@@ -785,14 +921,18 @@ class SheetsKatmani:
             raise ValueError(f"Sheet'te '{urun_id}' bulunamadı. Mevcut ID'ler: {tum_id[1:]}")
 
         pozisyonlar = _baslik_pozisyonlari(ws)
+        row_data = _row_dict_from_ws(ws, satir_no)
         taglar = ai_sonuc.get("taglar", [])
         taglar = (taglar + [""] * 13)[:13]
 
         renkler = [r.strip() for r in str(ai_sonuc.get("renk1", ai_sonuc.get("renk", ""))).split(",")]
+        aciklama = str(ai_sonuc.get("aciklama", "") or "").strip()
+        if not aciklama:
+            aciklama = _eksik_aciklamayi_uret(self.store_id, row_data, ai_sonuc)
 
         guncellemeler = {
             "baslik": ai_sonuc.get("baslik", ""),
-            "aciklama": ai_sonuc.get("aciklama", ""),
+            "aciklama": aciklama,
             "taglar_virgul": ", ".join([t for t in taglar if t]),
             "renk1": renkler[0] if renkler else "",
             "renk2": renkler[1] if len(renkler) > 1 else ai_sonuc.get("renk2", ""),
@@ -835,6 +975,47 @@ class SheetsKatmani:
         self._satir_yuksekliklerini_sabitle([satir_no], pixel_size=21)
 
         print(f"[Sheets:{self.store_id}] ✓ AI verileri yazıldı: {urun_id}")
+
+    def bos_aciklamalari_onar(self, limit: int | None = None, only_statuses: set[str] | None = None, default_template: bool = False) -> dict:
+        self.sheet_hazirla()
+        ws = self._baglanti()
+        satirlar = _tum_satirlar_al(ws)
+        pozisyonlar = _baslik_pozisyonlari(ws)
+        requests = []
+        onarilan = []
+
+        for idx, row in enumerate(satirlar, start=2):
+            urun_id = str((row or {}).get("urun_id") or "").strip()
+            baslik = str((row or {}).get("baslik") or "").strip()
+            aciklama = str((row or {}).get("aciklama") or "").strip()
+            status = str((row or {}).get("status") or "").strip().lower()
+            if not urun_id or not baslik or aciklama:
+                continue
+            if only_statuses and status not in only_statuses:
+                continue
+            yeni_aciklama = _eksik_aciklamayi_uret(self.store_id, row, row, default_template=default_template)
+            if not str(yeni_aciklama or "").strip():
+                continue
+            kolon = _kolon_no_from_positions(pozisyonlar, "aciklama", default=KOL["aciklama"])
+            if not kolon:
+                continue
+            requests.append({
+                "range": rowcol_to_a1(idx, kolon),
+                "values": [[yeni_aciklama]],
+            })
+            onarilan.append(urun_id)
+            if limit and len(onarilan) >= limit:
+                break
+
+        if requests:
+            _yeniden_dene("Boş açıklamaları onarma", ws.batch_update, requests)
+            satir_map = self._satir_haritasi_al(ws, force_refresh=True)
+            satir_nolari = [satir_map.get(uid) for uid in onarilan if satir_map.get(uid)]
+            if satir_nolari:
+                self._satir_yuksekliklerini_sabitle(satir_nolari, pixel_size=21)
+
+        print(f"[Sheets:{self.store_id}] ✓ Boş açıklama onarımı: {len(onarilan)}")
+        return {"onarilan": onarilan, "adet": len(onarilan)}
 
     def status_guncelle(self, urun_id: str, yeni_status: str,
                         etsy_url: str = "", hata: str = ""):
