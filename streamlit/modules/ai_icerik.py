@@ -181,6 +181,68 @@ def _description_framework_olustur(static_texts: dict) -> str:
         blocks.append("{footer_block}")
     return "\n\n".join(blocks)
 
+
+def _dinamik_placeholder_var_mi(text: str) -> bool:
+    return bool(re.search(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}", str(text or "")))
+
+
+def _ornek_desci_dinamik_sablona_cevir(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw or _dinamik_placeholder_var_mi(raw):
+        return raw
+
+    satirlar = [s.rstrip() for s in raw.replace("\r\n", "\n").split("\n")]
+    basliklar = ["Rug Details", "Shipping", "Care Instructions", "Returns & Support", "Discover More"]
+    bolumler: dict[str, list[str]] = {}
+    aktif = "__intro__"
+    bolumler[aktif] = []
+    for satir in satirlar:
+        temiz = satir.strip()
+        if temiz in basliklar:
+            aktif = temiz
+            bolumler.setdefault(aktif, [])
+            continue
+        bolumler.setdefault(aktif, []).append(satir)
+
+    store_line = ""
+    for satir in satirlar:
+        temiz = satir.strip()
+        if ".etsy.com" in temiz.lower():
+            store_line = temiz
+            break
+
+    details_lines = [
+        "✤ Authentic Vintage Turkish {tip} Rug",
+        "✤ Handmade & Hand-Knotted",
+        "✤ Origin: {koken}",
+        "✤ Pattern: {pattern}",
+        "✤ Color Palette: {renk_scheme}",
+        "✤ Material: 50% Wool - 50% Cotton",
+        "{pile_bullet}",
+        "✤ Professionally Cleaned",
+        "✤ Size: {rounded_ft_label}",
+        "✤ Dimensions: {boyut_cm} cm",
+        "✤ SKU: {urun_id}",
+    ]
+
+    parcalar = [
+        "{opening}",
+        "{hikaye}",
+        "Rug Details",
+        "\n".join([s for s in details_lines if s]),
+    ]
+
+    for baslik in ["Shipping", "Care Instructions", "Returns & Support", "Discover More"]:
+        icerik = "\n".join([s for s in bolumler.get(baslik, []) if str(s).strip()])
+        if icerik:
+            parcalar.extend([baslik, icerik])
+
+    tum_metin = "\n".join([p for p in parcalar if isinstance(p, str)])
+    if store_line and store_line not in tum_metin:
+        parcalar.append(store_line)
+
+    return "\n\n".join([p.strip() for p in parcalar if str(p).strip()])
+
 TEMPLATE_PLACEHOLDERS = {
     "boyut_ft": "Ham ft olcusu. Ornek: 2.8x9.9",
     "rounded_ft": "Yuvarlanmis ft olcusu. Ornek: 3x10",
@@ -287,6 +349,7 @@ def template_config_normallestir(template_config: dict = None,
     for _key in ["title_brief", "tag_strategy", "description_brief", "description_example_template",
                  "title_rules", "tag_rules", "opening_rules", "story_rules"]:
         prompt_rules[_key] = str(prompt_rules.get(_key, "") or "")
+    prompt_rules["description_example_template"] = _ornek_desci_dinamik_sablona_cevir(prompt_rules["description_example_template"])
     if not prompt_rules["description_example_template"].strip():
         prompt_rules["description_example_template"] = _description_framework_olustur(static_texts)
 
@@ -750,6 +813,7 @@ def _template_context(ai: dict, urun_id: str, boyut_ft: str, boyut_cm: str, metr
     rounded_ft = _rounded_ft_etiketi(boyut_ft)
     sqft = round(metrekare * 10.764, 2) if metrekare else ""
     tip = str(ai.get("tip") or "Rug").strip() or "Rug"
+    pile_cm = str(ai.get("pile_cm") or "").strip()
     return {
         "urun_id": urun_id or "",
         "boyut_ft": boyut_ft or "",
@@ -771,6 +835,7 @@ def _template_context(ai: dict, urun_id: str, boyut_ft: str, boyut_cm: str, metr
         "shop_section": ai.get("shop_section", ""),
         "ana_resim_tag": ai.get("ana_resim_tag", ""),
         "baslik": ai.get("baslik", ""),
+        "pile_bullet": f"✤ Low Pile: {pile_cm} cm" if pile_cm else "",
     }
 
 
