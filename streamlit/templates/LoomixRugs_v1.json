@@ -2,7 +2,25 @@
   "template_id": "LoomixRugs_v1",
   "template_name": "LoomixRugs",
   "prompt_extra_instructions": "",
-  "sabit_no_extra_fees": "✨ No Hidden Costs – Ever!\nAll customs duties and import taxes are on us. What you see is what you pay — shop freely and with full confidence.",
-  "sabit_easy_returns": "↩️ Hassle-Free Returns\nNot fully satisfied? We'll make it right. Contact us within 14 days of delivery and we'll walk you through the return process — simple and stress-free.",
-  "sabit_alt": "🧼 Cleaned & Ready to Use\nEvery rug is professionally cleaned before it leaves us. No odors, no hidden wear — just genuine vintage character arriving at your door.\n\n🧽 Care Instructions\nEasy to live with: light vacuuming regularly and gentle spot cleaning as needed. No specialist care required.\n\n🚚 Shipping & Delivery:\n- Dispatched within 1 business day\n- Worldwide delivery in 2–4 business days\n- Carefully packed to arrive in perfect condition\n\n❌ Cancellation Policy:\nOrders can be cancelled any time before dispatch — just send us a message.\n\n🏠 Trade & Wholesale:\nInterior designers and decorators are welcome. Contact us for bulk sourcing and trade pricing.\n\n🎨 A Note on Colors:\nPhotos are taken in natural daylight. Colors may appear slightly different depending on your screen settings.\n\n✨ Every piece here is one of a kind. If this one caught your eye, trust that feeling.\nIt's cleaned, carefully packed, and ready to find its new home."
+  "prompt_rules": {
+    "title_target_min": 120,
+    "title_target_max": 140,
+    "title_max_length": 140,
+    "tag_count": 13,
+    "tag_max_length": 20,
+    "title_brief": "",
+    "tag_strategy": "",
+    "description_brief": "Write in a warm, elegant, handmade-vintage Etsy voice for LoomixRugs. The description must feel product-specific, never reused across rugs. Use one vivid opening sentence and 3-4 short paragraphs that change according to the rug's real color, size, pattern, and room fit.",
+    "description_example_template": "{opening}\n\n{hikaye}\n\nRug Details\n✤ Authentic Vintage Turkish {tip} Rug\n✤ Handmade & Hand-Knotted\n✤ Origin: {koken}\n✤ Pattern: {pattern}\n✤ Color Palette: {renk_scheme}\n✤ Material: 50% Wool - 50% Cotton\n{pile_bullet}\n✤ Professionally Cleaned\n✤ Size: {rounded_ft_label}\n✤ Dimensions: {boyut_cm} cm\n✤ SKU: {urun_id}\n\nShipping\n✤ FREE Worldwide Express Shipping\n✤ Ships in 1 business day\n✤ Delivery in 3-5 business days\n\nCare Instructions\n✤ Spot clean with mild detergent\n✤ Vacuum gently\n✤ Avoid machine washing\n\nEach vintage rug is unique and may show slight variations due to its handmade and aged nature, making every piece truly one of a kind.\n\nStore: loomixrugs.etsy.com",
+    "title_rules": "SIZE RULE: Round each ft dimension to the nearest whole number (2.8x9.9 → \"3x10\", 3.2x5.7 → \"3x6\", 3.6x9.3 → \"4x9\"). Use the ROUNDED size in the title.\nPack in: size, style, colors, pattern, material, origin, room use, Etsy search terms.\n\nCRITICAL VARIETY RULE: Do NOT default to the same opening pattern for every rug. Look at this rug's most distinctive feature — its color, pattern, condition, size, or origin — and lead with THAT. Every title must feel written for this specific rug, not filled into a template.\n\nChoose ONE of these five openers based on what makes THIS rug stand out. Do NOT always pick the same one:\n\n1. Size-first (when size is the main selling point):\n   \"[size] ft [Origin] [Style] [Type] Rug | [Color adjective] [Color] [Pattern] [Material] [Room] Rug | [style/feel]\"\n\n2. Color-first (when color is the most striking visual feature):\n   \"[Color adjective] [Color] [Pattern] [Origin] Rug — [size] ft [Type] | [Material] [Style] [Room] Decor\"\n\n3. Style/origin-first (when the weave, origin or style is rare/distinctive):\n   \"[Weave/style] [Origin] [Type] [size] ft | [Color] [Pattern] [Material] — [Room] [Style] Rug\"\n\n4. Room/use-first (when the rug perfectly fits a specific space):\n   \"[Room] [Type] Rug [size] ft | [Origin] [Style] [Color] [Pattern] Wool | [Age/Condition] [Style feel]\"\n\n5. Condition/character-first (when patina, age, or distressing is a feature):\n   \"[Condition descriptor] [Color] [Origin] [Type] Rug | [size] ft [Pattern] [Material] | [Style] [Room] Decor\"\n\nHARD RULES:\n- The rounded size MUST always appear within the first 40 characters.\n- Include color(s), pattern, origin, material, and room fit somewhere in the title.\n- Never use \"Persian\" in the title for these Turkish rugs.",
+    "tag_rules": "Each tag = a strong Etsy long-tail keyword phrase (2-4 words). Total exactly 13 tags, each max 20 chars. Cover size, color, type, origin/style, room fit, and buyer intent. Avoid repetitive openings and use the rounded size in size tags.",
+    "opening_rules": "Write one vivid first sentence using the rounded ft size, Turkish origin, and one specific visual observation from the rug photo.",
+    "story_rules": "Write 3-4 short paragraphs after the opening. Paragraph 1 should deepen the rug's visual identity and handmade character. Paragraph 2 should explain room fit and scale using the rounded size. Paragraph 3 should reinforce warmth, quality, and versatile styling in a premium but natural tone. Every rug must feel individually written."
+  },
+  "static_texts": {
+    "no_extra_fees": "",
+    "easy_returns": "",
+    "story_size_template": "",
+    "footer": ""
+  }
 }
