@@ -81,9 +81,12 @@ def _template_session_overlay(template_cfg: dict, store_id: str, store_name: str
     cfg = json.loads(json.dumps(template_cfg or {}, ensure_ascii=False)) if template_cfg else {}
     source = "saved_template"
     draft_description = str(st.session_state.get(f"editor_{store_id}_description_example_template", "") or "").strip()
-    if draft_description:
+    draft_description_brief = str(st.session_state.get(f"editor_{store_id}_description_brief", "") or "")
+    if draft_description or draft_description_brief:
         cfg.setdefault("prompt_rules", {})
-        cfg["prompt_rules"]["description_example_template"] = draft_description
+        if draft_description:
+            cfg["prompt_rules"]["description_example_template"] = draft_description
+        cfg["prompt_rules"]["description_brief"] = draft_description_brief
         cfg["template_id"] = cfg.get("template_id") or store_id
         cfg["template_name"] = cfg.get("template_name") or store_name or store_id
         source = "session_draft"
@@ -6242,6 +6245,7 @@ if st.session_state.active_main_tab == "ayarlar":
                 _preview_template = (_pr.get("description_example_template", "") or "").strip()
                 _defaults = {
                     "description_example_template": _preview_template or _default_preview_framework(_cfg),
+                    "description_brief": _pr.get("description_brief", ""),
                 }
                 if not _is_global_ai_template(_cfg):
                     return _defaults
@@ -6300,8 +6304,11 @@ if st.session_state.active_main_tab == "ayarlar":
                     })
                 else:
                     _kayit["prompt_extra_instructions"] = ""
+                    _kayit.setdefault("prompt_rules", {})
                     _kayit["prompt_rules"] = {
-                        "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"]
+                        **_kayit["prompt_rules"],
+                        "description_brief": st.session_state.get(f"editor_{_store_id}_description_brief", ""),
+                        "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"],
                     }
                 return _kayit
 
@@ -6359,6 +6366,10 @@ if st.session_state.active_main_tab == "ayarlar":
                 else:
                     _cfg["prompt_extra_instructions"] = ""
                     _cfg["prompt_rules"] = {
+                        "description_brief": st.session_state.get(
+                            f"editor_{_store_id}_description_brief",
+                            _cfg["prompt_rules"].get("description_brief", "")
+                        ),
                         "description_example_template": st.session_state.get(
                             f"editor_{_store_id}_description_example_template",
                             _cfg["prompt_rules"].get("description_example_template", "") or _default_preview_framework(_cfg)
@@ -6730,9 +6741,15 @@ if st.session_state.active_main_tab == "ayarlar":
                             st.markdown("##### Description Yapısı")
                             st.caption("Description yerleşimini Ön İzleme sekmesindeki Edit butonundan düzenleyebilirsin. Bu ortak şablon tüm mağazaların temel AI kurallarını belirler.")
                         else:
-                            st.info("Bu mağaza template'inde yalnızca description yerleşimi özelleştirilir. Title, tag ve diğer AI kuralları ortak `default_v1` üzerinden gelir.")
+                            st.info("Bu mağaza için description brief ve beklenen description şeması ayrı yönetilir. Title, tag ve diğer AI kuralları ortak `default_v1` üzerinden gelir.")
+                            st.text_area(
+                                "Mağazaya Özel Description Talimatı",
+                                key=f"editor_{_secili['store_id']}_description_brief",
+                                height=110,
+                                help="Bu mağazanın description tonu, vurgu alanı ve anlatım tarzı için AI'ye özel not bırakın."
+                            )
                             st.markdown("##### Description Yapısı")
-                            st.caption("Bu mağaza için sadece blok sırası ve description akışı değişir. Düzenlemek için Ön İzleme sekmesindeki Edit butonunu kullan.")
+                            st.caption("Bu mağaza için AI'nin beklediği description şeması burada özelleşir. Düzenlemek için Ön İzleme sekmesindeki Edit butonunu kullan.")
 
                         if st.button("💾 AI Metin Ayarlarını Kaydet", key=f"save_text_editor_{_secili['store_id']}", type="primary"):
                             _norm = _tmpl_norm(
