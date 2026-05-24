@@ -6293,6 +6293,11 @@ if st.session_state.active_main_tab == "ayarlar":
                 for _from, _to in sorted(_replacements, key=lambda item: len(item[0]), reverse=True):
                     if _from:
                         _converted = _converted.replace(_from, _to)
+                if any(token in _converted for token in [
+                    "{opening}", "{hikaye}", "{urun_id}", "{boyut_cm}", "{boyut_ft}",
+                    "{rounded_ft_label}", "{renk_scheme}", "{pattern}", "{tip}",
+                ]):
+                    return _converted
                 return _desc_to_dynamic_template(_converted)
 
             def _default_preview_framework(_cfg):
