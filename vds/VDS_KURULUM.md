@@ -62,6 +62,9 @@ Windows'ta `.env.example` dosyasi acilmazsa veya ugrastirirsa su kolay acilan do
 LoomixRugs bilgisayari icin hazir dosya:
 `C:\rugskilim-panel\vds\LOOMIXRUGS_env.txt`
 
+WovenTurkishRugs bilgisayari icin hazir dosya:
+`C:\rugskilim-panel\vds\WOVENTURKISHRUGS_env.txt`
+
 Yapilacak islem:
 1. `OLDNEWRUGS_env.txt` dosyasini ac
 2. `Farkli Kaydet` ile ayni klasore `.env` olarak kaydet
@@ -99,6 +102,18 @@ Bu dosya:
 - `C:\etsy_temp\LoomixRugs` klasorunu hazirlar
 - `C:\etsy_temp\LoomixRugs_INDIR.bat` kisayolunu olusturur
 - worker'i `STORE_ID=LoomixRugs` ile baslatir
+
+WovenTurkishRugs bilgisayari icin ilk kurulum / guncelleme baslaticisi:
+```
+C:\rugskilim-panel\vds\WOVENTURKISHRUGS_KUR_VE_BASLAT.bat
+```
+
+Bu dosya:
+- repo'yu `git pull` ile gunceller
+- gerekli Python paketlerini kurar
+- `C:\etsy_temp\WovenTurkishRugs` klasorunu hazirlar
+- `C:\etsy_temp\WovenTurkishRugs_INDIR.bat` kisayolunu olusturur
+- worker'i `STORE_ID=WovenTurkishRugs` ile baslatir
 
 ---
 
