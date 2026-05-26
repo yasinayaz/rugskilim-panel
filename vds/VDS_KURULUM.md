@@ -71,6 +71,9 @@ WovenLoomRugs bilgisayari icin hazir dosya:
 BohoRugHouse bilgisayari icin hazir dosya:
 `C:\rugskilim-panel\vds\BOHORUGHOUSE_env.txt`
 
+IlmekRug bilgisayari icin hazir dosya:
+`C:\rugskilim-panel\vds\ILMEKRUG_env.txt`
+
 Yapilacak islem:
 1. `OLDNEWRUGS_env.txt` dosyasini ac
 2. `Farkli Kaydet` ile ayni klasore `.env` olarak kaydet
@@ -156,6 +159,18 @@ Bu dosya:
 - `C:\etsy_temp\BohoRugHouse` klasorunu hazirlar
 - `C:\etsy_temp\BohoRugHouse_INDIR.bat` kisayolunu olusturur
 - worker'i `STORE_ID=BohoRugHouse` ile baslatir
+
+IlmekRug bilgisayari icin ilk kurulum / guncelleme baslaticisi:
+```
+C:\rugskilim-panel\vds\ILMEKRUG_KUR_VE_BASLAT.bat
+```
+
+Bu dosya:
+- repo'yu `git pull` ile gunceller
+- gerekli Python paketlerini kurar
+- `C:\etsy_temp\IlmekRug` klasorunu hazirlar
+- `C:\etsy_temp\IlmekRug_INDIR.bat` kisayolunu olusturur
+- worker'i `STORE_ID=İlmekRug` ile baslatir
 
 ---
 
