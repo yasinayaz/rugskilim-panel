@@ -65,6 +65,9 @@ LoomixRugs bilgisayari icin hazir dosya:
 WovenTurkishRugs bilgisayari icin hazir dosya:
 `C:\rugskilim-panel\vds\WOVENTURKISHRUGS_env.txt`
 
+WovenLoomRugs bilgisayari icin hazir dosya:
+`C:\rugskilim-panel\vds\WOVENLOOMRUGS_env.txt`
+
 Yapilacak islem:
 1. `OLDNEWRUGS_env.txt` dosyasini ac
 2. `Farkli Kaydet` ile ayni klasore `.env` olarak kaydet
@@ -114,6 +117,18 @@ Bu dosya:
 - `C:\etsy_temp\WovenTurkishRugs` klasorunu hazirlar
 - `C:\etsy_temp\WovenTurkishRugs_INDIR.bat` kisayolunu olusturur
 - worker'i `STORE_ID=WovenTurkishRugs` ile baslatir
+
+WovenLoomRugs bilgisayari icin ilk kurulum / guncelleme baslaticisi:
+```
+C:\rugskilim-panel\vds\WOVENLOOMRUGS_KUR_VE_BASLAT.bat
+```
+
+Bu dosya:
+- repo'yu `git pull` ile gunceller
+- gerekli Python paketlerini kurar
+- `C:\etsy_temp\WovenLoomRugs` klasorunu hazirlar
+- `C:\etsy_temp\WovenLoomRugs_INDIR.bat` kisayolunu olusturur
+- worker'i `STORE_ID=WovenLoomRugs` ile baslatir
 
 ---
 
