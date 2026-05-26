@@ -250,8 +250,8 @@ def _credentials_json_yolu() -> str:
     )
 
 
-def _tum_satirlar_al(ws) -> list:
-    """Boş/yinelenen başlıklara karşı güvenli kayıt okuma."""
+def _tum_satirlar_detayli_al(ws) -> list[tuple[int, dict]]:
+    """Boş/yinelenen başlıklara karşı güvenli kayıt okuma; satır numarasını da döner."""
     degerler = _yeniden_dene("Tüm satırları okuma", ws.get_all_values)
     if len(degerler) < 2:
         return []
@@ -263,7 +263,15 @@ def _tum_satirlar_al(ws) -> list:
             b = (b or "_") + f"_{goruldu.get(b, 0) + 1}"
         goruldu[b] = goruldu.get(b, 0) + 1
         temiz.append(b)
-    return [dict(zip(temiz, satir)) for satir in degerler[1:] if any(satir)]
+    sonuc = []
+    for satir_no, satir in enumerate(degerler[1:], start=2):
+        if any(satir):
+            sonuc.append((satir_no, dict(zip(temiz, satir))))
+    return sonuc
+
+
+def _tum_satirlar_al(ws) -> list:
+    return [kayit for _, kayit in _tum_satirlar_detayli_al(ws)]
 
 
 def _satirda_veri_var_mi(satir) -> bool:
@@ -804,7 +812,7 @@ class SheetsKatmani:
         row_data = data[0].get("rowData", [])
         sonuc = {}
 
-        for row in row_data[1:]:
+        for row_no, row in enumerate(row_data[1:], start=2):
             cells = row.get("values", [])
             if not cells:
                 continue
@@ -817,16 +825,18 @@ class SheetsKatmani:
             renk = _satir_renk_sinifi(cells)
             if renk:
                 sonuc[urun_id] = renk
+                sonuc[f"__row__:{row_no}"] = renk
 
         return sonuc
 
     def ready_urunleri_al(self, limit: int = 100) -> list:
-        tum = _tum_satirlar_al(self._baglanti())
-        renk_durumlari = self.urun_renk_durumlari_al()
+        tum = _tum_satirlar_detayli_al(self._baglanti())
+        satir_renk_durumlari = self.urun_renk_durumlari_al()
         ready = [
-            s for s in tum
+            s
+            for satir_no, s in tum
             if s.get("status") == "ready"
-            and renk_durumlari.get(str(s.get("urun_id", "")).strip()) not in {"green", "yellow"}
+            and satir_renk_durumlari.get(f"__row__:{satir_no}") not in {"green", "yellow"}
         ]
         return ready[:limit]
 
