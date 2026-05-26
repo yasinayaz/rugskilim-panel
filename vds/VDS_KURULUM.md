@@ -94,6 +94,18 @@ C:\rugskilim-panel\vds\OLDNEWRUGS_BASLAT.bat
 
 Bu dosya `STORE_ID=OldNewRugs` ile otomatik baslatir.
 
+OldNewRugs bilgisayari icin ilk kurulum / guncelleme baslaticisi:
+```
+C:\rugskilim-panel\vds\OLDNEWRUGS_KUR_VE_BASLAT.bat
+```
+
+Bu dosya:
+- repo'yu `git pull` ile gunceller
+- gerekli Python paketlerini kurar
+- `C:\etsy_temp\OldNewRugs` klasorunu hazirlar
+- `C:\etsy_temp\OldNewRugs_INDIR.bat` kisayolunu olusturur
+- worker'i `STORE_ID=OldNewRugs` ile baslatir
+
 LoomixRugs bilgisayari icin ilk kurulum / guncelleme baslaticisi:
 ```
 C:\rugskilim-panel\vds\LOOMIXRUGS_KUR_VE_BASLAT.bat
