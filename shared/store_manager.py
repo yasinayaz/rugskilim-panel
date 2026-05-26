@@ -16,6 +16,10 @@ import json
 from pathlib import Path
 
 _STORES_JSON = Path(__file__).parent / "stores.json"
+_STORE_ID_ALIASES = {
+    "IlmekRug": "İlmekRug",
+    "ilmekrug": "İlmekRug",
+}
 
 
 def _validate_store(store: dict):
@@ -41,8 +45,16 @@ def _kaydet(stores_dict: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _resolve_store_id(store_id: str) -> str:
+    raw = str(store_id or "").strip()
+    if not raw:
+        return raw
+    return _STORE_ID_ALIASES.get(raw, raw)
+
+
 def get_store(store_id: str) -> dict:
     stores = _yukle()
+    store_id = _resolve_store_id(store_id)
     if store_id not in stores:
         raise ValueError(f"Mağaza bulunamadı: '{store_id}'. Mevcut: {list(stores)}")
     return stores[store_id]
@@ -76,6 +88,7 @@ def magaza_ekle(store: dict):
 
 def magaza_guncelle(store_id: str, guncellemeler: dict):
     stores = _yukle()
+    store_id = _resolve_store_id(store_id)
     if store_id not in stores:
         raise ValueError(f"Mağaza bulunamadı: '{store_id}'")
     guncel = dict(stores[store_id])
