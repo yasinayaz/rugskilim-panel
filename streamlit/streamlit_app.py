@@ -1338,6 +1338,13 @@ def _urunleri_yukle(
         st.session_state["_urun_katalog_cache_ts"] = _time.time()
         st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
         st.session_state["_urun_katalog_cache_refresh_started_at"] = 0.0
+        _disk_snap = [dict(item) for item in mevcut_liste]
+        def _disk_warmup_job():
+            try:
+                _json_kaydet(_RUNTIME_DIR / "panel_products.json", _disk_snap)
+            except Exception:
+                pass
+        _threading.Thread(target=_disk_warmup_job, daemon=True, name="disk-warmup").start()
         return mevcut_liste
 
     cache_ts = float(st.session_state.get("_urun_katalog_cache_ts") or 0.0)
@@ -1425,14 +1432,14 @@ def _urunleri_cachede_uste_tut(urun: dict, *, remove_code: str | None = None):
     yeni_liste = _silinenleri_filtrele(yeni_liste)
 
     st.session_state["_urun_katalog_cache"] = [dict(item) for item in yeni_liste]
-    st.session_state["_urun_katalog_cache_ts"] = _time.time()
+    st.session_state["_urun_katalog_cache_ts"] = 0.0 if mevcut_cache is None else _time.time()
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
-    _json_kaydet(_RUNTIME_DIR / "panel_products.json", yeni_liste)
     _satilan_kodlarini_oturumda_guncelle(yeni_liste)
 
 
-def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True):
+def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True, disk_snapshot: list[dict] | None = None):
     payload = [dict(item) for item in (products or [])]
+    _disk_snap = [dict(item) for item in disk_snapshot] if disk_snapshot is not None else None
 
     def _job():
         from shared.product_catalog import ProductCatalog, _supabase_ready
@@ -1440,6 +1447,8 @@ def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = Fal
         try:
             if _supabase_ready():
                 ProductCatalog().upsert_products(payload)
+                if _disk_snap is not None:
+                    _json_kaydet(_RUNTIME_DIR / "panel_products.json", _disk_snap)
                 if sync_sheet:
                     from shared.product_sheet_sync import sync_product_sheet
                     sync_product_sheet(force=True)
@@ -1498,8 +1507,9 @@ def _urun_guncelle_arkaplanda(urun: dict, *, old_code: str | None = None):
     _threading.Thread(target=_job, daemon=True, name="urun-guncelle").start()
 
 
-def _urun_sil_arkaplanda(kod: str):
+def _urun_sil_arkaplanda(kod: str, mevcut_snapshot: list[dict] | None = None):
     silinecek_kod = str(kod or "").strip()
+    _disk_snap = [dict(item) for item in mevcut_snapshot] if mevcut_snapshot is not None else None
 
     def _job():
         from shared.product_catalog import ProductCatalog as _PC_DEL, _supabase_ready as _supabase_ready_del
@@ -1508,6 +1518,8 @@ def _urun_sil_arkaplanda(kod: str):
             if _supabase_ready_del():
                 _store_delete_kuyruguna_ekle([silinecek_kod], reason="deleted")
                 _PC_DEL().delete_products([silinecek_kod])
+                if _disk_snap is not None:
+                    _json_kaydet(_RUNTIME_DIR / "panel_products.json", _disk_snap)
                 _urun_sheet_sync_arkaplanda(force=True)
             else:
                 _yerel = [
@@ -3173,10 +3185,11 @@ def _harita_degisim_izleyici():
     _shown = float(st.session_state.get("_canli_harita_shown_ts") or 0)
     if _ts > _shown:
         st.session_state["_canli_harita_shown_ts"] = _ts
-        # Arka plan mağaza sync'i yüzünden tam sayfa rerun ekranı beyaz/siyah
-        # titreşimine neden olmasın. Yeni veriyi sessizce işaretle; kullanıcı
-        # etkileşiminde veya manuel yenilemede doğal olarak uygulanır.
-        st.session_state["_urunler_pending_refresh"] = True
+        _form_acik = bool(st.session_state.get("urun_formu_acik") or st.session_state.get("_edit_urun"))
+        if _form_acik:
+            st.session_state["_urunler_pending_refresh"] = True
+        else:
+            st.rerun(scope="app")
 
 
 def _supabase_kuyruk_satirlari(store_id: str):
@@ -5203,8 +5216,7 @@ if st.session_state.active_main_tab == "urunler":
                     st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut]
                     st.session_state["_urun_katalog_cache_ts"] = _time.time()
                     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
-                    _json_kaydet(_RUNTIME_DIR / "panel_products.json", mevcut)
-                    _urun_sil_arkaplanda(_silinecek_kod)
+                    _urun_sil_arkaplanda(_silinecek_kod, mevcut_snapshot=mevcut)
                     st.session_state.pop("_sil_onay", None)
                     st.session_state["_urun_edit_dialog_acik"] = False
                     st.session_state["_edit_urun"] = None
@@ -5454,7 +5466,7 @@ if st.session_state.active_main_tab == "urunler":
                             try:
                                 _silinen_urunden_cikar(kod)
                                 _urunleri_cachede_uste_tut(eklenen)
-                                _urunleri_kaydet_arkaplanda([eklenen], incremental=True, sync_sheet=True)
+                                _urunleri_kaydet_arkaplanda([eklenen], incremental=True, sync_sheet=True, disk_snapshot=st.session_state.get("_urun_katalog_cache"))
                                 st.session_state["_son_eklenen_urun_kodu"] = kod
                                 st.session_state["_urun_listesi_oncele_kod"] = kod
                                 st.rerun()
@@ -5509,6 +5521,19 @@ if st.session_state.active_main_tab == "urunler":
 
             gosterilecek = sorted(gosterilecek, key=_aktif_urun_siralama, reverse=True)
 
+            _sayfa_limiti = 500
+            _filtre_aktif = bool(filtre.strip()) or kategori_filtre != "Tümü"
+            _tumunu_goster = bool(st.session_state.get("_urunler_tumunu_goster"))
+            if not _filtre_aktif and not _tumunu_goster and len(gosterilecek) > _sayfa_limiti:
+                gosterilecek_render = gosterilecek[:_sayfa_limiti]
+                _pg1, _pg2 = st.columns([5, 1])
+                _pg1.caption(f"İlk {_sayfa_limiti} ürün gösteriliyor — toplam **{len(gosterilecek)}** aktif.")
+                if _pg2.button("Tümünü Göster", key="tumunu_goster_btn", use_container_width=True):
+                    st.session_state["_urunler_tumunu_goster"] = True
+                    st.rerun()
+            else:
+                gosterilecek_render = gosterilecek
+
             try:
                 from shared.store_manager import tum_magazalar as _tum_mag_liste
                 magaza_adlari = sorted(m.get("store_id") or m.get("store_name") for m in _tum_mag_liste())
@@ -5530,21 +5555,27 @@ if st.session_state.active_main_tab == "urunler":
                 satirlar = []
                 loaded_count_map = _store_status_loaded_counts_cached()
                 gorunen_magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
-                for urun in gosterilecek:
+                _satilan_kumesi = set(st.session_state.get("satilan_kodlar_cache") or [])
+                for urun in gosterilecek_render:
                     kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
+                    _magaza_yuklu = {}
+                    for magaza in magaza_adlari:
+                        _sid = str(magaza or "").strip()
+                        _magaza_yuklu[magaza] = bool(
+                            kod and _sid
+                            and kod not in _satilan_kumesi
+                            and _sid in (canli_magaza_haritasi.get(kod, set()) or set())
+                        )
                     satir = {
                         "Ürün Kodu": urun.get("product_code", ""),
                         "cm": urun.get("size_cm", ""),
                         "m2": urun.get("area_m2", ""),
                         "ft": urun.get("size_ft", ""),
                         "kategori": urun.get("category", ""),
-                        "yüklü": sum(
-                            1 for magaza in magaza_adlari
-                            if _urun_magazada_yuklu_mu(kod, magaza, canli_magaza_haritasi)
-                        ),
+                        "yüklü": sum(1 for v in _magaza_yuklu.values() if v),
                     }
                     for magaza in magaza_adlari:
-                        yuklu_mu = _urun_magazada_yuklu_mu(kod, magaza, canli_magaza_haritasi)
+                        yuklu_mu = _magaza_yuklu[magaza]
                         satir[magaza] = "🟢" if yuklu_mu else "⚪"
                         if yuklu_mu:
                             gorunen_magaza_yuklu_sayilari[magaza] += 1
