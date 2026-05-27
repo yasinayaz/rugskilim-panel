@@ -24,6 +24,8 @@ GEMINI_MODEL   = "gemini-2.5-flash"
 GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 GEMINI_RETRY_ATTEMPTS = 4
 GEMINI_RETRY_BACKOFFS = (5, 12, 24)
+# 429 rate-limit için ayrı, daha agresif bekleme süreleri (saniye)
+GEMINI_RATE_LIMIT_BACKOFFS = (15, 45, 90)
 
 
 # ── Sabit metin blokları ──────────────────────────────────────────────────────
@@ -1069,7 +1071,8 @@ def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
         if response.status_code == 429:
             son_hata = Exception(_gemini_hata_mesaji(response) or "Gemini rate limit (429)")
             if deneme < GEMINI_RETRY_ATTEMPTS - 1:
-                time.sleep(GEMINI_RETRY_BACKOFFS[min(deneme, len(GEMINI_RETRY_BACKOFFS) - 1)])
+                # 429 için çok daha uzun bekleme (genel hata backoff'undan ayrı)
+                time.sleep(GEMINI_RATE_LIMIT_BACKOFFS[min(deneme, len(GEMINI_RATE_LIMIT_BACKOFFS) - 1)])
                 continue
             raise Exception(
                 "Gemini rate limit (429). Kota veya billing limiti dolu olabilir. "
@@ -1266,6 +1269,9 @@ def ai_icerik_url(
         norm_template = template_config_normallestir(template_config)
         prompt = _prompt_olustur(boyut_ft, boyut_cm, metrekare, fiyat_usd, norm_template)
         son_hata = None
+        # İlk deneme: normal çağrı
+        # İkinci deneme: yalnızca non-429 hatalarında (JSON parse, validation vb.)
+        # 429 gelirse hemen hata dön — sheet'e yanlış veri yazılmasın.
         for _ in range(2):
             try:
                 ai = _gemini_isle(prompt, gorsel_b64, mime)
@@ -1277,22 +1283,24 @@ def ai_icerik_url(
             except Exception as e:
                 son_hata = e
                 if "rate limit (429)" in str(e).lower():
+                    # 429: Gemini kotası doldu — sessizce fallback KULLANMA,
+                    # hata döndür. Sheet'e yanlış renk/pattern yazılmasın.
                     break
+                # Diğer hatalar (JSON parse, validation): bir kez daha dene
         if son_hata:
             print(f"[AI:{urun_id}] URL uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
         if son_hata and "rate limit (429)" in str(son_hata).lower():
-            return _rate_limit_fallback_ai(
-                urun_id=urun_id,
-                boyut_ft=boyut_ft,
-                boyut_cm=boyut_cm,
-                metrekare=metrekare,
-                fiyat_usd=fiyat_usd,
-                genislik_cm=genislik_cm,
-                uzunluk_cm=uzunluk_cm,
-                template_config=norm_template,
-            )
+            return {
+                "basarili": False,
+                "hata": (
+                    "⏳ Gemini dakika kotası doldu (429). "
+                    "1-2 dakika bekleyip bu ürünü tekrar AI kuyruğuna ekleyin. "
+                    "Çok ürün işlerken ürünler arası bekleme otomatik uygulanır."
+                ),
+                "rate_limit": True,
+            }
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
         print(f"[AI:{urun_id}] URL uretim dis hata -> {type(e).__name__}: {e}")
@@ -1331,22 +1339,21 @@ def ai_icerik_uret(
             except Exception as e:
                 son_hata = e
                 if "rate limit (429)" in str(e).lower():
+                    # 429: sessizce fallback kullanma — hata döndür
                     break
         if son_hata:
             print(f"[AI:{urun_id}] Dosya uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
         if son_hata and "rate limit (429)" in str(son_hata).lower():
-            return _rate_limit_fallback_ai(
-                urun_id=urun_id,
-                boyut_ft=boyut_ft,
-                boyut_cm=boyut_cm,
-                metrekare=metrekare,
-                fiyat_usd=fiyat_usd,
-                genislik_cm=genislik_cm,
-                uzunluk_cm=uzunluk_cm,
-                template_config=norm_template,
-            )
+            return {
+                "basarili": False,
+                "hata": (
+                    "⏳ Gemini dakika kotası doldu (429). "
+                    "1-2 dakika bekleyip bu ürünü tekrar AI kuyruğuna ekleyin."
+                ),
+                "rate_limit": True,
+            }
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
         print(f"[AI:{urun_id}] Dosya uretim dis hata -> {type(e).__name__}: {e}")

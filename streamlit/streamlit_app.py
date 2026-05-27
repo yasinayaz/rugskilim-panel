@@ -93,17 +93,22 @@ def _template_session_overlay(template_cfg: dict, store_id: str, store_name: str
     return cfg, source
 
 
-def _template_json_kaydet(template_id: str, payload: dict) -> Path:
+def _template_json_kaydet(template_id: str, payload: dict) -> tuple:
+    """Template'i JSON dosyasına ve Sheets config'e kaydeder.
+    Döndürür: (Path, sheets_ok: bool, sheets_hata: str)
+    """
     _tmpl_path = _template_yolu(template_id)
     _text = json.dumps(payload, ensure_ascii=False, indent=2)
     _tmpl_path.write_text(_text, encoding="utf-8")
+    _sheets_ok = False
+    _sheets_hata = ""
     try:
         from shared.sheets import config_yaz as _config_yaz
-
         _config_yaz(_template_config_key(template_id), _text)
-    except Exception:
-        pass
-    return _tmpl_path
+        _sheets_ok = True
+    except Exception as _e:
+        _sheets_hata = str(_e)
+    return _tmpl_path, _sheets_ok, _sheets_hata
 
 
 @st.cache_data(show_spinner=False, ttl=30)
@@ -4387,7 +4392,13 @@ if st.session_state.active_main_tab == "urun_sec":
                 for _secili in st.session_state.secilen:
                     _aktif_islem_kaydi_yaz(_secili, "bekliyor", "Sırada bekliyor")
 
+                # Gemini RPM limitini aşmamak için ürünler arası 3 saniyelik bekleme.
+                # Free tier: 15 istek/dakika. 3 sn = ~20 istek/dakika limitine güvenli marj.
+                _AI_INTER_PRODUCT_DELAY = 3
+
                 for i, k in enumerate(st.session_state.secilen):
+                    if i > 0:
+                        _time.sleep(_AI_INTER_PRODUCT_DELAY)
                     prog.progress((i + 1) / toplam, text=f"{i+1}/{toplam} — {k['ad']}")
                     with log:
                         with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
@@ -4470,11 +4481,11 @@ if st.session_state.active_main_tab == "urun_sec":
                                     template_config=_template_cfg,
                                 )
                                 if not ai["basarili"]:
+                                    if ai.get("rate_limit"):
+                                        raise Exception(ai["hata"])
                                     raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
                                 if _template_source == "session_draft":
                                     st.info("Bu ürün için ayarlardaki kaydedilmemiş description taslağı kullanıldı.")
-                                if ai.get("fallback_kullanildi"):
-                                    st.warning(ai.get("uyari") or "Gemini yerine yedek listing icerigi kullanildi.")
                                 st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
 
                                 st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
@@ -6378,16 +6389,53 @@ if st.session_state.active_main_tab == "ayarlar":
                         "description_example_template": st.session_state[f"editor_{_store_id}_description_example_template"],
                     })
                 else:
-                    _kayit["prompt_extra_instructions"] = ""
-                    _kayit.setdefault("prompt_rules", {})
-                    _kayit["prompt_rules"] = {
-                        **_kayit["prompt_rules"],
-                        "description_brief": st.session_state.get(f"editor_{_store_id}_description_brief", ""),
-                        "description_example_template": _preview_text_to_template(
-                            st.session_state[f"editor_{_store_id}_description_example_template"],
-                            _kayit,
-                        ),
-                    }
+                    # Mağazaya özel template kaydederken normalize şişirmesini engelle:
+                    # _tmpl_text zaten normalize edilmiş config (tüm default kurallar yüklü).
+                    # Bunun yerine ham dosyayı oku; sadece description alanlarını güncelle.
+                    _template_id = str(_kayit.get("template_id") or "").strip()
+                    _ham = _template_json_oku(_template_id) if _template_id else {}
+                    if not _ham:
+                        # Ham dosya okunamazsa normalize versiyonu kullan ama küçült
+                        _ham = {
+                            "template_id": _kayit.get("template_id", _template_id),
+                            "template_name": _kayit.get("template_name", _store_id),
+                        }
+                        # static_texts: sabit_* (eski format) → static_texts'e aktar
+                        for _eski, _yeni in [
+                            ("sabit_no_extra_fees", "no_extra_fees"),
+                            ("sabit_easy_returns",  "easy_returns"),
+                            ("sabit_alt",           "footer"),
+                        ]:
+                            if _eski in _kayit:
+                                _ham.setdefault("static_texts", {})[_yeni] = _kayit[_eski]
+                        if "static_texts" in _kayit and isinstance(_kayit["static_texts"], dict):
+                            _ham.setdefault("static_texts", {}).update(_kayit["static_texts"])
+                        # Mağaza özel prompt kurallarını (varsa) taşı
+                        for _kural in ("title_brief", "tag_strategy", "opening_rules", "story_rules"):
+                            _v = str((_kayit.get("prompt_rules") or {}).get(_kural, "") or "").strip()
+                            if _v:
+                                _ham.setdefault("prompt_rules", {})[_kural] = _v
+
+                    # Eski sabit_* format varsa static_texts'e dönüştür (migration)
+                    for _eski, _yeni in [
+                        ("sabit_no_extra_fees", "no_extra_fees"),
+                        ("sabit_easy_returns",  "easy_returns"),
+                        ("sabit_alt",           "footer"),
+                    ]:
+                        if _eski in _ham:
+                            _ham.setdefault("static_texts", {})[_yeni] = _ham.pop(_eski)
+
+                    # Sadece description alanlarını güncelle
+                    _desc_tmpl = _preview_text_to_template(
+                        st.session_state.get(f"editor_{_store_id}_description_example_template", ""),
+                        _kayit,  # normalize edilmiş config — placeholder context için
+                    )
+                    _ham.setdefault("prompt_rules", {})
+                    _ham["prompt_rules"]["description_brief"] = st.session_state.get(
+                        f"editor_{_store_id}_description_brief", ""
+                    )
+                    _ham["prompt_rules"]["description_example_template"] = _desc_tmpl
+                    return _ham
                 return _kayit
 
             def _json_editor_key(_store_id, _template_id):
@@ -6650,7 +6698,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                         template_id=_nt,
                                         template_name=_m_name.strip() or _secili["store_id"],
                                     )
-                                    _template_json_kaydet(_nt, _norm)
+                                    _, _s_ok, _s_err = _template_json_kaydet(_nt, _norm)
+                                    if not _s_ok:
+                                        st.warning(f"⚠️ Template JSON dosyasına kaydedildi ancak Sheets config güncellenemedi: {_s_err or 'bilinmeyen hata'}")
                                 try:
                                     from shared.sheets import SheetsKatmani as _SettingsSheets
                                     _SettingsSheets(_secili["store_id"]).sheet_hazirla()
@@ -6699,7 +6749,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                     template_id=_tmpl_cfg["template_id"],
                                     template_name=_tmpl_cfg["template_name"],
                                 )
-                                _kaydedilen_path = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                                _kaydedilen_path, _s_ok, _s_err = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                                if not _s_ok:
+                                    st.warning(f"⚠️ Dosyaya kaydedildi ancak Sheets config güncellenemedi: {_s_err or 'bilinmeyen hata'}")
                                 st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                                 st.rerun()
                             if _wd2.button("↺ Değişiklikleri Geri Al", key=f"reset_dirty_{_secili['store_id']}"):
@@ -6729,9 +6781,17 @@ if st.session_state.active_main_tab == "ayarlar":
                                     "Ön İzleme Şablonu",
                                     key=f"editor_{_secili['store_id']}_description_example_template",
                                     height=340,
-                                    help="Örn: {opening}, {details_block}, {hikaye}, {footer_block} gibi blokları kullanabilirsin."
+                                    help=(
+                                        "Şablona her zaman {opening} ve {hikaye} ekle — bunlar AI'dan gelir ve ürüne özeldir.\n"
+                                        "Diğer bloklar: {no_extra_fees_block}, {details_block}, {easy_returns_block}, {footer_block}\n"
+                                        "Ürün alanları: {tip}, {renk_scheme}, {pattern}, {koken}, {rounded_ft_label}, {boyut_cm}, {urun_id}, {pile_bullet}"
+                                    )
                                 )
-                                st.caption("Kullanılabilir bloklar: {opening}, {no_extra_fees_block}, {details_block}, {easy_returns_block}, {hikaye}, {footer_block}, {story_size_paragraph}")
+                                st.caption(
+                                    "**Zorunlu (AI üretir):** `{opening}` `{hikaye}` — "
+                                    "**Bloklar:** `{no_extra_fees_block}` `{details_block}` `{easy_returns_block}` `{footer_block}` — "
+                                    "**Ürün:** `{tip}` `{renk_scheme}` `{pattern}` `{koken}` `{rounded_ft_label}` `{boyut_cm}` `{urun_id}` `{pile_bullet}`"
+                                )
                                 _pe1, _pe2 = st.columns([1, 1])
                                 _kaydetildi = _pe1.form_submit_button("💾 Ön İzlemeyi Kaydet", type="primary")
                                 _iptal = _pe2.form_submit_button("Vazgeç")
@@ -6741,7 +6801,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                         template_id=_tmpl_cfg["template_id"],
                                         template_name=_tmpl_cfg["template_name"],
                                     )
-                                    _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                                    _kp, _s_ok, _s_err = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                                    if not _s_ok:
+                                        st.warning(f"⚠️ Dosyaya kaydedildi ancak Sheets config güncellenemedi: {_s_err or 'bilinmeyen hata'}")
                                     _toggle_preview_edit(_secili["store_id"], False)
                                     st.success(f"✅ Ön izleme şablonu kaydedildi: {_tmpl_cfg['template_id']}.json")
                                     st.rerun()
@@ -6838,7 +6900,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                 template_id=_tmpl_cfg["template_id"],
                                 template_name=_tmpl_cfg["template_name"],
                             )
-                            _kaydedilen_path = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                            _kaydedilen_path, _s_ok, _s_err = _template_json_kaydet(_tmpl_cfg["template_id"], _norm)
+                            if not _s_ok:
+                                st.warning(f"⚠️ Dosyaya kaydedildi ancak Sheets config güncellenemedi: {_s_err or 'bilinmeyen hata'}")
                             st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                             st.rerun()
 
@@ -6858,7 +6922,9 @@ if st.session_state.active_main_tab == "ayarlar":
                                     template_id=_secili.get("template", "default_v1"),
                                     template_name=_secili.get("store_name", _secili["store_id"]),
                                 )
-                                _kaydedilen_path = _template_json_kaydet(_secili.get("template", "default_v1"), _norm)
+                                _kaydedilen_path, _s_ok, _s_err = _template_json_kaydet(_secili.get("template", "default_v1"), _norm)
+                                if not _s_ok:
+                                    st.warning(f"⚠️ Dosyaya kaydedildi ancak Sheets config güncellenemedi: {_s_err or 'bilinmeyen hata'}")
                                 st.success(f"✅ Template kaydedildi: {_kaydedilen_path.name}")
                                 st.rerun()
                             except Exception as _e_tmpl:
