@@ -24,3 +24,8 @@ outputs/
 
 # Yerel yedekler
 vds/migration_yedek_*.csv
+
+# Runtime files
+streamlit/stok.xlsx
+streamlit/stok_indir.log
+.runtime/
