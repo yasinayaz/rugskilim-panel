@@ -25,7 +25,18 @@ GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMI
 GEMINI_RETRY_ATTEMPTS = 4
 GEMINI_RETRY_BACKOFFS = (5, 12, 24)
 # 429 rate-limit için ayrı, daha agresif bekleme süreleri (saniye)
-GEMINI_RATE_LIMIT_BACKOFFS = (15, 45, 90)
+# 62s: dakika kotası sıfırlanmasını garanti eder (kota dakika başında sıfırlanır)
+GEMINI_RATE_LIMIT_BACKOFFS = (62, 90, 120)
+
+# ── Global Rate Limiter ───────────────────────────────────────────────────────
+# Tüm Streamlit oturumları (kullanıcılar) aynı process'i paylaşır.
+# Bu lock + timestamp, eş zamanlı kullanıcılarda bile API çağrılarını sıraya
+# koyar ve dakika başına istek sayısını güvenli limitte tutar.
+# 6.5s aralık → ~9 istek/dakika (gemini-2.5-flash free tier: 10 RPM)
+import threading as _threading
+_gemini_lock = _threading.Lock()
+_gemini_last_call: list[float] = [0.0]  # list: mutable closure trick
+_GEMINI_MIN_INTERVAL = 6.5  # saniye
 
 
 # ── Sabit metin blokları ──────────────────────────────────────────────────────
@@ -1031,6 +1042,13 @@ def _gemini_hata_mesaji(response: httpx.Response) -> str:
 
 def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
     import time
+    # ── Rate limiter: tüm kullanıcılar için global sıra ──────────────────────
+    with _gemini_lock:
+        _gecen = time.monotonic() - _gemini_last_call[0]
+        if _gecen < _GEMINI_MIN_INTERVAL:
+            time.sleep(_GEMINI_MIN_INTERVAL - _gecen)
+        _gemini_last_call[0] = time.monotonic()
+    # ─────────────────────────────────────────────────────────────────────────
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         raise ValueError("GEMINI_API_KEY environment variable eksik.")
