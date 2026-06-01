@@ -2971,8 +2971,21 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
             st.warning("CSV'de geçerli SKU bulunamadı.")
             return
 
-        # Sheet'te şu an yüklü (yeşil) olanlar — mevcut cache kullan
-        mevcut_yesil: set[str] = set(_sheet_green_kodlari_cached(store_id))
+        # Supabase'de bu mağaza için aktif yüklü olanlar — gerçek kaynak
+        # Ham product_code'u da saklıyoruz; Sheet'te silme için lazım
+        _supabase_yukluleri = [
+            row for row in _store_status_rows_cached()
+            if str(row.get("store_id") or "").strip() == store_id and _store_status_is_loaded(row)
+        ]
+        # normalize → ham kod eşlemesi (sheet'te silme için ham kodu kullanacağız)
+        _norm_to_raw: dict[str, str] = {}
+        for row in _supabase_yukluleri:
+            raw = str(row.get("product_code") or "").strip()
+            norm = (_urun_kodu_normalize(raw) or _urun_kodu_al(raw) or raw).upper().replace("-", " ").strip()
+            if norm:
+                _norm_to_raw[norm] = raw
+        mevcut_yesil: set[str] = set(_norm_to_raw.keys())
+        mevcut_yesil.discard("")
 
         eklenecek = csv_kodlar - mevcut_yesil
         silinecek = mevcut_yesil - csv_kodlar
@@ -2999,10 +3012,12 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
                     # 2) Sheet'te yüklü ama CSV'de olmayan satırları sil
                     silinen = 0
                     if silinecek:
-                        silinen = _ps_imp.satirlari_sil(list(silinecek))
+                        # Sheet'te ham kodla eşleşiyoruz
+                        ham_silinecek = [_norm_to_raw.get(k, k) for k in silinecek]
+                        silinen = _ps_imp.satirlari_sil(ham_silinecek)
                         from shared.product_catalog import StoreCatalog as _SC_IMP, _supabase_ready as _sr_imp
                         if _sr_imp():
-                            _SC_IMP().delete(store_id, list(silinecek))
+                            _SC_IMP().delete(store_id, ham_silinecek)
 
                     _store_status_caches_temizle()
                     _urun_katalog_cache_temizle()
