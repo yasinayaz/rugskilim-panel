@@ -3005,19 +3005,18 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
             _ps_imp = _PS_IMP(store_id)
             with st.spinner("İçe aktarılıyor..."):
                 try:
-                    # 1) CSV'dekileri ekle/yeşile boya → Supabase otomatik sync
-                    kayitlar = [{"urun_id": kod} for kod in sorted(csv_kodlar)]
-                    sonuc = _ps_imp.etsy_csv_kayitlarini_isle(kayitlar, renk="green", durum="done")
-
-                    # 2) Sheet'te yüklü ama CSV'de olmayan satırları sil
+                    # 1) Önce sil — upsert'ten önce yapılmazsa overlap riski var
                     silinen = 0
                     if silinecek:
-                        # Sheet'te ham kodla eşleşiyoruz
                         ham_silinecek = [_norm_to_raw.get(k, k) for k in silinecek]
                         silinen = _ps_imp.satirlari_sil(ham_silinecek)
                         from shared.product_catalog import StoreCatalog as _SC_IMP, _supabase_ready as _sr_imp
                         if _sr_imp():
                             _SC_IMP().delete(store_id, ham_silinecek)
+
+                    # 2) CSV'dekileri ekle/yeşile boya → Supabase otomatik sync
+                    kayitlar = [{"urun_id": kod} for kod in sorted(csv_kodlar)]
+                    sonuc = _ps_imp.etsy_csv_kayitlarini_isle(kayitlar, renk="green", durum="done")
 
                     _store_status_caches_temizle()
                     _urun_katalog_cache_temizle()
