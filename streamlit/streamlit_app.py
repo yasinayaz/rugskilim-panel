@@ -2910,21 +2910,25 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
     return sayilar
 
 
-def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:  # noqa: E302
+def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:
     _prefix_map = {
-        "LoomixRugs":    ["LMX "],
-        "LoopRug":       ["LR ", "LP "],
-        "RugsShopTurkey":["RST ", "RSH "],
-        "WovenLoomRugs": ["WLR ", "WLB "],
-        "İlmekRug":      ["ilmek "],
-        "IlmekRug":      ["ilmek "],
+        "LoomixRugs":     ["LMX "],
+        "LoopRug":        ["LR ", "LP "],
+        "RugsShopTurkey": ["RST ", "RSH "],
+        "WovenLoomRugs":  ["WLR ", "WLB "],
+        "İlmekRug":       ["ilmek "],
+        "IlmekRug":       ["ilmek "],
     }
     sku = str(raw_sku or "").strip()
     for p in _prefix_map.get(store_id, []):
         if sku.upper().startswith(p.upper()):
             sku = sku[len(p):].strip()
             break
-    return (_urun_kodu_normalize(sku) or _urun_kodu_al(sku) or sku).upper().replace("-", " ").strip()
+    # Canonical: büyük harf, tire→boşluk, harf+rakam arası boşluk (D149→D 149, KLM62→KLM 62)
+    sku = sku.upper().replace("-", " ").strip()
+    sku = _re.sub(r"\s+", " ", sku)
+    sku = _re.sub(r"([A-ZÇĞİÖŞÜ]+)(\d)", r"\1 \2", sku)
+    return _re.sub(r"\s+", " ", sku).strip()
 
 
 def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
@@ -3013,9 +3017,16 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
                 return
 
         # normalize → ham kod eşlemesi (silme için ham ID lazım)
+        # CSV ile aynı canonical format: büyük harf, tire→boşluk, harf+rakam arası boşluk
+        def _sheet_kod_normalize(raw: str) -> str:
+            s = str(raw or "").upper().replace("-", " ").strip()
+            s = _re.sub(r"\s+", " ", s)
+            s = _re.sub(r"([A-ZÇĞİÖŞÜ]+)(\d)", r"\1 \2", s)
+            return _re.sub(r"\s+", " ", s).strip()
+
         _norm_to_raw: dict[str, str] = {}
         for raw in _sheet_raw_idler:
-            norm = (_urun_kodu_normalize(raw) or _urun_kodu_al(raw) or raw).upper().replace("-", " ").strip()
+            norm = _sheet_kod_normalize(raw)
             if norm:
                 _norm_to_raw.setdefault(norm, raw)
 
@@ -4575,13 +4586,11 @@ if st.session_state.active_main_tab == "urun_sec":
                 for _secili in st.session_state.secilen:
                     _aktif_islem_kaydi_yaz(_secili, "bekliyor", "Sırada bekliyor")
 
-                # Gemini RPM limitini aşmamak için ürünler arası 3 saniyelik bekleme.
-                # Free tier: 15 istek/dakika. 3 sn = ~20 istek/dakika limitine güvenli marj.
-                _AI_INTER_PRODUCT_DELAY = 3
+                # Rate limiting artık ai_icerik._gemini_isle() içindeki global lock ile yönetiliyor.
+                # (6.5s minimum aralık, tüm kullanıcılar için thread-safe sıra)
+                # Buradaki delay kaldırıldı — panel UI yavaşlatılmadan çağrılar otomatik sıralanır.
 
                 for i, k in enumerate(st.session_state.secilen):
-                    if i > 0:
-                        _time.sleep(_AI_INTER_PRODUCT_DELAY)
                     prog.progress((i + 1) / toplam, text=f"{i+1}/{toplam} — {k['ad']}")
                     with log:
                         with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
