@@ -150,6 +150,32 @@ def _schema_missing_column(response_text: str) -> str | None:
     return None
 
 
+def list_sold_product_codes() -> set[str]:
+    """Supabase'den sadece status=sold olan urunlerin product_code'larini ceker."""
+    import requests
+    codes: set[str] = set()
+    page_size = 1000
+    offset = 0
+    while True:
+        response = requests.get(
+            _rest_url(),
+            headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
+            params={"select": "product_code", "status": "eq.sold", "order": "product_code.asc"},
+            timeout=30,
+        )
+        if not response.ok:
+            raise RuntimeError(f"Supabase sold kodlari okunamadi: {response.status_code} {response.text}")
+        page = response.json()
+        for row in page:
+            code = _clean(row.get("product_code"))
+            if code:
+                codes.add(code)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return codes
+
+
 class ProductCatalog:
     def list_products(self, include_store_presence: bool = False) -> list[dict]:
         import requests

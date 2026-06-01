@@ -3998,25 +3998,24 @@ def _satilan_kodlarini_hizli_yukle() -> set[str]:
 def _satilan_kodlarini_oturumda_guncelle(products: list[dict] | None) -> set[str]:
     satilan = _satilan_kodlarini_ayikla(products)
     st.session_state.satilan_kodlar_cache = sorted(satilan)
+    try:
+        _satilan_kodlar_cached.clear()
+    except Exception:
+        pass
     return satilan
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _satilan_kodlar_cached() -> set[str]:
-    try:
-        from shared.product_catalog import ProductCatalog, _supabase_ready
-
-        if _supabase_ready():
-            return _satilan_kodlarini_ayikla(
-                ProductCatalog().list_products(include_store_presence=False)
-            )
-    except Exception:
-        pass
-
     hizli = _satilan_kodlarini_hizli_yukle()
     if hizli:
         return hizli
-
+    try:
+        from shared.product_catalog import list_sold_product_codes, _supabase_ready
+        if _supabase_ready():
+            return list_sold_product_codes()
+    except Exception:
+        pass
     try:
         return _satilan_kodlarini_ayikla(_urun_sheet_urunleri_yukle_cached())
     except Exception:
@@ -6127,6 +6126,7 @@ if st.session_state.active_main_tab == "urunler":
                                 yeni_liste.append(urun)
                         if secili_urun:
                             _urunleri_kaydet(yeni_liste)
+                            _supabase_store_haritasi_cached.clear()
                             _store_delete_kuyruguna_ekle_arkaplanda([kod], reason="sold")
                             st.session_state.satilan_urun_formu_acik = False
                             st.success(f"{kod} satılan ürünlere eklendi.")

@@ -162,7 +162,7 @@ def sync_product_sheet(force: bool = False, products: list[dict] | None = None, 
         state = _load_state()
         rows = products if products is not None else ProductCatalog().list_products()
         fingerprint = _fingerprint_rows(rows)
-        if state.get("last_fingerprint") == fingerprint:
+        if not force and state.get("last_fingerprint") == fingerprint:
             _save_state({
                 **state,
                 "last_synced_at": now,
