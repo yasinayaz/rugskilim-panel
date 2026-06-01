@@ -200,6 +200,22 @@ def _sold_tab_row(product: dict) -> list:
     ]
 
 
+def _active_sort_key(product: dict):
+    """Aktif urunler: updated_at ascending → yeni eklenenler en alta dusuyor."""
+    raw_dt = _clean_str(product.get("updated_at"))
+    if raw_dt:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return (1, datetime.strptime(raw_dt, fmt))
+            except Exception:
+                continue
+    source_row = _clean_str(product.get("source_row"))
+    try:
+        return (0, int(source_row or 0))
+    except Exception:
+        return (0, 0)
+
+
 def _sold_sort_key(product: dict):
     raw_dt = _clean_str(product.get("sold_at"))
     if raw_dt:
@@ -304,7 +320,7 @@ class ProductSheet:
             ws = self._worksheet(title)
             is_sold_tab = title == "Satilanlar"
             body = [SOLD_TAB_HEADERS if is_sold_tab else ACTIVE_TAB_HEADERS]
-            sorter = _sold_sort_key if is_sold_tab else (lambda x: (_clean_str(x.get("product_code")), _clean_str(x.get("product_id"))))
+            sorter = _sold_sort_key if is_sold_tab else _active_sort_key
             for product in sorted(rows, key=sorter):
                 copy = dict(product)
                 copy["updated_at"] = copy.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M")
