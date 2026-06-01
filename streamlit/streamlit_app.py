@@ -3001,7 +3001,7 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
                 st.write(", ".join(sorted(silinecek)))
 
         if st.button("İçe Aktar", type="primary", key=f"etsy_csv_import_btn_{store_id}"):
-            from shared.sheets import ProductSheet as _PS_IMP
+            from shared.sheets import SheetsKatmani as _PS_IMP
             _ps_imp = _PS_IMP(store_id)
             with st.spinner("İçe aktarılıyor..."):
                 try:
