@@ -2934,15 +2934,15 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
 
     st.markdown("---")
     with st.expander("📥 Etsy CSV İçe Aktar", expanded=False):
+        st.info(f"**Hedef mağaza: {store_name}** — yalnızca bu mağazanın Sheet sekmesi ve Supabase kayıtları etkilenir. Farklı mağaza için üstteki 'Mağaza detayı' seçicisinden değiştirin.")
+
         uploaded = st.file_uploader(
-            "Etsy CSV dosyasını seçin (SKU kolonu gerekli)",
+            f"{store_name} için Etsy CSV dosyasını seçin (SKU kolonu gerekli)",
             type=["csv"],
             key=f"etsy_csv_upload_{store_id}",
-            label_visibility="collapsed",
         )
 
         if not uploaded:
-            st.caption("Etsy mağaza panelinden indirilen CSV'yi yükleyin. SKU kolonu zorunludur.")
             return
 
         try:
@@ -3000,7 +3000,7 @@ def _etsy_csv_import_ui(store_id: str, store_name: str):
             with st.expander(f"Silinecek {len(silinecek)} ürün"):
                 st.write(", ".join(sorted(silinecek)))
 
-        if st.button("İçe Aktar", type="primary", key=f"etsy_csv_import_btn_{store_id}"):
+        if st.button(f"İçe Aktar → {store_name}", type="primary", key=f"etsy_csv_import_btn_{store_id}"):
             from shared.sheets import SheetsKatmani as _PS_IMP
             _ps_imp = _PS_IMP(store_id)
             with st.spinner("İçe aktarılıyor..."):
