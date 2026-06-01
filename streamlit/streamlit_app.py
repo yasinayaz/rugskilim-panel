@@ -2910,7 +2910,7 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
     return sayilar
 
 
-def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:
+def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:  # noqa: E302
     _prefix_map = {
         "LoomixRugs":    ["LMX "],
         "LoopRug":       ["LR ", "LP "],
@@ -2927,17 +2927,28 @@ def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:
     return (_urun_kodu_normalize(sku) or _urun_kodu_al(sku) or sku).upper().replace("-", " ").strip()
 
 
-def _etsy_csv_import_ui(store_id: str, store_name: str):
-    """Mağaza detayının altında Etsy CSV içe aktarma arayüzü."""
+def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
+    """Etsy CSV içe aktarma — kendi mağaza seçicisiyle bağımsız bölüm."""
     import io
     import csv as _csv_mod
 
-    st.markdown("---")
     with st.expander("📥 Etsy CSV İçe Aktar", expanded=False):
-        st.info(f"**Hedef mağaza: {store_name}** — yalnızca bu mağazanın Sheet sekmesi ve Supabase kayıtları etkilenir. Farklı mağaza için üstteki 'Mağaza detayı' seçicisinden değiştirin.")
+        magaza_secenekleri = [
+            m["store_id"] for m in tum_magazalar
+            if str(m.get("store_id") or "").strip()
+        ]
+        store_id = st.selectbox(
+            "Mağaza seçin",
+            options=magaza_secenekleri,
+            format_func=lambda sid: magaza_ad_haritasi.get(sid, sid),
+            key="etsy_csv_import_magaza_sec",
+        )
+        store_name = magaza_ad_haritasi.get(store_id, store_id)
+
+        st.warning(f"⚠️ Yalnızca **{store_name}** mağazasının Sheet sekmesi ve Supabase kayıtları etkilenir.")
 
         uploaded = st.file_uploader(
-            f"{store_name} için Etsy CSV dosyasını seçin (SKU kolonu gerekli)",
+            f"{store_name} Etsy CSV (SKU kolonu gerekli)",
             type=["csv"],
             key=f"etsy_csv_upload_{store_id}",
         )
@@ -5911,8 +5922,8 @@ if st.session_state.active_main_tab == "urunler":
                     else:
                         st.info("Bu mağazada panelde yüklü ürün görünmüyor.")
 
-                if secili_store:
-                    _etsy_csv_import_ui(secili_store, magaza_ad_haritasi.get(secili_store, secili_store))
+                st.markdown("---")
+                _etsy_csv_import_ui(tum_magazalar, magaza_ad_haritasi)
 
             except Exception as exc:
                 st.warning(f"Mağazalar görünümü hazırlanamadı: {exc}")
