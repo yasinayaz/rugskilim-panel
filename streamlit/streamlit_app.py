@@ -2972,15 +2972,30 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
             st.error("CSV'de SKU kolonu bulunamadı.")
             return
 
-        csv_kodlar: set[str] = set()
-        for row in reader:
-            kod = _etsy_csv_sku_normalize(row.get(sku_col, ""), store_id)
-            if kod:
-                csv_kodlar.add(kod)
+        # Duplicate SKU tespiti
+        from collections import Counter as _Counter
+        _sku_sayac = _Counter(
+            _etsy_csv_sku_normalize(row.get(sku_col, ""), store_id)
+            for row in reader
+            if _etsy_csv_sku_normalize(row.get(sku_col, ""), store_id)
+        )
+        duplicate_skular = {k: v for k, v in _sku_sayac.items() if v > 1}
+
+        csv_kodlar: set[str] = set(_sku_sayac.keys())
 
         if not csv_kodlar:
             st.warning("CSV'de geçerli SKU bulunamadı.")
             return
+
+        if duplicate_skular:
+            with st.expander(f"⚠️ {len(duplicate_skular)} tekrarlı SKU — CSV'de aynı ürün kodu birden fazla listing'e atanmış", expanded=True):
+                st.caption("Bu SKU'lar Etsy'de birden fazla listing olarak yüklenmiş. Import'ta her SKU 1 kez işlenir; Etsy'de duplicate listingleri kontrol edin.")
+                import pandas as _pd_dup
+                st.dataframe(
+                    _pd_dup.DataFrame([{"SKU": k, "Tekrar sayısı": v} for k, v in sorted(duplicate_skular.items())]),
+                    hide_index=True,
+                    width="stretch",
+                )
 
         # Sheet'teki TÜM satırları oku — karşılaştırma kaynağı Sheet'in kendisi
         with st.spinner("Sheet okunuyor..."):
@@ -2992,7 +3007,6 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
                 from shared.sheets import _kolon_no as _kno, KOL as _KOL_P
                 _uid_kol = _kno(_ws_prev, "urun_id", default=_KOL_P["urun_id"])
                 _tum_sheet_idler = _ws_prev.col_values(_uid_kol)
-                # ilk satır başlık
                 _sheet_raw_idler = [str(v).strip() for v in _tum_sheet_idler[1:] if str(v).strip() and str(v).strip() != "urun_id"]
             except Exception as exc:
                 st.error(f"Sheet okunamadı: {exc}")
@@ -3021,12 +3035,22 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
             with st.expander(f"Silinecek {len(silinecek)} ürün"):
                 st.write(", ".join(sorted(silinecek)))
 
+        # Son import sonucu — st.rerun'dan önce session_state'e kaydedilir, silinmez
+        _sonuc_key = f"etsy_csv_import_sonuc_{store_id}"
+        if st.session_state.get(_sonuc_key):
+            _s = st.session_state[_sonuc_key]
+            st.success(
+                f"✅ Son import tamamlandı — "
+                f"Eklenen: {_s.get('eklenen', 0)}, "
+                f"Yeşillenen: {_s.get('guncellenen', 0)}, "
+                f"Silinen: {_s.get('silinen', 0)}"
+            )
+
         if st.button(f"İçe Aktar → {store_name}", type="primary", key=f"etsy_csv_import_btn_{store_id}"):
             from shared.sheets import SheetsKatmani as _PS_IMP
             _ps_imp = _PS_IMP(store_id)
             with st.spinner("İçe aktarılıyor..."):
                 try:
-                    # 1) Önce sil — upsert'ten önce yapılmazsa overlap riski var
                     silinen = 0
                     if silinecek:
                         ham_silinecek = [_norm_to_raw.get(k, k) for k in silinecek]
@@ -3035,7 +3059,6 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
                         if _sr_imp():
                             _SC_IMP().delete(store_id, ham_silinecek)
 
-                    # 2) CSV'dekileri ekle/yeşile boya → Supabase otomatik sync
                     kayitlar = [{"urun_id": kod} for kod in sorted(csv_kodlar)]
                     sonuc = _ps_imp.etsy_csv_kayitlarini_isle(kayitlar, renk="green", durum="done")
 
@@ -3047,12 +3070,11 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
                     except Exception:
                         pass
 
-                    st.success(
-                        f"Tamamlandı — "
-                        f"Eklenen: {sonuc.get('eklenen', 0)}, "
-                        f"Güncellenen: {sonuc.get('guncellenen', 0)}, "
-                        f"Silinen: {silinen}"
-                    )
+                    st.session_state[_sonuc_key] = {
+                        "eklenen": sonuc.get("eklenen", 0),
+                        "guncellenen": sonuc.get("guncellenen", 0),
+                        "silinen": silinen,
+                    }
                     st.rerun()
                 except Exception as exc:
                     st.error(f"İçe aktarma hatası: {exc}")
