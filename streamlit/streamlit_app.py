@@ -2982,29 +2982,39 @@ def _etsy_csv_import_ui(tum_magazalar: list, magaza_ad_haritasi: dict):
             st.warning("CSV'de geçerli SKU bulunamadı.")
             return
 
-        # Supabase'de bu mağaza için aktif yüklü olanlar — gerçek kaynak
-        # Ham product_code'u da saklıyoruz; Sheet'te silme için lazım
-        _supabase_yukluleri = [
-            row for row in _store_status_rows_cached()
-            if str(row.get("store_id") or "").strip() == store_id and _store_status_is_loaded(row)
-        ]
-        # normalize → ham kod eşlemesi (sheet'te silme için ham kodu kullanacağız)
+        # Sheet'teki TÜM satırları oku — karşılaştırma kaynağı Sheet'in kendisi
+        with st.spinner("Sheet okunuyor..."):
+            try:
+                from shared.sheets import SheetsKatmani as _SK_PREV
+                _sk_prev = _SK_PREV(store_id)
+                _sk_prev.sheet_hazirla()
+                _ws_prev = _sk_prev._baglanti()
+                from shared.sheets import _kolon_no as _kno, KOL as _KOL_P
+                _uid_kol = _kno(_ws_prev, "urun_id", default=_KOL_P["urun_id"])
+                _tum_sheet_idler = _ws_prev.col_values(_uid_kol)
+                # ilk satır başlık
+                _sheet_raw_idler = [str(v).strip() for v in _tum_sheet_idler[1:] if str(v).strip() and str(v).strip() != "urun_id"]
+            except Exception as exc:
+                st.error(f"Sheet okunamadı: {exc}")
+                return
+
+        # normalize → ham kod eşlemesi (silme için ham ID lazım)
         _norm_to_raw: dict[str, str] = {}
-        for row in _supabase_yukluleri:
-            raw = str(row.get("product_code") or "").strip()
+        for raw in _sheet_raw_idler:
             norm = (_urun_kodu_normalize(raw) or _urun_kodu_al(raw) or raw).upper().replace("-", " ").strip()
             if norm:
-                _norm_to_raw[norm] = raw
-        mevcut_yesil: set[str] = set(_norm_to_raw.keys())
-        mevcut_yesil.discard("")
+                _norm_to_raw.setdefault(norm, raw)
 
-        eklenecek = csv_kodlar - mevcut_yesil
-        silinecek = mevcut_yesil - csv_kodlar
-        zaten_yuklu = csv_kodlar & mevcut_yesil
+        sheet_kodlar: set[str] = set(_norm_to_raw.keys())
+        sheet_kodlar.discard("")
+
+        eklenecek = csv_kodlar - sheet_kodlar
+        silinecek = sheet_kodlar - csv_kodlar
+        zaten_yuklu = csv_kodlar & sheet_kodlar
 
         _c1, _c2, _c3 = st.columns(3)
         _c1.metric("Yeni eklenecek", len(eklenecek))
-        _c2.metric("Zaten yüklü", len(zaten_yuklu))
+        _c2.metric("Sheet'te mevcut", len(zaten_yuklu))
         _c3.metric("Sheet'ten silinecek", len(silinecek))
 
         if silinecek:
