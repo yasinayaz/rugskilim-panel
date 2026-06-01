@@ -2910,6 +2910,119 @@ def _store_status_loaded_counts_cached() -> dict[str, int]:
     return sayilar
 
 
+def _etsy_csv_sku_normalize(raw_sku: str, store_id: str) -> str:
+    _prefix_map = {
+        "LoomixRugs":    ["LMX "],
+        "LoopRug":       ["LR ", "LP "],
+        "RugsShopTurkey":["RST ", "RSH "],
+        "WovenLoomRugs": ["WLR ", "WLB "],
+        "İlmekRug":      ["ilmek "],
+        "IlmekRug":      ["ilmek "],
+    }
+    sku = str(raw_sku or "").strip()
+    for p in _prefix_map.get(store_id, []):
+        if sku.upper().startswith(p.upper()):
+            sku = sku[len(p):].strip()
+            break
+    return (_urun_kodu_normalize(sku) or _urun_kodu_al(sku) or sku).upper().replace("-", " ").strip()
+
+
+def _etsy_csv_import_ui(store_id: str, store_name: str):
+    """Mağaza detayının altında Etsy CSV içe aktarma arayüzü."""
+    import io
+    import csv as _csv_mod
+
+    st.markdown("---")
+    with st.expander("📥 Etsy CSV İçe Aktar", expanded=False):
+        uploaded = st.file_uploader(
+            "Etsy CSV dosyasını seçin (SKU kolonu gerekli)",
+            type=["csv"],
+            key=f"etsy_csv_upload_{store_id}",
+            label_visibility="collapsed",
+        )
+
+        if not uploaded:
+            st.caption("Etsy mağaza panelinden indirilen CSV'yi yükleyin. SKU kolonu zorunludur.")
+            return
+
+        try:
+            content = uploaded.read().decode("utf-8-sig")
+            reader = list(_csv_mod.DictReader(io.StringIO(content)))
+        except Exception as exc:
+            st.error(f"CSV okunamadı: {exc}")
+            return
+
+        if not reader:
+            st.warning("CSV boş.")
+            return
+
+        sku_col = next((c for c in reader[0].keys() if c.strip().upper() == "SKU"), None)
+        if not sku_col:
+            st.error("CSV'de SKU kolonu bulunamadı.")
+            return
+
+        csv_kodlar: set[str] = set()
+        for row in reader:
+            kod = _etsy_csv_sku_normalize(row.get(sku_col, ""), store_id)
+            if kod:
+                csv_kodlar.add(kod)
+
+        if not csv_kodlar:
+            st.warning("CSV'de geçerli SKU bulunamadı.")
+            return
+
+        # Sheet'te şu an yüklü (yeşil) olanlar — mevcut cache kullan
+        mevcut_yesil: set[str] = set(_sheet_green_kodlari_cached(store_id))
+
+        eklenecek = csv_kodlar - mevcut_yesil
+        silinecek = mevcut_yesil - csv_kodlar
+        zaten_yuklu = csv_kodlar & mevcut_yesil
+
+        _c1, _c2, _c3 = st.columns(3)
+        _c1.metric("Yeni eklenecek", len(eklenecek))
+        _c2.metric("Zaten yüklü", len(zaten_yuklu))
+        _c3.metric("Sheet'ten silinecek", len(silinecek))
+
+        if silinecek:
+            with st.expander(f"Silinecek {len(silinecek)} ürün"):
+                st.write(", ".join(sorted(silinecek)))
+
+        if st.button("İçe Aktar", type="primary", key=f"etsy_csv_import_btn_{store_id}"):
+            from shared.sheets import ProductSheet as _PS_IMP
+            _ps_imp = _PS_IMP(store_id)
+            with st.spinner("İçe aktarılıyor..."):
+                try:
+                    # 1) CSV'dekileri ekle/yeşile boya → Supabase otomatik sync
+                    kayitlar = [{"urun_id": kod} for kod in sorted(csv_kodlar)]
+                    sonuc = _ps_imp.etsy_csv_kayitlarini_isle(kayitlar, renk="green", durum="done")
+
+                    # 2) Sheet'te yüklü ama CSV'de olmayan satırları sil
+                    silinen = 0
+                    if silinecek:
+                        silinen = _ps_imp.satirlari_sil(list(silinecek))
+                        from shared.product_catalog import StoreCatalog as _SC_IMP, _supabase_ready as _sr_imp
+                        if _sr_imp():
+                            _SC_IMP().delete(store_id, list(silinecek))
+
+                    _store_status_caches_temizle()
+                    _urun_katalog_cache_temizle()
+                    try:
+                        _sheet_green_kodlari_cached.clear()
+                        _sheet_green_haritasi_cached.clear()
+                    except Exception:
+                        pass
+
+                    st.success(
+                        f"Tamamlandı — "
+                        f"Eklenen: {sonuc.get('eklenen', 0)}, "
+                        f"Güncellenen: {sonuc.get('guncellenen', 0)}, "
+                        f"Silinen: {silinen}"
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"İçe aktarma hatası: {exc}")
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _store_status_pending_delete_rows_cached() -> list[dict]:
     rows = []
@@ -5783,6 +5896,10 @@ if st.session_state.active_main_tab == "urunler":
                         )
                     else:
                         st.info("Bu mağazada panelde yüklü ürün görünmüyor.")
+
+                if secili_store:
+                    _etsy_csv_import_ui(secili_store, magaza_ad_haritasi.get(secili_store, secili_store))
+
             except Exception as exc:
                 st.warning(f"Mağazalar görünümü hazırlanamadı: {exc}")
 
