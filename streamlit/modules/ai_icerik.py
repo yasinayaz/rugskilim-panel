@@ -20,8 +20,8 @@ import httpx
 from pathlib import Path
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL          = "gemini-1.5-flash"   # 2.5-flash→1.5-flash: 3x daha fazla günlük kota, thinking-token yok
-GEMINI_MODEL_FALLBACK = "gemini-1.5-flash"   # Gelecekte 2.5-flash tekrar denenirse fallback olarak kullanılır
+GEMINI_MODEL          = "gemini-2.5-flash"   # Tier 1 Postpay → 2.5-flash geri alındı (daha kaliteli listing)
+GEMINI_MODEL_FALLBACK = "gemini-1.5-flash"   # 2.5-flash 429 verirse fallback
 GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 GEMINI_RETRY_ATTEMPTS = 4
 GEMINI_RETRY_BACKOFFS = (5, 12, 24)
@@ -31,13 +31,12 @@ GEMINI_RATE_LIMIT_BACKOFFS = (62, 90, 120)
 
 # ── Global Rate Limiter ───────────────────────────────────────────────────────
 # Tüm Streamlit oturumları (kullanıcılar) aynı process'i paylaşır.
-# Bu lock + timestamp, eş zamanlı kullanıcılarda bile API çağrılarını sıraya
-# koyar ve dakika başına istek sayısını güvenli limitte tutar.
-# 6.5s aralık → ~9 istek/dakika (gemini-2.5-flash free tier: 10 RPM)
+# Tier 1 Postpay: gemini-2.5-flash 1000 RPM → 0.1s yeterli güvenli marj.
+# Lock yine de korunuyor: eş zamanlı kullanıcılar sıraya girer, thread-safe.
 import threading as _threading
 _gemini_lock = _threading.Lock()
 _gemini_last_call: list[float] = [0.0]  # list: mutable closure trick
-_GEMINI_MIN_INTERVAL = 6.5  # saniye
+_GEMINI_MIN_INTERVAL = 0.1  # saniye (Tier 1: 1000 RPM → pratikte limit yok)
 
 
 # ── Sabit metin blokları ──────────────────────────────────────────────────────
