@@ -362,6 +362,56 @@ class ProductCatalog:
         data = response.json()
         return data[0] if data else None
 
+    def sell_product(
+        self,
+        product_code: str,
+        *,
+        sold_at: str | None = None,
+        sold_site: str | None = None,
+        customer_name: str | None = None,
+        customer_phone: str | None = None,
+        customer_address: str | None = None,
+        customer_contact_country: str | None = None,
+        note: str | None = None,
+    ) -> dict | None:
+        """Ürünü satıldı olarak işaretle ve müşteri bilgilerini güncelle (PATCH)."""
+        code = _clean(product_code)
+        if not code:
+            return None
+
+        payload: dict = {
+            "status": "sold",
+            "sold_at": sold_at or _now_str(),
+            "updated_at": _now_str(),
+        }
+        if sold_site is not None:
+            payload["sold_site"] = sold_site
+        if customer_name is not None:
+            payload["customer_name"] = customer_name
+        if customer_phone is not None:
+            payload["customer_phone"] = customer_phone
+        if customer_address is not None:
+            payload["customer_address"] = customer_address
+        if customer_contact_country is not None:
+            payload["customer_contact_country"] = customer_contact_country
+        if note is not None:
+            payload["note"] = note
+
+        import requests
+        response = requests.patch(
+            _rest_url(),
+            headers={**_headers(), "Prefer": "return=representation"},
+            params={"product_code": f"eq.{code}"},
+            json=payload,
+            timeout=45,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                f"Supabase satış güncellemesi başarısız: {response.status_code} {response.text}"
+            )
+        data = response.json()
+        return data[0] if data else None
+
     def refresh_store_presence(self, store_map: dict[str, set[str]]) -> None:
         """Mağaza varlığını product_store_status tablosuna yazar."""
         rows = []

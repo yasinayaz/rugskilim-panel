@@ -687,6 +687,7 @@ for k, v in [
     ("_urun_katalog_cache_ts", 0.0),
     ("_urun_katalog_cache_stok_mtime", 0.0),
     ("_urun_katalog_cache_refresh_started_at", 0.0),
+    ("_urun_katalog_bekleyen_override", {}),
     ("_urunler_magaza_refresh_started_at", 0.0),
     ("_urunler_seen_sync_version", ""),
     ("_urunler_pending_sync_version", ""),
@@ -1333,6 +1334,7 @@ def _urunleri_yukle(
             mevcut_liste = _panel_urunleri_yerden_yukle()
 
         mevcut_liste = _silinenleri_filtrele(mevcut_liste)
+        mevcut_liste = _bekleyen_urun_override_uygula(mevcut_liste)
         _satilan_kodlarini_oturumda_guncelle(mevcut_liste)
         st.session_state["_urun_katalog_cache"] = [dict(item) for item in mevcut_liste]
         st.session_state["_urun_katalog_cache_ts"] = _time.time()
@@ -1373,11 +1375,13 @@ def _urunleri_yukle(
     return _kaynak_oku()
 
 
-def _urun_sheet_sync_arkaplanda(force: bool = True):
+def _urun_sheet_sync_arkaplanda(force: bool = True, products: list | None = None):
+    _products_snap = [dict(u) for u in products] if products is not None else None
+
     def _job():
         try:
             from shared.product_sheet_sync import sync_product_sheet
-            sync_product_sheet(force=force)
+            sync_product_sheet(force=force, products=_products_snap)
         except Exception:
             pass
 
@@ -1435,6 +1439,81 @@ def _urunleri_cachede_uste_tut(urun: dict, *, remove_code: str | None = None):
     st.session_state["_urun_katalog_cache_ts"] = 0.0 if mevcut_cache is None else _time.time()
     st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
     _satilan_kodlarini_oturumda_guncelle(yeni_liste)
+
+
+def _urun_override_eslesti(mevcut: dict | None, override: dict | None) -> bool:
+    if not mevcut or not override:
+        return False
+    alanlar = (
+        "status",
+        "sold_at",
+        "sold_site",
+        "customer_name",
+        "customer_phone",
+        "customer_address",
+        "customer_contact_country",
+        "note",
+    )
+    for alan in alanlar:
+        if str(mevcut.get(alan) or "").strip() != str(override.get(alan) or "").strip():
+            return False
+    return True
+
+
+def _bekleyen_urun_override_kaydet(urun: dict, *, ttl_seconds: int = 180):
+    kod = str((urun or {}).get("product_code") or "").strip()
+    if not kod:
+        return
+    overrides = dict(st.session_state.get("_urun_katalog_bekleyen_override") or {})
+    overrides[kod] = {
+        "product": dict(urun),
+        "expires_at": _time.time() + max(30, int(ttl_seconds)),
+    }
+    st.session_state["_urun_katalog_bekleyen_override"] = overrides
+
+
+def _bekleyen_urun_override_uygula(products: list[dict]) -> list[dict]:
+    overrides = dict(st.session_state.get("_urun_katalog_bekleyen_override") or {})
+    if not overrides:
+        return products
+
+    simdi = _time.time()
+    kalan_overrides = {}
+    kaynak = [dict(item) for item in (products or [])]
+    index_map = {
+        str(item.get("product_code") or "").strip(): idx
+        for idx, item in enumerate(kaynak)
+        if str(item.get("product_code") or "").strip()
+    }
+
+    for kod, kayit in overrides.items():
+        if not kod:
+            continue
+        expires_at = float((kayit or {}).get("expires_at") or 0.0)
+        if expires_at <= simdi:
+            continue
+        override = dict((kayit or {}).get("product") or {})
+        mevcut_idx = index_map.get(kod)
+        mevcut = kaynak[mevcut_idx] if mevcut_idx is not None else None
+        if _urun_override_eslesti(mevcut, override):
+            continue
+        kalan_overrides[kod] = {
+            "product": dict(override),
+            "expires_at": expires_at,
+        }
+        birlesik = {**(mevcut or {}), **override}
+        if mevcut_idx is None:
+            kaynak.insert(0, birlesik)
+            index_map = {
+                str(item.get("product_code") or "").strip(): idx
+                for idx, item in enumerate(kaynak)
+                if str(item.get("product_code") or "").strip()
+            }
+        else:
+            kaynak[mevcut_idx] = birlesik
+
+    st.session_state["_urun_katalog_bekleyen_override"] = kalan_overrides
+    return kaynak
 
 
 def _urunleri_kaydet_arkaplanda(products: list[dict], *, incremental: bool = False, sync_sheet: bool = True, disk_snapshot: list[dict] | None = None):
@@ -6125,7 +6204,39 @@ if st.session_state.active_main_tab == "urunler":
                             else:
                                 yeni_liste.append(urun)
                         if secili_urun:
-                            _urunleri_kaydet(yeni_liste)
+                            from shared.product_catalog import ProductCatalog, _supabase_ready
+                            _kayit_hatasi = None
+                            if _supabase_ready():
+                                try:
+                                    # PATCH: sadece satış alanlarını güncelle (upsert'ten daha güvenilir)
+                                    ProductCatalog().sell_product(
+                                        kod,
+                                        sold_at=secili_urun.get("sold_at"),
+                                        sold_site=secili_urun.get("sold_site"),
+                                        customer_name=secili_urun.get("customer_name"),
+                                        customer_phone=secili_urun.get("customer_phone"),
+                                        customer_address=secili_urun.get("customer_address"),
+                                        customer_contact_country=secili_urun.get("customer_contact_country"),
+                                        note=secili_urun.get("note"),
+                                    )
+                                except Exception as _e:
+                                    _kayit_hatasi = str(_e)
+                            else:
+                                try:
+                                    _urunleri_kaydet(yeni_liste)
+                                except Exception as _e:
+                                    _kayit_hatasi = str(_e)
+                            if _kayit_hatasi:
+                                # st.toast reruns'da da görünür
+                                st.toast(f"⚠️ Kayıt hatası: {_kayit_hatasi}", icon="🔴")
+                                st.error(f"Supabase kayıt hatası: {_kayit_hatasi}")
+                                st.stop()
+                            _urunleri_cachede_uste_tut(secili_urun)
+                            _bekleyen_urun_override_kaydet(secili_urun)
+                            _urun_sheet_sync_arkaplanda(
+                                force=True,
+                                products=st.session_state.get("_urun_katalog_cache"),
+                            )
                             _supabase_store_haritasi_cached.clear()
                             _store_delete_kuyruguna_ekle_arkaplanda([kod], reason="sold")
                             st.session_state.satilan_urun_formu_acik = False
