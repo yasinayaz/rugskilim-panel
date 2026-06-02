@@ -201,7 +201,12 @@ def _sold_tab_row(product: dict) -> list:
 
 
 def _active_sort_key(product: dict):
-    """Aktif urunler: updated_at ascending → yeni eklenenler en alta dusuyor."""
+    """Aktif urunler: kalici kayit sirasi asc -> yeni eklenenler en alta yazilir."""
+    raw_id = _clean_str(product.get("id"))
+    try:
+        return (2, int(raw_id or 0))
+    except Exception:
+        pass
     raw_dt = _clean_str(product.get("updated_at"))
     if raw_dt:
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):

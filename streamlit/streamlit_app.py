@@ -5764,17 +5764,20 @@ if st.session_state.active_main_tab == "urunler":
                 urun_kodu = str(urun.get("product_code") or "").strip()
                 if oncelikli_kod and urun_kodu == oncelikli_kod:
                     return (4, float("inf"))
+                raw_id = str(urun.get("id", "")).strip()
+                if raw_id.isdigit():
+                    return (3, int(raw_id))
                 raw_updated = str(urun.get("updated_at", "")).strip()
                 if raw_updated:
                     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
                         try:
-                            return (3, datetime.strptime(raw_updated, fmt).timestamp())
+                            return (2, datetime.strptime(raw_updated, fmt).timestamp())
                         except Exception:
                             pass
                 raw_source = str(urun.get("source_row", "")).strip()
                 if raw_source.isdigit():
-                    return (2, int(raw_source))
-                return (1, 0)
+                    return (1, int(raw_source))
+                return (0, 0)
 
             gosterilecek = sorted(gosterilecek, key=_aktif_urun_siralama, reverse=True)
 
