@@ -20,7 +20,8 @@ import httpx
 from pathlib import Path
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL   = "gemini-2.5-flash"
+GEMINI_MODEL          = "gemini-1.5-flash"   # 2.5-flash→1.5-flash: 3x daha fazla günlük kota, thinking-token yok
+GEMINI_MODEL_FALLBACK = "gemini-1.5-flash"   # Gelecekte 2.5-flash tekrar denenirse fallback olarak kullanılır
 GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 GEMINI_RETRY_ATTEMPTS = 4
 GEMINI_RETRY_BACKOFFS = (5, 12, 24)
@@ -1025,6 +1026,17 @@ def url_to_base64(url: str) -> tuple[str, str]:
     return base64.b64encode(r.content).decode("utf-8"), ct
 
 
+def _429_turu_tespit_et(response: httpx.Response) -> str:
+    """429 hatasının türünü döner: 'rpd' (günlük kota) veya 'rpm' (dakika kotası)."""
+    try:
+        metin = response.text.lower()
+        if "perday" in metin or "per_day" in metin or "daily" in metin or "requests_per_day" in metin:
+            return "rpd"
+    except Exception:
+        pass
+    return "rpm"
+
+
 def _gemini_hata_mesaji(response: httpx.Response) -> str:
     try:
         veri = response.json()
@@ -1087,14 +1099,23 @@ def _gemini_isle(prompt: str, gorsel_b64: str, mime: str) -> dict:
             raise
 
         if response.status_code == 429:
+            _tur = _429_turu_tespit_et(response)
+            if _tur == "rpd":
+                # Günlük kota dolmuş — retry faydasız, hemen hata fırlat
+                raise Exception(
+                    "Gemini gunluk kota doldu (429 RPD). "
+                    "Kota gece yarisi (UTC) sifirlanir. Yarin tekrar deneyin."
+                )
+            # RPM (dakika kotası) → backoff ile retry
             son_hata = Exception(_gemini_hata_mesaji(response) or "Gemini rate limit (429)")
             if deneme < GEMINI_RETRY_ATTEMPTS - 1:
-                # 429 için çok daha uzun bekleme (genel hata backoff'undan ayrı)
+                # 429 için çok daha uzun bekleme: dakika sıfırlanmasını bekle
                 time.sleep(GEMINI_RATE_LIMIT_BACKOFFS[min(deneme, len(GEMINI_RATE_LIMIT_BACKOFFS) - 1)])
                 continue
             raise Exception(
-                "Gemini rate limit (429). Kota veya billing limiti dolu olabilir. "
-                "aistudio.google.com/apikey tarafinda billing ve quota ayarlarini kontrol edin."
+                "Gemini dakika kotasi doldu (429 RPM). "
+                "1-2 dakika bekleyip tekrar deneyin. "
+                "Cok yogun kullanim icin aistudio.google.com/apikey billing kontrol edin."
             )
         if response.status_code == 403:
             raise Exception("Gemini API key yetkisiz (403). Key geçerli mi ve Generative Language API aktif mi? aistudio.google.com/apikey adresini kontrol edin.")
@@ -1300,24 +1321,38 @@ def ai_icerik_url(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
-                if "rate limit (429)" in str(e).lower():
-                    # 429: Gemini kotası doldu — sessizce fallback KULLANMA,
-                    # hata döndür. Sheet'e yanlış renk/pattern yazılmasın.
+                _e_str = str(e).lower()
+                if "429 rpd" in _e_str or "gunluk kota" in _e_str:
+                    # Günlük kota dolmuş — retry faydasız, hemen çık
+                    break
+                if "rate limit (429)" in _e_str or "429 rpm" in _e_str:
+                    # Dakika kotası — _gemini_isle() zaten backoff yaptı, çık
                     break
                 # Diğer hatalar (JSON parse, validation): bir kez daha dene
         if son_hata:
             print(f"[AI:{urun_id}] URL uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
-        if son_hata and "rate limit (429)" in str(son_hata).lower():
+        _e_str = str(son_hata).lower() if son_hata else ""
+        if "429 rpd" in _e_str or "gunluk kota" in _e_str:
+            return {
+                "basarili": False,
+                "hata": (
+                    "⏳ Gemini günlük kotası doldu (429). "
+                    "Kota gece yarısı (UTC) sıfırlanır — yarın tekrar deneyin."
+                ),
+                "rate_limit": True,
+                "rate_limit_turu": "rpd",
+            }
+        if son_hata and ("rate limit (429)" in _e_str or "429 rpm" in _e_str):
             return {
                 "basarili": False,
                 "hata": (
                     "⏳ Gemini dakika kotası doldu (429). "
-                    "1-2 dakika bekleyip bu ürünü tekrar AI kuyruğuna ekleyin. "
-                    "Çok ürün işlerken ürünler arası bekleme otomatik uygulanır."
+                    "1-2 dakika bekleyip bu ürünü tekrar AI kuyruğuna ekleyin."
                 ),
                 "rate_limit": True,
+                "rate_limit_turu": "rpm",
             }
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
@@ -1356,14 +1391,27 @@ def ai_icerik_uret(
                 return {**ai, "aciklama": aciklama, "basarili": True, "hata": None}
             except Exception as e:
                 son_hata = e
-                if "rate limit (429)" in str(e).lower():
-                    # 429: sessizce fallback kullanma — hata döndür
+                _e_str = str(e).lower()
+                if "429 rpd" in _e_str or "gunluk kota" in _e_str:
+                    break
+                if "rate limit (429)" in _e_str or "429 rpm" in _e_str:
                     break
         if son_hata:
             print(f"[AI:{urun_id}] Dosya uretim hatasi -> {type(son_hata).__name__}: {son_hata}")
         if isinstance(son_hata, json.JSONDecodeError):
             return {"basarili": False, "hata": f"JSON parse hatası: {son_hata}"}
-        if son_hata and "rate limit (429)" in str(son_hata).lower():
+        _e_str2 = str(son_hata).lower() if son_hata else ""
+        if "429 rpd" in _e_str2 or "gunluk kota" in _e_str2:
+            return {
+                "basarili": False,
+                "hata": (
+                    "⏳ Gemini günlük kotası doldu (429). "
+                    "Kota gece yarısı (UTC) sıfırlanır — yarın tekrar deneyin."
+                ),
+                "rate_limit": True,
+                "rate_limit_turu": "rpd",
+            }
+        if son_hata and ("rate limit (429)" in _e_str2 or "429 rpm" in _e_str2):
             return {
                 "basarili": False,
                 "hata": (
@@ -1371,6 +1419,7 @@ def ai_icerik_uret(
                     "1-2 dakika bekleyip bu ürünü tekrar AI kuyruğuna ekleyin."
                 ),
                 "rate_limit": True,
+                "rate_limit_turu": "rpm",
             }
         return {"basarili": False, "hata": str(son_hata or 'AI uretimi basarisiz') }
     except Exception as e:
