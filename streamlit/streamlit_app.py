@@ -6181,7 +6181,7 @@ if st.session_state.active_main_tab == "urunler":
                         submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
 
                 if submit_sold:
-                    kod = _urun_kodu_normalize(secili.split("|", 1)[0]) or _urun_kodu_al(secili) if secili else None
+                    kod = secili.split("|", 1)[0].strip() if secili else None
                     if not kod:
                         st.error("Ürün seçimi zorunlu.")
                     elif not satilan_site:
