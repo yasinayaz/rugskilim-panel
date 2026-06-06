@@ -463,11 +463,17 @@ def _etsy_renk_normalize(value: str) -> str:
         "olive": "Green",
         "red": "Red",
         "burgundy": "Red",
-        "rust": "Orange",
-        "terracotta": "Orange",
+        "crimson": "Red",
+        "wine": "Red",
+        "dark red": "Red",
+        "rust red": "Red",
+        "rust": "Red",        # görsel teste göre; AI prompt'ta ayrıca açıklanıyor
+        "terracotta": "Orange",  # terracotta daha çok orange-dominant
         "orange": "Orange",
         "yellow": "Yellow",
         "mustard": "Yellow",
+        "amber": "Yellow",
+        "saffron": "Yellow",
         "gold": "Gold",
         "pink": "Pink",
         "rose": "Pink",
@@ -1219,10 +1225,15 @@ OUTPUT FIELDS — follow every rule exactly:
    Map non-allowed color words to the nearest allowed Etsy value before replying:
    Ivory/Cream/Off-white/Sand -> Beige
    Taupe/Tan -> Brown
-   Burgundy -> Red
-   Terracotta/Rust -> Orange
+   Burgundy/Crimson/Wine/Dark red -> Red
    Sage/Olive -> Green
    Teal/Navy -> Blue
+   Mustard/Amber/Saffron -> Yellow
+   Rust/Terracotta — VISUAL TEST (look at the rug, not the word):
+     • If the color reads as RED first when you look at it (deep, dark, clearly red-dominant) → Red
+     • If the color reads as ORANGE first (warm, earthy, orange-dominant) → Orange
+     • A deep rust-red like this example rug = Red. A bright burnt-orange = Orange.
+     • When in doubt: compare to a traffic-light red vs a pumpkin orange. Which is closer?
    Reply with the allowed Etsy value only, never the raw synonym.
 
 4. "renk2" (string) — second color. MUST be EXACTLY one of the same Etsy list above.
