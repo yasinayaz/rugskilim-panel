@@ -669,6 +669,7 @@ for k, v in [
     ("aktif_islem_durumlari", {}),
     ("aktif_islem_ozeti", {}),
     ("stok_son_indirme", 0), ("ara_sonuclari", []), ("magazalar_root_id", None),
+    ("_olcu_magaza_klasor_haritasi", {}), ("_olcu_magaza_kontrol_sonucu", []),
     ("kuyruk_yuklendi", False), ("stok_indiriliyor", False),
     ("stok_indir_hata", None), ("_cikis_yapildi", False),
     ("magaza_id", None), ("magaza_ad", None),
@@ -4269,6 +4270,29 @@ def _magaza_tum_kodlar(token, host, magaza_id):
     return set()
 
 
+def _magaza_klasor_haritasi(token, host, magaza_id):
+    """Mağaza klasörlerini {normalize(kod): {"id": folder_id, "ad": folder_name}} olarak döner."""
+    def _traverse(contents, result):
+        for item in contents:
+            if item.get("isfolder"):
+                norm = _kod_normalize(item["name"])
+                if norm and norm not in result:
+                    result[norm] = {"id": item["folderid"], "ad": item["name"]}
+                _traverse(item.get("contents") or [], result)
+        return result
+    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
+        try:
+            r = httpx.get(f"{h}/listfolder",
+                          params={"auth": token, "folderid": magaza_id,
+                                  "nofiles": 1, "recursive": 1},
+                          timeout=60)
+            d = r.json()
+            if d.get("result") == 0:
+                return _traverse(d["metadata"].get("contents", []), {})
+        except: continue
+    return {}
+
+
 def _resimleri_getir(token, host, klasor_id, dosyalar=None):
     # pCloud getfilelink gecici URL uretir; bunlari cache'lemek bir sure sonra
     # kirik gorsellere neden olur. Onizleme her acildiginda taze link aliyoruz.
@@ -4490,6 +4514,206 @@ for _col, (_tab_id, _tab_label) in zip(_tab_cols, _main_tabs):
 if _main_tab_gecis_ekrani():
     st.stop()
 
+def _ai_kuyruga_ekle():
+    bloklu_secimler = [
+        k for k in st.session_state.secilen
+        if _secili_item_bloklu_mu(k)
+    ]
+    if bloklu_secimler:
+        st.session_state.secilen = [
+            k for k in st.session_state.secilen
+            if not _secili_item_bloklu_mu(k)
+        ]
+        st.error("SATILANLAR veya silindi olarak işaretli ürünler AI kuyruğuna gönderilemez.")
+        st.rerun()
+
+    host  = st.session_state.get("pcloud_host", "https://api.pcloud.com")
+    token = st.session_state.pcloud_token
+    from shared.sheets import SheetsKatmani
+    from modules.ai_icerik import ai_icerik_url
+    from modules.parser import parse_urun_bilgisi
+
+    try:
+        from shared.store_manager import get_store as _gs2
+        _store_cfg = _gs2(st.session_state.hedef_magaza_id)
+        _tmpl_id = _store_cfg.get("template", "default_v1")
+        _template_cfg_raw = _template_json_oku(_tmpl_id)
+        _template_cfg, _template_source = _template_session_overlay(
+            _template_cfg_raw,
+            st.session_state.hedef_magaza_id,
+            _store_cfg.get("store_name", st.session_state.hedef_magaza_id),
+        )
+    except Exception:
+        _template_cfg = {}
+        _template_source = "fallback_empty"
+
+    try:
+        from shared.store_manager import get_store as _gs
+        price_per_m2 = int(_gs(st.session_state.hedef_magaza_id).get("price_per_m2", 300))
+    except Exception:
+        price_per_m2 = 300
+
+    ana_yol = ""
+    _sk = SheetsKatmani(st.session_state.hedef_magaza_id)
+    _sk.sheet_hazirla()
+    _mevcut_sheet_kayitlari: dict[str, list[dict]] = {}
+    for _sheet_satiri in _sk.tum_satirlar_al():
+        _sheet_urun_id = str(_sheet_satiri.get("urun_id") or "").strip()
+        _sheet_kod = _urun_kodu_normalize(_sheet_urun_id) or _urun_kodu_al(_sheet_urun_id)
+        if not _sheet_kod:
+            continue
+        _mevcut_sheet_kayitlari.setdefault(_sheet_kod, []).append(_sheet_satiri)
+    prog = st.progress(0)
+    hatalar = []
+    islem_raporu = []
+    toplam  = len(st.session_state.secilen)
+    log     = st.container(border=True)
+    st.session_state.aktif_islem_urunleri = []
+    st.session_state.aktif_islem_durumlari = {}
+    st.session_state.aktif_islem_ozeti = {
+        "durum": "running",
+        "toplam": toplam,
+        "basarili": 0,
+        "hatali": 0,
+    }
+    for _secili in st.session_state.secilen:
+        _aktif_islem_kaydi_yaz(_secili, "bekliyor", "Sırada bekliyor")
+
+    for i, k in enumerate(st.session_state.secilen):
+        prog.progress((i + 1) / toplam, text=f"{i+1}/{toplam} — {k['ad']}")
+        with log:
+            with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
+                try:
+                    _aktif_islem_kaydi_yaz(k, "isleniyor", "İşleniyor...")
+                    st.write("📂 pCloud'dan dosyalar alınıyor...")
+                    r = httpx.get(f"{host}/listfolder",
+                                  params={"auth": token, "folderid": k["id"]},
+                                  timeout=15)
+                    d = r.json()
+                    dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
+                    dosya_adlari = [f["name"] for f in dosyalar]
+                    secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
+                    secili_urun_kodu_norm = (
+                        _urun_kodu_normalize(secili_urun_kodu)
+                        or _urun_kodu_al(secili_urun_kodu)
+                    )
+                    mevcut_kayitlar = _mevcut_sheet_kayitlari.get(secili_urun_kodu_norm, [])
+                    if mevcut_kayitlar:
+                        mevcut_durumlar = sorted({
+                            str((_kayit or {}).get("status") or "").strip().lower()
+                            for _kayit in mevcut_kayitlar
+                            if str((_kayit or {}).get("status") or "").strip()
+                        })
+                        durum_ozeti = ", ".join(mevcut_durumlar) if mevcut_durumlar else "bilinmeyen durum"
+                        raise Exception(
+                            f"{secili_urun_kodu} zaten excele yüklü. "
+                            f"Sheet'te {len(mevcut_kayitlar)} kayıt bulundu ({durum_ozeti})."
+                        )
+                    st.write(f"✅ {len(dosyalar)} dosya bulundu")
+
+                    st.write("📐 Boyut ve fiyat hesaplanıyor...")
+                    urun_bilgisi = parse_urun_bilgisi(k["ad"], dosya_adlari)
+                    urun_bilgisi["urun_id"] = secili_urun_kodu
+                    if urun_bilgisi.get("metrekare"):
+                        urun_bilgisi["fiyat_usd"] = round(float(urun_bilgisi["metrekare"]) * price_per_m2)
+                    boyut = urun_bilgisi.get("boyut_ft") or "?"
+                    fiyat = urun_bilgisi.get("fiyat_usd") or "?"
+                    if boyut == "?" or fiyat == "?":
+                        st.warning(f"⚠ Boyut/fiyat okunamadı. Bilgi dosyası: {urun_bilgisi.get('bilgi_dosyasi') or 'BULUNAMADI'}")
+                        st.caption(f"Klasördeki dosyalar: {dosya_adlari}")
+                    else:
+                        st.write(f"✅ {boyut} ft — ${fiyat}")
+
+                    st.write("🖼️ Ana fotoğraf hazırlanıyor...")
+                    bilgi_adi = urun_bilgisi.get("bilgi_dosyasi") or ""
+                    foto_dosyalar = [f for f in dosyalar
+                                     if f["name"].lower().endswith((".jpg", ".jpeg", ".png"))
+                                     and f["name"] != bilgi_adi]
+                    if not foto_dosyalar:
+                        _urun_kodu = _kod_normalize(k["ad"])
+                        _satilan = _satilan_kodlar()
+                        if _urun_kodu in _satilan:
+                            raise Exception(f"⛔ Bu ürün SATILMIŞ ve klasörde resim yok. (KOD: {k['ad']})")
+                        else:
+                            raise Exception(f"⚠️ Klasörde resim bulunamadı! (KOD: {k['ad']})")
+                    lr = httpx.get(f"{host}/getfilelink",
+                                   params={"auth": token, "fileid": foto_dosyalar[0]["fileid"]},
+                                   timeout=10)
+                    ld = lr.json()
+                    resim_url = f"https://{ld['hosts'][0]}{ld['path']}"
+                    st.write(f"✅ Fotoğraf: {foto_dosyalar[0]['name']}")
+
+                    _satilan = _satilan_kodlar()
+                    _urun_kodu = _kod_normalize(k["ad"])
+                    if _urun_kodu in _satilan:
+                        raise Exception(f"⛔ Bu ürün SATILMIŞ! (KOD: {k['ad']})")
+
+                    st.write("🤖 Gemini analiz ediyor...")
+                    ai = ai_icerik_url(
+                        resim_url=resim_url,
+                        urun_id=secili_urun_kodu,
+                        boyut_ft=urun_bilgisi.get("boyut_ft") or "?",
+                        boyut_cm=urun_bilgisi.get("boyut_cm") or "?",
+                        metrekare=urun_bilgisi.get("metrekare") or 0,
+                        fiyat_usd=urun_bilgisi.get("fiyat_usd") or 0,
+                        genislik_cm=urun_bilgisi.get("genislik_cm"),
+                        uzunluk_cm=urun_bilgisi.get("uzunluk_cm"),
+                        template_config=_template_cfg,
+                    )
+                    if not ai["basarili"]:
+                        if ai.get("rate_limit"):
+                            raise Exception(ai["hata"])
+                        raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
+                    if _template_source == "session_draft":
+                        st.info("Bu ürün için ayarlardaki kaydedilmemiş description taslağı kullanıldı.")
+                    st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
+
+                    st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
+                    pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
+                    satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
+                    st.write(f"💾 AI verileri yazılıyor (satır {satir_no})...")
+                    _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
+                    st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
+                    st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "ready"
+                    st.write(f"✅ Renk: {ai.get('renk1','')} / {ai.get('renk2','')} — Stil: {ai.get('stil','')}")
+                    islem_raporu.append({
+                        "urun_ad": k["ad"],
+                        "durum": "ok",
+                        "mesaj": f"Tamamlandı • {boyut} ft • ${fiyat}",
+                    })
+                    _aktif_islem_kaydi_yaz(k, "ok", f"Tamamlandı • {boyut} ft • ${fiyat}")
+                    durum.update(label=f"✅ {k['ad']} tamamlandı", state="complete", expanded=False)
+
+                except Exception as e:
+                    hatalar.append(f"{k['ad']}: {e}")
+                    islem_raporu.append({
+                        "urun_ad": k["ad"],
+                        "durum": "error",
+                        "mesaj": str(e),
+                    })
+                    _aktif_islem_kaydi_yaz(k, "error", str(e))
+                    st.write(f"❌ Hata: {e}")
+                    durum.update(label=f"❌ {k['ad']} — hata", state="error", expanded=False)
+
+    prog.empty()
+    basarili = toplam - len(hatalar)
+    st.session_state.aktif_islem_ozeti = {
+        "durum": "done",
+        "toplam": toplam,
+        "basarili": basarili,
+        "hatali": len(hatalar),
+    }
+    st.session_state.son_islem_raporu = islem_raporu
+    if basarili:
+        st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
+    st.session_state["_reset_checkbox_ids"] = [
+        str(_item["id"]) for _item in st.session_state.secilen
+    ]
+    st.session_state.secilen = []
+    st.session_state["_secim_limit_hatasi"] = None
+    st.rerun(scope="app")
+
+
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
 if st.session_state.active_main_tab == "urun_sec":
     _aktif_magaza = str(st.session_state.get("hedef_magaza_id") or "").strip()
@@ -4600,210 +4824,7 @@ if st.session_state.active_main_tab == "urun_sec":
                     st.session_state.pop(f"sheet_loaded_codes::{_mevcut_magaza}::ts", None)
                     _urun_sec_rozet_yenilemesini_baslat(_mevcut_magaza, force=True)
 
-            def _ai_kuyruga_ekle():
-                bloklu_secimler = [
-                    k for k in st.session_state.secilen
-                    if _secili_item_bloklu_mu(k)
-                ]
-                if bloklu_secimler:
-                    st.session_state.secilen = [
-                        k for k in st.session_state.secilen
-                        if not _secili_item_bloklu_mu(k)
-                    ]
-                    st.error("SATILANLAR veya silindi olarak işaretli ürünler AI kuyruğuna gönderilemez.")
-                    st.rerun()
-
-                host  = st.session_state.get("pcloud_host", "https://api.pcloud.com")
-                token = st.session_state.pcloud_token
-                from shared.sheets import SheetsKatmani
-                from modules.ai_icerik import ai_icerik_url
-                from modules.parser import parse_urun_bilgisi
-                import json as _json
-
-                try:
-                    from shared.store_manager import get_store as _gs2
-                    _store_cfg = _gs2(st.session_state.hedef_magaza_id)
-                    _tmpl_id = _store_cfg.get("template", "default_v1")
-                    _template_cfg_raw = _template_json_oku(_tmpl_id)
-                    _template_cfg, _template_source = _template_session_overlay(
-                        _template_cfg_raw,
-                        st.session_state.hedef_magaza_id,
-                        _store_cfg.get("store_name", st.session_state.hedef_magaza_id),
-                    )
-                except Exception:
-                    _template_cfg = {}
-                    _template_source = "fallback_empty"
-
-                try:
-                    from shared.store_manager import get_store as _gs
-                    price_per_m2 = int(_gs(st.session_state.hedef_magaza_id).get("price_per_m2", 300))
-                except Exception:
-                    price_per_m2 = 300
-
-                ana_yol = ""
-                _sk = SheetsKatmani(st.session_state.hedef_magaza_id)
-                _sk.sheet_hazirla()
-                _mevcut_sheet_kayitlari: dict[str, list[dict]] = {}
-                for _sheet_satiri in _sk.tum_satirlar_al():
-                    _sheet_urun_id = str(_sheet_satiri.get("urun_id") or "").strip()
-                    _sheet_kod = _urun_kodu_normalize(_sheet_urun_id) or _urun_kodu_al(_sheet_urun_id)
-                    if not _sheet_kod:
-                        continue
-                    _mevcut_sheet_kayitlari.setdefault(_sheet_kod, []).append(_sheet_satiri)
-                prog = st.progress(0)
-                hatalar = []
-                islem_raporu = []
-                toplam  = len(st.session_state.secilen)
-                log     = st.container(border=True)
-                st.session_state.aktif_islem_urunleri = []
-                st.session_state.aktif_islem_durumlari = {}
-                st.session_state.aktif_islem_ozeti = {
-                    "durum": "running",
-                    "toplam": toplam,
-                    "basarili": 0,
-                    "hatali": 0,
-                }
-                for _secili in st.session_state.secilen:
-                    _aktif_islem_kaydi_yaz(_secili, "bekliyor", "Sırada bekliyor")
-
-                # Rate limiting artık ai_icerik._gemini_isle() içindeki global lock ile yönetiliyor.
-                # (6.5s minimum aralık, tüm kullanıcılar için thread-safe sıra)
-                # Buradaki delay kaldırıldı — panel UI yavaşlatılmadan çağrılar otomatik sıralanır.
-
-                for i, k in enumerate(st.session_state.secilen):
-                    prog.progress((i + 1) / toplam, text=f"{i+1}/{toplam} — {k['ad']}")
-                    with log:
-                        with st.status(f"📦 {k['ad']}  ({i+1}/{toplam})", expanded=True) as durum:
-                            try:
-                                _aktif_islem_kaydi_yaz(k, "isleniyor", "İşleniyor...")
-                                st.write("📂 pCloud'dan dosyalar alınıyor...")
-                                r = httpx.get(f"{host}/listfolder",
-                                              params={"auth": token, "folderid": k["id"]},
-                                              timeout=15)
-                                d = r.json()
-                                dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
-                                dosya_adlari = [f["name"] for f in dosyalar]
-                                secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
-                                secili_urun_kodu_norm = (
-                                    _urun_kodu_normalize(secili_urun_kodu)
-                                    or _urun_kodu_al(secili_urun_kodu)
-                                )
-                                mevcut_kayitlar = _mevcut_sheet_kayitlari.get(secili_urun_kodu_norm, [])
-                                if mevcut_kayitlar:
-                                    mevcut_durumlar = sorted({
-                                        str((_kayit or {}).get("status") or "").strip().lower()
-                                        for _kayit in mevcut_kayitlar
-                                        if str((_kayit or {}).get("status") or "").strip()
-                                    })
-                                    durum_ozeti = ", ".join(mevcut_durumlar) if mevcut_durumlar else "bilinmeyen durum"
-                                    raise Exception(
-                                        f"{secili_urun_kodu} zaten excele yüklü. "
-                                        f"Sheet'te {len(mevcut_kayitlar)} kayıt bulundu ({durum_ozeti})."
-                                    )
-                                st.write(f"✅ {len(dosyalar)} dosya bulundu")
-
-                                st.write("📐 Boyut ve fiyat hesaplanıyor...")
-                                urun_bilgisi = parse_urun_bilgisi(k["ad"], dosya_adlari)
-                                # Queue sheet'te A kolonu her zaman panelde secilen urun kodunu tutsun.
-                                urun_bilgisi["urun_id"] = secili_urun_kodu
-                                if urun_bilgisi.get("metrekare"):
-                                    urun_bilgisi["fiyat_usd"] = round(float(urun_bilgisi["metrekare"]) * price_per_m2)
-                                boyut = urun_bilgisi.get("boyut_ft") or "?"
-                                fiyat = urun_bilgisi.get("fiyat_usd") or "?"
-                                if boyut == "?" or fiyat == "?":
-                                    st.warning(f"⚠ Boyut/fiyat okunamadı. Bilgi dosyası: {urun_bilgisi.get('bilgi_dosyasi') or 'BULUNAMADI'}")
-                                    st.caption(f"Klasördeki dosyalar: {dosya_adlari}")
-                                else:
-                                    st.write(f"✅ {boyut} ft — ${fiyat}")
-
-                                st.write("🖼️ Ana fotoğraf hazırlanıyor...")
-                                bilgi_adi = urun_bilgisi.get("bilgi_dosyasi") or ""
-                                foto_dosyalar = [f for f in dosyalar
-                                                 if f["name"].lower().endswith((".jpg", ".jpeg", ".png"))
-                                                 and f["name"] != bilgi_adi]
-                                if not foto_dosyalar:
-                                    _urun_kodu = _kod_normalize(k["ad"])
-                                    _satilan = _satilan_kodlar()
-                                    if _urun_kodu in _satilan:
-                                        raise Exception(f"⛔ Bu ürün SATILMIŞ ve klasörde resim yok. (KOD: {k['ad']})")
-                                    else:
-                                        raise Exception(f"⚠️ Klasörde resim bulunamadı! (KOD: {k['ad']})")
-                                lr = httpx.get(f"{host}/getfilelink",
-                                               params={"auth": token, "fileid": foto_dosyalar[0]["fileid"]},
-                                               timeout=10)
-                                ld = lr.json()
-                                resim_url = f"https://{ld['hosts'][0]}{ld['path']}"
-                                st.write(f"✅ Fotoğraf: {foto_dosyalar[0]['name']}")
-
-                                _satilan = _satilan_kodlar()
-                                _urun_kodu = _kod_normalize(k["ad"])
-                                if _urun_kodu in _satilan:
-                                    raise Exception(f"⛔ Bu ürün SATILMIŞ! (KOD: {k['ad']})")
-
-                                st.write("🤖 Gemini analiz ediyor...")
-                                ai = ai_icerik_url(
-                                    resim_url=resim_url,
-                                    urun_id=secili_urun_kodu,
-                                    boyut_ft=urun_bilgisi.get("boyut_ft") or "?",
-                                    boyut_cm=urun_bilgisi.get("boyut_cm") or "?",
-                                    metrekare=urun_bilgisi.get("metrekare") or 0,
-                                    fiyat_usd=urun_bilgisi.get("fiyat_usd") or 0,
-                                    genislik_cm=urun_bilgisi.get("genislik_cm"),
-                                    uzunluk_cm=urun_bilgisi.get("uzunluk_cm"),
-                                    template_config=_template_cfg,
-                                )
-                                if not ai["basarili"]:
-                                    if ai.get("rate_limit"):
-                                        raise Exception(ai["hata"])
-                                    raise Exception(f"AI zorunlu alanlari gecemedi: {ai['hata']}")
-                                if _template_source == "session_draft":
-                                    st.info("Bu ürün için ayarlardaki kaydedilmemiş description taslağı kullanıldı.")
-                                st.write(f"✅ Başlık: {ai['baslik'][:60]}...")
-
-                                st.write(f"📋 Sheets'e ekleniyor → {st.session_state.hedef_magaza_id}...")
-                                pcloud_yol = f"{ana_yol}/{k['ad']}" if ana_yol else k["ad"]
-                                satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
-                                st.write(f"💾 AI verileri yazılıyor (satır {satir_no})...")
-                                _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
-                                st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
-                                st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "ready"
-                                st.write(f"✅ Renk: {ai.get('renk1','')} / {ai.get('renk2','')} — Stil: {ai.get('stil','')}")
-                                islem_raporu.append({
-                                    "urun_ad": k["ad"],
-                                    "durum": "ok",
-                                    "mesaj": f"Tamamlandı • {boyut} ft • ${fiyat}",
-                                })
-                                _aktif_islem_kaydi_yaz(k, "ok", f"Tamamlandı • {boyut} ft • ${fiyat}")
-                                durum.update(label=f"✅ {k['ad']} tamamlandı", state="complete", expanded=False)
-
-                            except Exception as e:
-                                hatalar.append(f"{k['ad']}: {e}")
-                                islem_raporu.append({
-                                    "urun_ad": k["ad"],
-                                    "durum": "error",
-                                    "mesaj": str(e),
-                                })
-                                _aktif_islem_kaydi_yaz(k, "error", str(e))
-                                st.write(f"❌ Hata: {e}")
-                                durum.update(label=f"❌ {k['ad']} — hata", state="error", expanded=False)
-
-                prog.empty()
-                basarili = toplam - len(hatalar)
-                st.session_state.aktif_islem_ozeti = {
-                    "durum": "done",
-                    "toplam": toplam,
-                    "basarili": basarili,
-                    "hatali": len(hatalar),
-                }
-                st.session_state.son_islem_raporu = islem_raporu
-                if basarili:
-                    st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
-                st.session_state["_reset_checkbox_ids"] = [
-                    str(_item["id"]) for _item in st.session_state.secilen
-                ]
-                st.session_state.secilen = []
-                st.session_state["_secim_limit_hatasi"] = None
-                st.rerun(scope="app")
+            # Modül seviyesinde tanımlı _ai_kuyruga_ekle() kullanılır.
 
             def _secim_aksiyon_paneli(button_key: str, ustte: bool = False):
                 try:
@@ -7453,22 +7474,75 @@ if st.session_state.active_main_tab == "olcu_ara":
                         if magaza_ara_btn and secilen_magaza_adi:
                             magaza_id = next(m["id"] for m in magazalar if m["ad"] == secilen_magaza_adi)
                             with st.spinner(f"{secilen_magaza_adi} taranıyor..."):
-                                magaza_kodlar = _magaza_tum_kodlar(token_t4, host_t4, magaza_id)
+                                klasor_harita = _magaza_klasor_haritasi(token_t4, host_t4, magaza_id)
 
-                            if not magaza_kodlar:
+                            if not klasor_harita:
                                 st.warning(f"{secilen_magaza_adi} içinde ürün bulunamadı.")
                             else:
                                 kontrol = [
-                                    {**e, "Mağaza Durumu": "✅ Var" if _kod_normalize(e["KOD"]) in magaza_kodlar else "❌ Yok"}
+                                    {
+                                        "Seç": False,
+                                        **e,
+                                        "Mağaza Durumu": "✅ Var" if _kod_normalize(e["KOD"]) in klasor_harita else "❌ Yok",
+                                    }
                                     for e in eslesmeler
                                 ]
                                 var_sayisi = sum(1 for s in kontrol if "✅" in s["Mağaza Durumu"])
                                 st.success(f"**{secilen_magaza_adi}**: {var_sayisi}/{len(kontrol)} ürün mevcut")
-                                st.dataframe(
-                                    pd.DataFrame(kontrol),
-                                    width="stretch",
-                                    hide_index=True,
-                                )
+                                st.session_state["_olcu_magaza_klasor_haritasi"] = klasor_harita
+                                st.session_state["_olcu_magaza_kontrol_sonucu"] = kontrol
+
+                        kontrol_sonucu = st.session_state.get("_olcu_magaza_kontrol_sonucu") or []
+                        if kontrol_sonucu:
+                            df_kontrol = pd.DataFrame(kontrol_sonucu)
+                            disabled_cols = [c for c in df_kontrol.columns if c != "Seç"]
+                            edited = st.data_editor(
+                                df_kontrol,
+                                width="stretch",
+                                hide_index=True,
+                                column_config={
+                                    "Seç": st.column_config.CheckboxColumn("Seç", width="small"),
+                                    "KOD": st.column_config.TextColumn("KOD", width="small"),
+                                    "CM": st.column_config.TextColumn("CM", width="small"),
+                                    "FT": st.column_config.TextColumn("FT", width="medium"),
+                                    "Tür": st.column_config.TextColumn("Tür", width="small"),
+                                    "Yüklü": st.column_config.NumberColumn("Yüklü", format="%d", width="small"),
+                                    "Yüklü Mağazalar": st.column_config.TextColumn("Yüklü Mağazalar", width="medium"),
+                                    "Not": st.column_config.TextColumn("Not", width="medium"),
+                                    "Δ (ft)": st.column_config.NumberColumn("Δ ft", format="%.2f", width="small"),
+                                    "Mağaza Durumu": st.column_config.TextColumn("Mağaza Durumu", width="small"),
+                                },
+                                disabled=disabled_cols,
+                                key="olcu_kontrol_editor",
+                            )
+
+                            secilen_satirlar = edited[
+                                (edited["Seç"] == True) & (edited["Mağaza Durumu"] == "✅ Var")
+                            ]
+                            secilen_yok = edited[
+                                (edited["Seç"] == True) & (edited["Mağaza Durumu"] == "❌ Yok")
+                            ]
+                            if not secilen_yok.empty:
+                                st.caption("⚠️ Mağazada ❌ Yok olan ürünler seçildi — bunlar pCloud klasörü bulunamadığı için kuyruğa eklenemez, atlanacak.")
+
+                            if not secilen_satirlar.empty:
+                                _klasor_harita = st.session_state.get("_olcu_magaza_klasor_haritasi") or {}
+                                _secilecek = []
+                                for _, satir in secilen_satirlar.iterrows():
+                                    _norm = _kod_normalize(str(satir["KOD"]))
+                                    _klasor = _klasor_harita.get(_norm)
+                                    if _klasor:
+                                        _secilecek.append({"id": _klasor["id"], "ad": _klasor["ad"]})
+
+                                if _secilecek:
+                                    if st.button(
+                                        f"🤖 AI ile Kuyruğa Ekle ({len(_secilecek)} ürün) → {st.session_state.hedef_magaza_id}",
+                                        key="olcu_ai_kuyruga_ekle_btn",
+                                        type="primary",
+                                        width="stretch",
+                                    ):
+                                        st.session_state.secilen = _secilecek
+                                        _ai_kuyruga_ekle()
         elif ara_btn:
             st.warning("Eşleşen ürün bulunamadı.")
 
