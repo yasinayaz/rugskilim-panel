@@ -1985,7 +1985,7 @@ def _urun_kodu_adaylari(deger: str) -> list[str]:
         return []
 
     adaylar = []
-    for eslesme in _re.finditer(r"([A-Za-z]{0,3})\s*(\d{2,})", metin):
+    for eslesme in _re.finditer(r"([A-Za-z]{0,3})[\s-]*(\d{2,})", metin):
         harf = (eslesme.group(1) or "").strip().lower()
         rakam = (eslesme.group(2) or "").strip()
         if not rakam or set(rakam) == {"0"}:
@@ -2002,7 +2002,7 @@ def _urun_kodu_normalize(deger: str):
         return None
 
     # Ürün kodu sadece baştan alınır; sonrasındaki llc/rst/+/! gibi ekler yok sayılır.
-    eslesme = _re.match(r"^([A-Za-z]{0,3})\s*(\d+)\b", metin)
+    eslesme = _re.match(r"^([A-Za-z]{0,3})[\s-]*(\d+)\b", metin)
     if not eslesme:
         return None
 
@@ -4139,8 +4139,10 @@ def _klasorleri_getir(token, host, klasor_id):
     return host, []
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _klasor_icerigi_getir(token, host, klasor_id):
-    for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
+def _klasor_icerigi_getir(token, klasor_id, *, _host_hint="https://api.pcloud.com"):
+    # _host_hint cache key'e dahil edilmez (Streamlit _ prefix kuralı).
+    # host değişse bile aynı klasör cache'ten gelir.
+    for h in [_host_hint, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
         try:
             r = httpx.get(
                 f"{h}/listfolder",
@@ -4951,8 +4953,8 @@ if st.session_state.active_main_tab == "urun_sec":
                 host = st.session_state.get("pcloud_host", "https://api.pcloud.com")
                 yeni_host, klasorler, mevcut_dosyalar = _klasor_icerigi_getir(
                     token,
-                    host,
                     st.session_state.klasor_id,
+                    _host_hint=host,
                 )
                 st.session_state["pcloud_host"] = yeni_host
 
