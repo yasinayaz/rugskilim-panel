@@ -1,13 +1,22 @@
 {
   "template_id": "PatchArts_v1",
   "template_name": "PatchArts",
+  "prompt_extra_instructions": "",
   "prompt_rules": {
-    "description_example_template": "{opening}\n\n{no_extra_fees_block}\n\n{details_block}\n\n{easy_returns_block}\n\n{hikaye}\n\n{footer_block}"
+    "title_target_min": 120,
+    "title_target_max": 140,
+    "title_max_length": 140,
+    "tag_count": 13,
+    "tag_max_length": 20,
+    "title_brief": "",
+    "tag_strategy": "",
+    "description_brief": "Write in a poetic, layered tone for PatchArts. The rug has a story — time, craft, and place. Speak to buyers who want their home to feel lived-in with intention, not just decorated. Use literary rhythm. Describe how the fading and age make it richer, not lesser.",
+    "description_example_template": "✦ {opening}\n\n{hikaye}\n\n✦ Product Details\n• SKU: {urun_id}\n• Colors: {renk_scheme}\n• Dimensions: {boyut_ft} — {boyut_cm} cm\n• Coverage: {sqft} sq ft / {metrekare} sq m\n• Pattern: {pattern}\n{pile_bullet}\n\n✦ Ready for Its New Home\nEach piece is professionally cleaned, inspected, and carefully packed before it leaves our hands. No surprises on arrival.\n\n✦ Worldwide Shipping — 2 to 4 Business Days\nDispatched within 1 business day. All import duties and customs taxes are included — zero hidden fees.\n\n✦ 14-Day Returns\nNot what you expected? Reach out within 14 days and we'll sort it out together.\n\n✦ For Trade & Design Professionals\nInterior designers are warmly welcome. Contact us for trade pricing and sourcing support.\n\nThis piece is one of a kind. Once it finds its home, it's gone for good.\n\nStore: patcharts.etsy.com"
   },
   "static_texts": {
-    "no_extra_fees": "✨ No Hidden Costs – Ever!\nAll customs duties and import taxes are on us. What you see is what you pay — shop freely and with full confidence.",
-    "easy_returns": "↩️ Hassle-Free Returns\nNot fully satisfied? We'll make it right. Contact us within 14 days of delivery and we'll walk you through the return process — simple and stress-free.",
+    "no_extra_fees": "",
+    "easy_returns": "",
     "story_size_template": "",
-    "footer": "🧼 Cleaned & Ready to Use\nEvery rug is professionally cleaned before it leaves us. No odors, no hidden wear — just genuine vintage character arriving at your door.\n\n🧽 Care Instructions\nEasy to live with: light vacuuming regularly and gentle spot cleaning as needed. No specialist care required.\n\n🚚 Shipping & Delivery:\n- Dispatched within 1 business day\n- Worldwide delivery in 2–4 business days\n- Carefully packed to arrive in perfect condition\n\n❌ Cancellation Policy:\nOrders can be cancelled any time before dispatch — just send us a message.\n\n🏠 Trade & Wholesale:\nInterior designers and decorators are welcome. Contact us for bulk sourcing and trade pricing.\n\n🎨 A Note on Colors:\nPhotos are taken in natural daylight. Colors may appear slightly different depending on your screen settings.\n\n✨ Every piece here is one of a kind. If this one caught your eye, trust that feeling.\nIt's cleaned, carefully packed, and ready to find its new home."
+    "footer": ""
   }
 }

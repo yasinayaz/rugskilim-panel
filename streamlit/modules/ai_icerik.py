@@ -86,92 +86,117 @@ _DEFAULT_PROMPT_RULES = {
     "tag_strategy": "",
     "description_brief": "",
     "description_example_template": "",
-    "title_rules": """SIZE RULE: Round each ft dimension to the nearest whole number (2.8x9.9 → "3x10", 3.2x5.7 → "3x6", 3.6x9.3 → "4x9"). Use the ROUNDED size in the title.
+    "title_rules": """SIZE RULE: Round each ft dimension to the nearest whole number (2.8x9.9 → "3x10", 3.2x5.7 → "3x6", 3.6x9.3 → "4x9", 13.3x3.9 → "13x4"). Use ONLY the ROUNDED size in the title — never the raw decimal.
 Pack in: size, style, colors, pattern, material, origin, room use, Etsy search terms.
+
+FORMAT RULES (Etsy SEO):
+- Structure: [Primary Keyword] | [Secondary Keyword + modifier] | [Occasion or Use]
+- Use sentence case — capitalize only the first word and proper nouns. Do NOT title-case every word.
+- Never repeat the same keyword twice in the title.
+- Never include: shop name, price, "SALE", "free shipping", or promotional phrases.
+- Use as much of the 140-character limit as possible — do not leave it short.
 
 CRITICAL VARIETY RULE: Do NOT default to the same opening pattern for every rug. Look at this rug's most distinctive feature — its color, pattern, condition, size, or origin — and lead with THAT. Every title must feel written for this specific rug, not filled into a template.
 
 Choose ONE of these five openers based on what makes THIS rug stand out. Do NOT always pick the same one:
 
 1. Size-first (when size is the main selling point):
-   "[size] ft [Origin] [Style] [Type] Rug | [Color adjective] [Color] [Pattern] [Material] [Room] Rug | [style/feel]"
-   Example: "7x10 ft Persian Oushak Area Rug | Aged Terracotta Medallion Wool Living Room Carpet | Bohemian Decor"
+   "[size] ft [Origin] [Style] [Type] rug | [Color adjective] [Color] [Pattern] wool [Room] | [style/feel]"
+   Example: "7x10 ft Turkish oushak area rug | aged terracotta medallion wool living room carpet | bohemian decor"
 
 2. Color-first (when color is the most striking visual feature):
-   "[Color adjective] [Color] [Pattern] [Origin] Rug — [size] ft [Type] | [Material] [Style] [Room] Decor"
-   Example: "Faded Rust Red Medallion Turkish Rug — 5x8 ft Area | Distressed Wool Bohemian Living Room Decor"
+   "[Color adjective] [Color] [Pattern] Turkish rug — [size] ft [Type] | [Material] [Style] [Room] decor"
+   Example: "Faded rust red medallion Turkish rug — 5x8 ft area | distressed wool bohemian living room decor"
 
 3. Style/origin-first (when the weave, origin or style is rare/distinctive):
-   "[Weave/style] [Origin] [Type] [size] ft | [Color] [Pattern] [Material] — [Room] [Style] Rug"
-   Example: "Hand-Knotted Oushak Runner 3x10 ft | Muted Sage Green Geometric Wool — Hallway Bohemian Rug"
+   "[Weave/style] Turkish [Type] [size] ft | [Color] [Pattern] wool — [Room] [Style] rug"
+   Example: "Hand-knotted oushak runner 3x10 ft | muted sage green geometric wool — hallway bohemian rug"
 
 4. Room/use-first (when the rug perfectly fits a specific space):
-   "[Room] [Type] Rug [size] ft | [Origin] [Style] [Color] [Pattern] Wool | [Age/Condition] [Style feel]"
-   Example: "Hallway Runner Rug 3x12 ft | Turkish Oushak Faded Blue Tribal Wool | Vintage Distressed Decor"
+   "[Room] [Type] rug [size] ft | Turkish oushak [Color] [Pattern] wool | [Age/Condition] [Style]"
+   Example: "Hallway runner rug 3x12 ft | Turkish oushak faded blue tribal wool | vintage distressed decor"
 
 5. Condition/character-first (when patina, age, or distressing is a feature):
-   "[Condition descriptor] [Color] [Origin] [Type] Rug | [size] ft [Pattern] [Material] | [Style] [Room] Decor"
-   Example: "Distressed Ivory Turkish Area Rug | 6x9 ft Floral Wool | Rustic Bohemian Living Room Carpet"
+   "[Condition descriptor] [Color] Turkish [Type] rug | [size] ft [Pattern] wool | [Style] [Room] decor"
+   Example: "Distressed ivory Turkish area rug | 6x9 ft floral wool | rustic bohemian living room carpet"
 
 HARD RULES:
-- The rounded size (e.g. "6x9", "3x10") MUST always appear within the first 40 characters. No exceptions.
-- Rug type keyword ("Runner", "Area Rug", "Accent Rug") in the first 40 characters: include it when it is a high-search-volume term for this rug (e.g. "Runner" for a narrow long rug is mandatory — buyers search "3x10 Runner Rug" heavily). For standard area rugs, include "Area Rug" in the first 40 chars only if it fits naturally alongside the size.
-- Color in the first 40 characters: include it if the color is distinctive and high-search (terracotta, sage, navy, red). Skip it if the color is generic (plain beige/ivory) and the slot is better used by the rug type or a style keyword.
-- Never start two consecutive titles with the same word pattern.
-- Include somewhere in the title: color(s), pattern, origin (Turkish), material (Wool), room fit.
+- The rounded size (e.g. "6x9", "3x10", "13x4") MUST always appear within the first 40 characters. No exceptions.
+- "Turkish" or "Oushak" MUST appear within the first 50 characters.
+- Do NOT open with "Vintage" — let the size lead, then the origin keyword.
+- Rug type keyword ("runner", "area rug", "accent rug") in the first 40 characters when it is a high-search term for this rug (e.g. "runner" for a narrow long rug is mandatory).
+- Include somewhere in the title: color(s), pattern, origin (Turkish/Oushak/Anatolian), material (wool), room fit.
 - Never go below {title_target_min} characters; never exceed {title_max_length}.
 - BANNED WORD: Never use "Persian" anywhere in the title. These are Turkish rugs. Use "Turkish", "Oushak", "Anatolian" instead.""",
     "tag_rules": """Each tag = a strong Etsy long-tail keyword phrase (2-4 words). Total: exactly {tag_count} tags, each max {tag_max_length} chars.
 Think like a buyer — what would someone search on Etsy to find THIS specific rug?
 
-REQUIRED coverage (all categories must appear, but room/style tags must match THIS rug, not a generic list):
+TAG FORMAT RULES (Etsy SEO):
+- Every tag must be 2-4 words — NO single-word tags.
+- No commas, periods, or special characters inside a tag.
+- Tags must COMPLEMENT the title, not repeat it — use synonyms and variations.
+- Never leave any tag empty or use "?" as a placeholder.
+- Cover all buyer search angles: product type, recipient, occasion/season, style/aesthetic, long-tail variations.
 
-SIZE tags — exactly 3, each a different word combination:
-  • [size] + rug type  (e.g. "6x9 area rug")
-  • [size] + dominant color  (e.g. "6x9 beige rug")
-  • dominant color + rug type  (e.g. "beige area rug")
+REQUIRED coverage (all categories must appear):
 
-ORIGIN/STYLE tags — 2 tags (mandatory high-value keywords):
-  • One oushak tag: "oushak rug" or "oushak [type] rug"
-  • One authenticity tag: "handmade wool rug" or "vintage turkish rug" or "hand knotted rug"
+SIZE tags — 2-3 tags, each a different word combination using the ROUNDED size:
+  • [rounded size] + rug type  (e.g. "6x9 area rug")
+  • [rounded size] + dominant color  (e.g. "6x9 beige rug")
+  • [rounded size] + style keyword  (e.g. "6x9 vintage rug")  — optional 3rd
+  Use ROUNDED size (not decimal) in all size tags. Max {tag_max_length} chars each.
 
-VISUAL/DESCRIPTIVE tags — 3-4 tags derived from what you actually SEE in this rug's photo:
-  • Color character: "faded terracotta rug", "muted sage green rug", "distressed wool rug"
+COLOR tags — exactly 2 (MANDATORY — both must always appear):
+  • dominant color + rug type  (e.g. "beige area rug", "red runner rug")
+  • secondary color + descriptive modifier  (e.g. "muted teal rug", "faded blue wool rug")
+  Use the actual colors you see in the photo — not generic placeholders.
+
+ORIGIN/STYLE tags — exactly 2 (MANDATORY high-value keywords — both must always appear):
+  • "oushak rug" or "oushak [type] rug"  ← always include this exact phrase
+  • "vintage turkish rug"  ← always include this exact phrase
+
+VISUAL/DESCRIPTIVE tags — 2-3 tags derived from what you actually SEE in this rug's photo:
   • Pattern: "medallion area rug", "tribal geometric rug", "floral wool rug"
   • Texture/condition: "distressed vintage rug", "low pile wool rug", "antique wash rug"
-  Choose descriptors that are TRUE for this rug — do NOT use the same words across different rugs.
+  Choose descriptors TRUE for THIS rug — do NOT reuse the same descriptors across different rugs.
 
 ROOM/USE tags — 2-3 tags matched to this rug's actual size and type:
-  Runner (narrow, long): prioritize "hallway runner rug", "kitchen runner rug", "entryway runner"
-  Accent (small, under 4ft): prioritize "entryway accent rug", "bathroom small rug", "bedside rug"
-  Area (standard): choose the rooms that best fit this rug's SIZE and STYLE:
+  Runner (narrow, long): "hallway runner rug", "kitchen runner rug", "entryway runner"
+  Accent (small, under 4ft): "entryway accent rug", "bathroom accent rug", "bedside rug"
+  Area — choose rooms that fit this rug's SIZE and home_style:
     • Large (6m²+): "living room rug", "dining room rug", "bedroom area rug"
-    • Medium (3-6m²): pick 2-3 of: living room, bedroom, nursery, home office, reading nook
-    • Small (1-3m²): pick 2-3 of: bedroom, entryway, kitchen, bathroom, kids room
+    • Medium (3-6m²): 2-3 of: living room, bedroom, nursery, home office, reading nook
+    • Small (1-3m²): 2-3 of: bedroom, entryway, kitchen, bathroom, kids room
+  If home_style is Bohemian/eclectic: include "boho area rug" as one room/use tag.
+  If home_style is Country/farmhouse: include "farmhouse rug decor" as one room/use tag.
   Do NOT always default to the same three rooms for every rug.
 
-BUYER INTENT tag — 1 tag targeting a specific buyer need:
-  Examples: "bohemian home decor", "farmhouse rug decor", "housewarming gift rug", "one of a kind rug", "eclectic home rug"
-  Choose the one that best matches this rug's style and likely buyer.
+BUYER INTENT tags — 1-2 tags targeting specific buyer needs or occasions:
+  Examples: "bohemian home decor", "farmhouse rug decor", "housewarming gift rug", "one of a kind rug", "eclectic home rug", "vintage rug gift", "turkish rug gift"
+  Choose the one(s) that best match this rug's style and likely buyer.
 
 HARD RULES:
 - Never repeat the same word combination across tags.
-- No placeholder "?" in any tag.
-- Use the ROUNDED size (not decimal) in size tags.
-- Every tag must reflect what you actually observe — color, pattern, texture — for THIS rug.""",
-    "opening_rules": """ONE punchy sentence that hooks the reader.
+- Use the ROUNDED size (not decimal) in size tags. Never use raw decimal sizes like "2.8x9.9".
+- Include exactly 2 COLOR tags — one for dominant color, one for secondary color.
+- Include 2-3 SIZE tags — all using the rounded size.
+- Include 2-3 ROOM/USE tags — matched to this rug's actual size and type.
+- Every tag must reflect what you actually observe for THIS rug.""",
+    "opening_rules": """ONE punchy sentence that hooks the reader. This sentence is critical for Google indexing — it must contain the primary keyword naturally.
 CRITICAL: This sentence must describe what you actually see in THIS rug's photo — a specific color, pattern detail, texture, or wear characteristic unique to this piece. Do NOT write a sentence that could apply to any rug.
-Include the ROUNDED size, origin, and one concrete visual observation from the photo.
+Include: primary keyword (e.g. "vintage Turkish runner rug"), ROUNDED size, and one concrete visual observation from the photo.
 Do NOT use raw decimal ft sizes like 3.6x9.2 in the opening sentence. Use rounded sizes like 4x9 ft in prose.
-Example: "This 3x10 ft Turkish Runner stops you — its deep rust medallions fading into worn ivory give it the kind of patina that takes decades, not months." """,
-    "story_rules": """Write 4–5 short paragraphs following the store's description template style.
-- Para 1: Open with a cinematic hook, then describe this rug's specific visual character — its actual colors, pattern density, fading or wear you observe in the photo. Make the reader picture THIS exact rug.
-- Para 2: Size — what spaces it fits, how it anchors a room. In prose, prefer the rounded ft size (e.g. "4x9 ft", "3x11 runner"). Do NOT lead with raw decimal sizes like 3.6x9.2 ft in normal sentences.
-- Para 3: Material — what makes this rug honest and tactile. Wool? Cotton? Both?
-- Para 4: Style versatility + room recommendations (Living room, Bedroom, Entryway, etc.) + decoration style fit (Bohemian, Country & farmhouse, etc.)
-Use \\n between paragraphs. Do NOT use bullet points here. Keep it conversational, human, and warm.
-SEO keywords to weave in naturally: the rounded size (e.g. "3x11 runner"), dominant color + rug type (e.g. "red runner rug"), vintage rug, handmade, wool, Turkish, antique area rug.
-These same keywords appear in the tags — using them in the description too boosts Etsy SEO.""",
+The first 160 characters of the description (opening sentence) should answer: what is it, what material, what size.
+Example: "This 3x10 ft vintage Turkish runner rug stops you — its deep rust medallions fading into worn ivory give it the kind of patina that takes decades, not months." """,
+    "story_rules": """Write 3–4 short paragraphs. Each paragraph max 2-3 sentences. Do NOT use bullet points here — flowing prose only.
+- Para 1: Deepen the rug's visual identity from the photo — its actual colors, pattern density, fading or wear. Make the reader picture THIS exact rug.
+- Para 2: Size/fit — what spaces it suits, how it anchors a room. Use the rounded ft size (e.g. "4x9 ft", "3x10 runner"). Do NOT use raw decimal sizes like 3.6x9.2 ft.
+- Para 3: Material quality — handwoven wool, tactile warmth, durability. What makes it honest and lasting.
+- Para 4 (optional): Style versatility + room suggestions + decoration style fit (Bohemian, farmhouse, Scandinavian, etc.) Tone should match the store's voice.
+Close the story section with a call-to-action feel: "Questions? Message us before ordering." (adapt to the store's tone).
+Use \\n between paragraphs. Keep it conversational, human, and warm.
+SEO keywords to weave in naturally: the rounded size, dominant color + rug type, "vintage rug", "handmade", "wool", "Turkish", "antique area rug".
+These same keywords appear in the tags — using them in the description too boosts Etsy SEO and Google indexing.""",
 }
 
 _DEFAULT_STATIC_TEXTS = {
@@ -670,18 +695,28 @@ def _etsy_alanlarini_tamamla(ai: dict, boyut_ft: str, metrekare: float | None) -
     return norm
 
 
-def _oda_taglari(tip: str, shop_section: str) -> list[str]:
+def _oda_taglari(tip: str, shop_section: str, home_style: str = "") -> list[str]:
+    style_lower = (home_style or "").lower()
     if shop_section == "Mini Rugs - Doormats":
         return ["entryway rug", "bathroom rug", "door mat rug"]
     if tip == "Runner":
         return ["hallway runner rug", "kitchen runner rug", "entryway runner rug"]
     if tip == "Accent":
         return ["entryway accent rug", "bedroom accent rug", "bathroom accent rug"]
+    # Area rugs — style-aware room selection
+    if "bohemian" in style_lower or "eclectic" in style_lower:
+        return ["boho area rug", "living room rug", "bedroom area rug"]
+    if "farmhouse" in style_lower or "country" in style_lower:
+        return ["farmhouse rug decor", "living room rug", "dining room rug"]
+    if shop_section == "Large Rugs" or shop_section == "Oversized Rugs":
+        return ["living room rug", "dining room rug", "bedroom area rug"]
+    if shop_section == "Small Rugs":
+        return ["bedroom accent rug", "entryway area rug", "kitchen small rug"]
     return ["living room rug", "bedroom area rug", "dining room rug"]
 
 
 def _fallback_taglari_olustur(rounded_ft: str, tip: str, renk1: str, renk2: str, pattern_etsy: str,
-                              koken: str, stil: str, shop_section: str) -> list[str]:
+                              koken: str, stil: str, shop_section: str, home_style: str = "") -> list[str]:
     tip_lower = tip.lower()
     size_tags = [
         f"{rounded_ft} {tip_lower} rug",
@@ -694,13 +729,13 @@ def _fallback_taglari_olustur(rounded_ft: str, tip: str, renk1: str, renk2: str,
     if renk2:
         color_tags.append(f"{renk2.lower()} {tip_lower} rug")
     style_tags = [
-        f"vintage {tip_lower} rug",
-        f"handmade wool rug",
-        f"{str(koken or 'turkish').lower()} rug",
-        f"{str(stil or 'oushak').lower()} rug",
+        "oushak rug",
+        "vintage turkish rug",
+        "handmade wool rug",
         f"{str(pattern_etsy or 'vintage').lower()} wool rug",
+        f"vintage {tip_lower} rug",
     ]
-    oda_tags = _oda_taglari(tip, shop_section)
+    oda_tags = _oda_taglari(tip, shop_section, home_style)
     tags = size_tags + color_tags + style_tags + oda_tags
     temiz = []
     for tag in tags:
@@ -962,7 +997,7 @@ def _rate_limit_fallback_ai(
     ])
     ai = {
         "baslik": _fallback_baslik_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section),
-        "taglar": _fallback_taglari_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section),
+        "taglar": _fallback_taglari_olustur(rounded_ft, tip, renk1, renk2, pattern_etsy, koken, stil, shop_section, home_style),
         "renk1": renk1,
         "renk2": renk2,
         "renk_scheme": "Neutral Beige, Warm Brown",

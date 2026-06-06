@@ -2,7 +2,21 @@
   "template_id": "BohoRugHouse_v1",
   "template_name": "BohoRugHouse",
   "prompt_extra_instructions": "",
-  "sabit_no_extra_fees": "✨ No Hidden Costs – Ever!\nAll customs duties and import taxes are on us. What you see is what you pay — shop freely and with full confidence.",
-  "sabit_easy_returns": "↩️ Hassle-Free Returns\nNot fully satisfied? We'll make it right. Contact us within 14 days of delivery and we'll walk you through the return process — simple and stress-free.",
-  "sabit_alt": "🧼 Cleaned & Ready to Use\nEvery rug is professionally cleaned before it leaves us. No odors, no hidden wear — just genuine vintage character arriving at your door.\n\n🧽 Care Instructions\nEasy to live with: light vacuuming regularly and gentle spot cleaning as needed. No specialist care required.\n\n🚚 Shipping & Delivery:\n- Dispatched within 1 business day\n- Worldwide delivery in 2–4 business days\n- Carefully packed to arrive in perfect condition\n\n❌ Cancellation Policy:\nOrders can be cancelled any time before dispatch — just send us a message.\n\n🏠 Trade & Wholesale:\nInterior designers and decorators are welcome. Contact us for bulk sourcing and trade pricing.\n\n🎨 A Note on Colors:\nPhotos are taken in natural daylight. Colors may appear slightly different depending on your screen settings.\n\n✨ Every piece here is one of a kind. If this one caught your eye, trust that feeling.\nIt's cleaned, carefully packed, and ready to find its new home."
+  "prompt_rules": {
+    "title_target_min": 120,
+    "title_target_max": 140,
+    "title_max_length": 140,
+    "tag_count": 13,
+    "tag_max_length": 20,
+    "title_brief": "",
+    "tag_strategy": "",
+    "description_brief": "Write in a thoughtful, interior-design-aware tone for BohoRugHouse. The buyer is style-conscious and considers how a rug 'suits a range of interior styles.' Emphasize the faded palette's quiet authority. Use slightly formal structure — the rug is 'thoughtfully sourced.' Bohemian, Scandinavian, and soft traditional buyers are the target.",
+    "description_example_template": "{opening}\n\n{hikaye}\n\n─────────────────────────────\nPRODUCT DETAILS\n─────────────────────────────\n⬡ SKU: {urun_id}\n⬡ Color Scheme: {renk_scheme}\n⬡ Size: {boyut_ft} / {boyut_cm} cm\n⬡ Total Area: {sqft} sq ft / {metrekare} sq m\n⬡ Pattern: {pattern}\n{pile_bullet}\n\n─────────────────────────────\nCONDITION & CARE\n─────────────────────────────\nProfessionally cleaned before dispatch. No odors, no hidden wear. Regular light vacuuming and occasional spot cleaning is sufficient — no specialist maintenance required.\n\n─────────────────────────────\nSHIPPING\n─────────────────────────────\nDispatched within 1 business day. Worldwide delivery in 2–4 business days. Packed securely to arrive in perfect condition. All customs duties and import taxes are covered by us — the price shown is the final price.\n\n─────────────────────────────\nRETURNS\n─────────────────────────────\nNot satisfied? Contact us within 14 days of delivery. We'll guide you through a simple, hassle-free return process.\n\n─────────────────────────────\nTRADE & WHOLESALE\n─────────────────────────────\nInterior designers and decorators are welcome to enquire about trade pricing and bulk sourcing.\n\nNote: Each piece is unique. Photography is taken in natural daylight — colors may vary slightly depending on screen settings.\n\nStore: bohorughouse.etsy.com"
+  },
+  "static_texts": {
+    "no_extra_fees": "",
+    "easy_returns": "",
+    "story_size_template": "",
+    "footer": ""
+  }
 }
