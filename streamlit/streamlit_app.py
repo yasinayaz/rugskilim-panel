@@ -4721,7 +4721,8 @@ def _ai_kuyruga_ekle():
                     satir_no = _sk.urun_ekle(urun_bilgisi, pcloud_yol, pcloud_klasor_id=k["id"])
                     st.write(f"💾 AI verileri yazılıyor (satır {satir_no})...")
                     _sk.ai_verileri_yaz(urun_bilgisi["urun_id"], ai, satir_no=satir_no)
-                    st.session_state.kuyruga_eklenenler[secili_urun_kodu] = "ready"
+                    _norm_key = _urun_kodu_normalize(secili_urun_kodu) or _urun_kodu_al(secili_urun_kodu)
+                    st.session_state.kuyruga_eklenenler[_norm_key or secili_urun_kodu] = "ready"
                     st.session_state.kuyruk_klasor_durumlari[str(k["id"])] = "ready"
                     st.write(f"✅ Renk: {ai.get('renk1','')} / {ai.get('renk2','')} — Stil: {ai.get('stil','')}")
                     islem_raporu.append({
