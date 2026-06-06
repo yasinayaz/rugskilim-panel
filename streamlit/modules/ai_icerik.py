@@ -441,26 +441,61 @@ def _enum_normalize(value: str, allowed: list[str], synonym_map: dict[str, str] 
 
 def _etsy_renk_normalize(value: str) -> str:
     return _enum_normalize(value, ETSY_RENKLERI, {
+        # --- Beige / Neutral ---
         "beige": "Beige",
         "cream": "Beige",
         "ivory": "Beige",
         "sand": "Beige",
+        "ecru": "Beige",
+        "linen": "Beige",
+        "natural": "Beige",
+        "off-white": "Beige",
+        "warm white": "Beige",
+        # --- Brown ---
         "taupe": "Brown",
         "tan": "Brown",
         "brown": "Brown",
+        "chocolate": "Brown",
+        "caramel": "Brown",
+        "camel": "Brown",
+        "walnut": "Brown",
+        "cocoa": "Brown",
+        "khaki": "Brown",
+        # --- Black ---
         "black": "Black",
+        # --- Gray ---
         "charcoal": "Gray",
         "gray": "Gray",
         "grey": "Gray",
+        "slate": "Gray",
+        "ash": "Gray",
+        # --- Silver ---
         "silver": "Silver",
+        # --- White ---
         "white": "White",
         "off white": "White",
+        # --- Blue ---
         "blue": "Blue",
         "navy": "Blue",
         "teal": "Blue",
+        "indigo": "Blue",
+        "turquoise": "Blue",
+        "aqua": "Blue",
+        "cyan": "Blue",
+        "denim": "Blue",
+        "cobalt": "Blue",
+        "sapphire": "Blue",
+        # --- Green ---
         "green": "Green",
         "sage": "Green",
         "olive": "Green",
+        "mint": "Green",
+        "moss": "Green",
+        "emerald": "Green",
+        "forest": "Green",
+        "hunter": "Green",
+        "hunter green": "Green",
+        # --- Red ---
         "red": "Red",
         "burgundy": "Red",
         "crimson": "Red",
@@ -468,19 +503,40 @@ def _etsy_renk_normalize(value: str) -> str:
         "dark red": "Red",
         "rust red": "Red",
         "rust": "Red",        # görsel teste göre; AI prompt'ta ayrıca açıklanıyor
+        "maroon": "Red",
+        "scarlet": "Red",
+        # --- Orange ---
         "terracotta": "Orange",  # terracotta daha çok orange-dominant
         "orange": "Orange",
+        "coral": "Orange",
+        "salmon": "Orange",
+        # --- Yellow ---
         "yellow": "Yellow",
         "mustard": "Yellow",
         "amber": "Yellow",
         "saffron": "Yellow",
+        "ochre": "Yellow",
+        "honey": "Yellow",
+        "golden": "Gold",
+        # --- Gold ---
         "gold": "Gold",
+        # --- Pink ---
         "pink": "Pink",
         "rose": "Pink",
+        "blush": "Pink",
+        "fuchsia": "Pink",
+        "mauve": "Pink",
+        # --- Purple ---
         "purple": "Purple",
         "lilac": "Purple",
+        "lavender": "Purple",
+        "violet": "Purple",
+        "plum": "Purple",
+        "eggplant": "Purple",
+        # --- Copper / Bronze ---
         "copper": "Copper",
         "bronze": "Bronze",
+        # --- Other ---
         "rainbow": "Rainbow",
         "clear": "Clear",
     })
