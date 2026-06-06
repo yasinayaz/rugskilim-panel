@@ -4602,7 +4602,20 @@ def _ai_kuyruga_ekle():
                         )
                     dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
                     dosya_adlari = [f["name"] for f in dosyalar]
-                    secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
+
+                    # Ürün kodu: Ölçü Ara'dan geldiyse direkt kullan.
+                    # Yoksa: klasör içinde "KOD--...M2...FT.ext" kalıbında dosya ara,
+                    # bulamazsan klasör adını kullan.
+                    if k.get("_urun_kodu"):
+                        secili_urun_kodu = str(k["_urun_kodu"]).strip()
+                    else:
+                        _bilgi_dosya_kodu = None
+                        for _fn in dosya_adlari:
+                            if "--" in _fn and "m2" in _fn.lower():
+                                _bilgi_dosya_kodu = _fn.split("--")[0].strip()
+                                break
+                        secili_urun_kodu = _bilgi_dosya_kodu if _bilgi_dosya_kodu else _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
+
                     secili_urun_kodu_norm = (
                         _urun_kodu_normalize(secili_urun_kodu)
                         or _urun_kodu_al(secili_urun_kodu)
@@ -4624,6 +4637,31 @@ def _ai_kuyruga_ekle():
                     st.write("📐 Boyut ve fiyat hesaplanıyor...")
                     urun_bilgisi = parse_urun_bilgisi(k["ad"], dosya_adlari)
                     urun_bilgisi["urun_id"] = secili_urun_kodu
+
+                    # Boyut: parser bulamazsa ölçü ara tablosundaki bilinen değerleri kullan
+                    if not urun_bilgisi.get("boyut_ft") and k.get("_size_ft"):
+                        _ft_raw = str(k["_size_ft"]).replace("x", "x").strip()
+                        urun_bilgisi["boyut_ft"] = _ft_raw
+                        try:
+                            _parts = _re.split(r"[xX×]", _ft_raw)
+                            urun_bilgisi["genislik_ft"] = float(_parts[0].strip())
+                            urun_bilgisi["uzunluk_ft"] = float(_parts[1].strip())
+                        except Exception:
+                            pass
+                    if not urun_bilgisi.get("boyut_cm") and k.get("_size_cm"):
+                        _cm_raw = str(k["_size_cm"]).strip()
+                        urun_bilgisi["boyut_cm"] = _cm_raw
+                        try:
+                            _parts_cm = _re.split(r"[xX×]", _cm_raw)
+                            _g_cm = float(_parts_cm[0].strip())
+                            _u_cm = float(_parts_cm[1].strip())
+                            urun_bilgisi["genislik_cm"] = _g_cm
+                            urun_bilgisi["uzunluk_cm"] = _u_cm
+                            if not urun_bilgisi.get("metrekare"):
+                                urun_bilgisi["metrekare"] = round((_g_cm / 100) * (_u_cm / 100), 2)
+                        except Exception:
+                            pass
+
                     if urun_bilgisi.get("metrekare"):
                         urun_bilgisi["fiyat_usd"] = round(float(urun_bilgisi["metrekare"]) * price_per_m2)
                     boyut = urun_bilgisi.get("boyut_ft") or "?"
@@ -7543,7 +7581,14 @@ if st.session_state.active_main_tab == "olcu_ara":
                                     _norm = _kod_normalize(str(satir["KOD"]))
                                     _klasor = _klasor_harita.get(_norm)
                                     if _klasor:
-                                        _secilecek.append({"id": _klasor["id"], "ad": _klasor["ad"], "_pcloud_host": _pcloud_host})
+                                        _secilecek.append({
+                                            "id": _klasor["id"],
+                                            "ad": _klasor["ad"],
+                                            "_pcloud_host": _pcloud_host,
+                                            "_urun_kodu": str(satir["KOD"]).strip(),
+                                            "_size_cm": str(satir.get("CM") or "").strip(),
+                                            "_size_ft": str(satir.get("FT") or "").strip(),
+                                        })
 
                                 if _secilecek:
                                     if st.button(
