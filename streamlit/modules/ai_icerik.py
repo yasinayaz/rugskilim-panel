@@ -121,7 +121,9 @@ Choose ONE of these five openers based on what makes THIS rug stand out. Do NOT 
    Example: "Distressed ivory Turkish area rug | 6x9 ft floral wool | rustic bohemian living room carpet"
 
 HARD RULES:
-- The rounded size (e.g. "6x9", "3x10", "13x4") MUST always appear within the first 40 characters. No exceptions.
+- The rounded size (e.g. "6x9", "3x10", "13x4") MUST always appear in the FIRST SEGMENT — before the first "|" separator — AND within the first 40 characters. No exceptions.
+  ✅ "8x5 ft distressed beige Turkish area rug | faded floral wool..."
+  ❌ "Distressed beige Turkish area rug | 8x5 ft faded floral wool..."  ← size is after the first "|", WRONG
 - "Turkish" or "Oushak" MUST appear within the first 50 characters.
 - Do NOT open with "Vintage" — let the size lead, then the origin keyword.
 - Rug type keyword ("runner", "area rug", "accent rug") in the first 40 characters when it is a high-search term for this rug (e.g. "runner" for a narrow long rug is mandatory).
