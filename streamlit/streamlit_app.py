@@ -4606,8 +4606,8 @@ def _ai_kuyruga_ekle():
                         })
                         durum_ozeti = ", ".join(mevcut_durumlar) if mevcut_durumlar else "bilinmeyen durum"
                         raise Exception(
-                            f"{secili_urun_kodu} zaten excele yüklü. "
-                            f"Sheet'te {len(mevcut_kayitlar)} kayıt bulundu ({durum_ozeti})."
+                            f"{secili_urun_kodu}, {st.session_state.hedef_magaza_id} sheet'inde zaten mevcut "
+                            f"({durum_ozeti}). Tekrar eklenemez."
                         )
                     st.write(f"✅ {len(dosyalar)} dosya bulundu")
 
@@ -4704,14 +4704,14 @@ def _ai_kuyruga_ekle():
         "hatali": len(hatalar),
     }
     st.session_state.son_islem_raporu = islem_raporu
-    if basarili:
-        st.success(f"✅ {basarili}/{toplam} ürün tamamlandı!")
     st.session_state["_reset_checkbox_ids"] = [
         str(_item["id"]) for _item in st.session_state.secilen
     ]
     st.session_state.secilen = []
     st.session_state["_secim_limit_hatasi"] = None
-    st.rerun(scope="app")
+    if basarili:
+        st.rerun(scope="app")
+    # Tümü hata ise rerun yok — hata mesajları ekranda kalır
 
 
 # ══ TAB 1 ════════════════════════════════════════════════════════════════════
@@ -7545,6 +7545,8 @@ if st.session_state.active_main_tab == "olcu_ara":
                                         _ai_kuyruga_ekle()
         elif ara_btn:
             st.warning("Eşleşen ürün bulunamadı.")
+
+        _son_islem_raporu_goster()
 
     with st.container(key="main_tab_content_olcu_ara"):
         _tab5_ara()
