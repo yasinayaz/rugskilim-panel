@@ -4271,7 +4271,8 @@ def _magaza_tum_kodlar(token, host, magaza_id):
 
 
 def _magaza_klasor_haritasi(token, host, magaza_id):
-    """Mağaza klasörlerini {normalize(kod): {"id": folder_id, "ad": folder_name}} olarak döner."""
+    """Mağaza klasörlerini {normalize(kod): {"id": folder_id, "ad": folder_name}} olarak döner.
+    Aynı zamanda başarılı olan host'u ("_host" key'i ile) döner."""
     def _traverse(contents, result):
         for item in contents:
             if item.get("isfolder"):
@@ -4289,7 +4290,9 @@ def _magaza_klasor_haritasi(token, host, magaza_id):
                           timeout=60)
             d = r.json()
             if d.get("result") == 0:
-                return _traverse(d["metadata"].get("contents", []), {})
+                harita = _traverse(d["metadata"].get("contents", []), {})
+                harita["_host"] = h
+                return harita
         except: continue
     return {}
 
@@ -4587,7 +4590,8 @@ def _ai_kuyruga_ekle():
                 try:
                     _aktif_islem_kaydi_yaz(k, "isleniyor", "İşleniyor...")
                     st.write("📂 pCloud'dan dosyalar alınıyor...")
-                    r = httpx.get(f"{host}/listfolder",
+                    _item_host = k.get("_pcloud_host") or host
+                    r = httpx.get(f"{_item_host}/listfolder",
                                   params={"auth": token, "folderid": k["id"]},
                                   timeout=15)
                     d = r.json()
@@ -4642,7 +4646,7 @@ def _ai_kuyruga_ekle():
                             raise Exception(f"⛔ Bu ürün SATILMIŞ ve klasörde resim yok. (KOD: {k['ad']})")
                         else:
                             raise Exception(f"⚠️ Klasörde resim bulunamadı! (KOD: {k['ad']})")
-                    lr = httpx.get(f"{host}/getfilelink",
+                    lr = httpx.get(f"{_item_host}/getfilelink",
                                    params={"auth": token, "fileid": foto_dosyalar[0]["fileid"]},
                                    timeout=10)
                     ld = lr.json()
@@ -7533,12 +7537,13 @@ if st.session_state.active_main_tab == "olcu_ara":
 
                             if not secilen_satirlar.empty:
                                 _klasor_harita = st.session_state.get("_olcu_magaza_klasor_haritasi") or {}
+                                _pcloud_host = _klasor_harita.get("_host") or st.session_state.get("pcloud_host", "https://api.pcloud.com")
                                 _secilecek = []
                                 for _, satir in secilen_satirlar.iterrows():
                                     _norm = _kod_normalize(str(satir["KOD"]))
                                     _klasor = _klasor_harita.get(_norm)
                                     if _klasor:
-                                        _secilecek.append({"id": _klasor["id"], "ad": _klasor["ad"]})
+                                        _secilecek.append({"id": _klasor["id"], "ad": _klasor["ad"], "_pcloud_host": _pcloud_host})
 
                                 if _secilecek:
                                     if st.button(
