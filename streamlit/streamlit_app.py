@@ -4276,8 +4276,9 @@ def _magaza_klasor_haritasi(token, host, magaza_id):
         for item in contents:
             if item.get("isfolder"):
                 norm = _kod_normalize(item["name"])
-                if norm and norm not in result:
-                    result[norm] = {"id": item["folderid"], "ad": item["name"]}
+                fid = item.get("folderid") or item.get("id")
+                if norm and fid and norm not in result:
+                    result[norm] = {"id": fid, "ad": item["name"]}
                 _traverse(item.get("contents") or [], result)
         return result
     for h in [host, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
@@ -4590,6 +4591,11 @@ def _ai_kuyruga_ekle():
                                   params={"auth": token, "folderid": k["id"]},
                                   timeout=15)
                     d = r.json()
+                    if d.get("result") != 0:
+                        raise Exception(
+                            f"pCloud klasörü açılamadı — result={d.get('result')}, "
+                            f"hata='{d.get('error', '?')}', klasör_id={k['id']}"
+                        )
                     dosyalar     = [f for f in d["metadata"].get("contents", []) if not f.get("isfolder")]
                     dosya_adlari = [f["name"] for f in dosyalar]
                     secili_urun_kodu = _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
