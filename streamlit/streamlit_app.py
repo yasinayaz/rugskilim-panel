@@ -838,6 +838,8 @@ _CANLI_HARITA_TTL_SN = 60
 _CANLI_HARITA_LOCK = _threading.Lock()
 _STORE_BG_SYNC_GUARD = _threading.Lock()
 _STORE_BG_SYNC_LOCKS: dict[str, _threading.Lock] = {}
+_STORE_STATUS_BG_SYNC_LOCK = _threading.Lock()
+_STORE_STATUS_BG_SYNC_TS = 0.0
 _STORE_BG_SYNC_TS: dict[str, float] = {}
 
 _SOLD_SITE_LABELS: dict[str, str] = {
@@ -961,6 +963,8 @@ def _urunler_sessiz_sync_nabzi():
         st.session_state["_urunler_last_auto_sync_request_ts"] = simdi
         yeni_imza = _urunler_sheet_degisim_imzasi_al()
         son_imza = str(st.session_state.get("_urunler_last_sheet_signature") or "").strip()
+        if store_ids:
+            _store_status_auto_sync_all_stores_async(store_ids, force=False)
         if yeni_imza:
             if not son_imza:
                 st.session_state["_urunler_last_sheet_signature"] = yeni_imza
@@ -3336,6 +3340,36 @@ def _store_status_auto_sync_all_stores(store_ids: list[str]) -> None:
             _store_status_auto_sync_green(sid)
         except Exception:
             pass
+
+
+def _store_status_auto_sync_all_stores_async(
+    store_ids: list[str],
+    *,
+    min_interval_seconds: int = 120,
+    force: bool = False,
+) -> bool:
+    temiz = [
+        str(store_id or "").strip()
+        for store_id in (store_ids or [])
+        if str(store_id or "").strip()
+    ]
+    if not temiz:
+        return False
+
+    global _STORE_STATUS_BG_SYNC_TS
+    simdi = _time.time()
+    if _STORE_STATUS_BG_SYNC_LOCK.locked():
+        return False
+    if not force and _STORE_STATUS_BG_SYNC_TS and (simdi - _STORE_STATUS_BG_SYNC_TS) < max(10, int(min_interval_seconds)):
+        return False
+    _STORE_STATUS_BG_SYNC_TS = simdi
+
+    def _job():
+        with _STORE_STATUS_BG_SYNC_LOCK:
+            _store_status_auto_sync_all_stores(temiz)
+
+    _threading.Thread(target=_job, daemon=True, name="store-status-all-sync").start()
+    return True
 
 
 def _urunun_tum_yuklu_magazalari(kod: str, *, include_store_ids: bool = False) -> list[str]:
@@ -5998,7 +6032,6 @@ if st.session_state.active_main_tab == "urunler":
                     if magaza.strip()
                 })
 
-            _store_status_auto_sync_all_stores(magaza_adlari)
             canli_magaza_haritasi, _harita_guncelleniyor = _canli_magaza_haritasi_hazir(magaza_adlari)
             if _harita_guncelleniyor:
                 st.caption("Mağaza yük durumları güncelleniyor, liste hazır...")
@@ -6158,7 +6191,6 @@ if st.session_state.active_main_tab == "urunler":
                     for item in tum_magazalar
                     if str(item.get("store_id") or "").strip()
                 }
-                _store_status_auto_sync_all_stores(list(magaza_ad_haritasi.keys()))
                 store_rows = _store_status_rows_cached()
                 loaded_counts = _store_status_loaded_counts_cached()
                 pending_rows = _store_status_pending_delete_rows_cached()
