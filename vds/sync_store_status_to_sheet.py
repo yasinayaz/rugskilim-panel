@@ -68,6 +68,10 @@ def main(argv: list[str]) -> int:
         code = _clean(row.get("product_code"))
         if not code:
             continue
+        # needs_delete_deleted olanlar yeşil yapılmaz — panelde "silinmesi gerekenler"de gösterilir
+        store_row_status = _clean(row.get("status")).lower()
+        if store_row_status == "needs_delete_deleted":
+            continue
         product = product_map.get(code, {})
         status = _clean(product.get("status")).lower()
         if status == "sold" and not args.include_sold:

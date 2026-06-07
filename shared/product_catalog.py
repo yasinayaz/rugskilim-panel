@@ -532,7 +532,8 @@ class StoreCatalog:
             response = requests.delete(
                 self._url(),
                 headers={**_headers(), "Prefer": "return=representation"},
-                params={"store_id": f"eq.{sid}", "product_code": f"in.({code_filter})"},
+                # needs_delete_deleted kayıtlar sheet temizlemesinden korunur — panelde görünmeleri gerekir
+                params={"store_id": f"eq.{sid}", "product_code": f"in.({code_filter})", "status": "neq.needs_delete_deleted"},
                 timeout=60,
             )
             if not response.ok:

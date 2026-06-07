@@ -107,6 +107,9 @@ def _urun_id_normallestir(raw_sku: str, store_id: str) -> str:
 
     compact = re.sub(r"\s+", " ", compact).strip()
 
+    # "00_2200", "00-2200" gibi anlamsiz lider sifir + ayrac bloklarini at
+    compact = re.sub(r"^0+[_\-\s]+(?=\d)", "", compact).strip()
+
     alpha_num = re.match(r"^([A-Za-z]{1,5})\s*(\d+)\b", compact)
     if alpha_num:
         return f"{alpha_num.group(1)}{alpha_num.group(2)}"

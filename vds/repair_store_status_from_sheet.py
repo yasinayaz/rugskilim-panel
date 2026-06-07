@@ -71,14 +71,32 @@ def _sheet_green_codes(store_id: str) -> set[str]:
     from shared.sheets import SheetsKatmani
 
     renkler = SheetsKatmani(store_id).urun_renk_durumlari_al()
-    return {
+    codes = {
         _clean(code)
         for code, renk in (renkler or {}).items()
         if _clean(code) and _clean(renk).lower() == "green"
     }
+    # "__row__:N" satir-numarasi placeholder anahtarlaridir, gercek urun kodu
+    # degildir (bkz. shared/sheets.py urun_renk_durumlari_al). Bunlari sahte
+    # kod olarak DB'ye yazmamak icin filtrele.
+    placeholder = {c for c in codes if c.startswith("__row__:")}
+    if placeholder:
+        print(
+            f"[uyari] {store_id}: {len(placeholder)} adet placeholder kod "
+            f"(__row__:N) sheet renk haritasindan filtrelendi - gercek urun "
+            f"kodu degil, atlandi: {sorted(placeholder)[:5]}{'...' if len(placeholder) > 5 else ''}",
+            file=sys.stderr,
+        )
+    return codes - placeholder
 
 
-def _db_loaded_codes(store_id: str) -> set[str]:
+def _db_active_codes(store_id: str) -> set[str]:
+    """DB'de zaten green/done olan (gercekten yuklu/aktif) urun kodlari.
+
+    needs_delete_* statusundeki satirlar burada SAYILMAZ: sheet'te green
+    olarak goruluyorlarsa urun yeniden yuklenmis demektir ve stale
+    needs_delete kaydinin uzerine green/done yazilarak guncellenmesi gerekir.
+    """
     from shared.product_catalog import StoreCatalog
 
     rows = StoreCatalog().list_by_store(store_id)
@@ -89,7 +107,6 @@ def _db_loaded_codes(store_id: str) -> set[str]:
         and (
             _clean(row.get("renk")).lower() == "green"
             or _clean(row.get("status")).lower() == "done"
-            or _clean(row.get("status")).lower().startswith("needs_delete_")
         )
     }
 
@@ -99,6 +116,20 @@ def _upsert_missing(store_id: str, codes: list[str]) -> int:
 
     if not codes:
         return 0
+
+    # Guvenlik agi: placeholder/malformed kodlari asla gercek urun olarak yazma.
+    safe_codes = [c for c in codes if not _clean(c).startswith("__row__:")]
+    skipped = [c for c in codes if c not in safe_codes]
+    if skipped:
+        print(
+            f"[uyari] {store_id}: {len(skipped)} adet placeholder/malformed kod "
+            f"upsert'ten atlandi: {skipped[:5]}{'...' if len(skipped) > 5 else ''}",
+            file=sys.stderr,
+        )
+    codes = safe_codes
+    if not codes:
+        return 0
+
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ProductCatalog().upsert_products([
         {
@@ -136,7 +167,7 @@ def main(argv: list[str]) -> int:
     rapor = []
     for store_id in _store_ids(args):
         sheet_codes = _sheet_green_codes(store_id)
-        db_codes = _db_loaded_codes(store_id)
+        db_codes = _db_active_codes(store_id)
         missing = sorted(sheet_codes - db_codes)
         extra = sorted(db_codes - sheet_codes)
 

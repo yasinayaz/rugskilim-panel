@@ -487,15 +487,22 @@ def _supabase_store_status_delete(store_id: str, product_codes: list[str] | None
         from shared.product_catalog import StoreCatalog, _supabase_ready
         if not _supabase_ready():
             return
+        # BUG KORUMA: Boş liste ile çağrıldığında tüm mağaza silinir (StoreCatalog.delete içinde
+        # `if not product_codes` → tam silme). Bunu önlemek için boş listede erken çık.
+        if product_codes is not None and len(product_codes) == 0:
+            return
         StoreCatalog().delete(store_id, product_codes)
     except Exception:
         pass
 
 
 def _supabase_store_status_sync_green(store_id: str, product_codes: list[str], *, status: str = "done"):
-    """Sheet'te green olan urunleri store_status tablosuna da aninda yansit."""
+    """Sheet'te green olan urunleri store_status tablosuna da aninda yansit.
+    needs_delete_deleted kayıtların üzerine yazmaz — panelde görünmeleri gerekir.
+    """
     try:
-        from shared.product_catalog import StoreCatalog, _supabase_ready
+        import requests as _req
+        from shared.product_catalog import StoreCatalog, _supabase_ready, _headers, _base_url
         if not _supabase_ready():
             return
         temiz_kodlar = sorted({
@@ -505,16 +512,31 @@ def _supabase_store_status_sync_green(store_id: str, product_codes: list[str], *
         })
         if not temiz_kodlar:
             return
+
+        # Mevcut needs_delete_deleted kayıtları çek — bunları güncelleme
+        _sid = str(store_id or "").strip()
+        code_filter = ",".join(temiz_kodlar)
+        r = _req.get(
+            f"{_base_url()}/rest/v1/product_store_status",
+            headers={**_headers(), "Accept": "application/json"},
+            params={"store_id": f"eq.{_sid}", "product_code": f"in.({code_filter})", "status": "eq.needs_delete_deleted", "select": "product_code"},
+            timeout=20,
+        )
+        nd_codes = {row["product_code"] for row in (r.json() if r.ok else [])}
+        filtreli = [c for c in temiz_kodlar if c not in nd_codes]
+        if not filtreli:
+            return
+
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         StoreCatalog().upsert([
             {
                 "product_code": code,
-                "store_id": str(store_id or "").strip(),
+                "store_id": _sid,
                 "status": status,
                 "renk": "green",
                 "islem_tarihi": now_str,
             }
-            for code in temiz_kodlar
+            for code in filtreli
         ])
     except Exception:
         pass
@@ -825,6 +847,11 @@ class SheetsKatmani:
             renk = _satir_renk_sinifi(cells)
             if renk:
                 sonuc[urun_id] = renk
+                # NOT: "__row__:N" anahtarlari SADECE ready_urunleri_al() gibi
+                # satir-numarasina gore eslestirme yapan ic kullanim icindir.
+                # Gercek urun kodu degildir — disariya/raporlara/upsert'lere
+                # urun kodu olarak sizmamalidir (bkz. repair_store_status_from_sheet.py
+                # _sheet_green_codes filtrelemesi).
                 sonuc[f"__row__:{row_no}"] = renk
 
         return sonuc
