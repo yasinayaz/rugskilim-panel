@@ -233,6 +233,7 @@ def _credentials_json_yolu() -> str:
 
     repo_kok = Path(__file__).resolve().parent.parent
     adaylar.extend([
+        repo_kok / ".runtime" / "secrets" / "google-creds.json",
         repo_kok / "streamlit" / "entegra-hali-8ead6e6f99fe.json",
         repo_kok / "vds" / "entegra-hali-8ead6e6f99fe.json",
         repo_kok / "credentials.json",
