@@ -2964,6 +2964,23 @@ def _envanter_cacheden_canli_magaza_haritasi(
     return harita
 
 
+def _envanter_magaza_yuklu_sayilari(cache: dict | None = None) -> dict[str, int]:
+    kaynak = cache if isinstance(cache, dict) else _envanter_cache_yukle()
+    stores = (kaynak or {}).get("stores") or {}
+    sayilar: dict[str, int] = {}
+    for store_id, store_data in stores.items():
+        sid = str(store_id or "").strip()
+        if not sid:
+            continue
+        urunler = (store_data or {}).get("urunler") or {}
+        try:
+            sayi = int((store_data or {}).get("count") or 0)
+        except Exception:
+            sayi = 0
+        sayilar[sid] = sayi if sayi > 0 else len(urunler)
+    return sayilar
+
+
 def _canli_magaza_haritalarini_birlestir(
     *haritalar: dict[str, list[str] | tuple[str, ...] | set[str]] | None,
 ) -> dict[str, set[str]]:
@@ -5995,7 +6012,7 @@ if st.session_state.active_main_tab == "urunler":
                 import pandas as pd
 
                 satirlar = []
-                loaded_count_map = _store_status_loaded_counts_cached()
+                loaded_count_map = _envanter_magaza_yuklu_sayilari()
                 gorunen_magaza_yuklu_sayilari = {magaza: 0 for magaza in magaza_adlari}
                 _satilan_kumesi = set(st.session_state.get("satilan_kodlar_cache") or [])
                 for urun in gosterilecek_render:
@@ -6146,14 +6163,10 @@ if st.session_state.active_main_tab == "urunler":
                     for item in tum_magazalar
                     if str(item.get("store_id") or "").strip()
                 }
-                for _sid_sync in magaza_ad_haritasi:
-                    try:
-                        _store_status_auto_sync_green(_sid_sync)
-                    except Exception:
-                        pass
 
+                envanter_cache = _envanter_cache_yukle()
                 store_rows = _store_status_rows_cached()
-                loaded_counts = _store_status_loaded_counts_cached()
+                loaded_counts = _envanter_magaza_yuklu_sayilari(envanter_cache)
                 pending_rows = _store_status_pending_delete_rows_cached()
                 pending_counts: dict[str, int] = {}
                 for row in pending_rows:
@@ -6198,11 +6211,14 @@ if st.session_state.active_main_tab == "urunler":
                         if str(item.get("product_code") or "").strip()
                     }
                     detay_satirlari = []
+                    eklenen_yuklu_kodlar: set[str] = set()
                     for row in store_rows:
                         sid = str(row.get("store_id") or "").strip()
                         if sid != secili_store or not _store_status_is_loaded(row):
                             continue
                         kod = _urun_kodu_normalize(row.get("product_code", "")) or _urun_kodu_al(row.get("product_code", ""))
+                        if kod:
+                            eklenen_yuklu_kodlar.add(kod)
                         urun = urun_map.get(kod, {})
                         reason = _store_status_delete_reason(row.get("status"))
                         if not reason and str(urun.get("status", "")).strip().lower() == "sold":
@@ -6216,6 +6232,23 @@ if st.session_state.active_main_tab == "urunler":
                             "cm": urun.get("size_cm", ""),
                             "Güncelleme": row.get("islem_tarihi", ""),
                         })
+
+                    secili_envanter = (((envanter_cache or {}).get("stores") or {}).get(secili_store) or {})
+                    for raw_code, envanter_urun in ((secili_envanter.get("urunler") or {}).items()):
+                        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+                        if not kod or kod in eklenen_yuklu_kodlar:
+                            continue
+                        urun = urun_map.get(kod, {})
+                        detay_satirlari.append({
+                            "Ürün Kodu": kod,
+                            "Durum": "Yüklü",
+                            "Sebep": "",
+                            "Kategori": urun.get("category", ""),
+                            "ft": urun.get("size_ft", ""),
+                            "cm": urun.get("size_cm", ""),
+                            "Güncelleme": (envanter_urun or {}).get("islem_tarihi", ""),
+                        })
+
                     detay_satirlari = sorted(detay_satirlari, key=lambda item: (item["Durum"], item["Ürün Kodu"]))
                     st.markdown(f"###### {magaza_ad_haritasi.get(secili_store, secili_store)}")
                     if detay_satirlari:
