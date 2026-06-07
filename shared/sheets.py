@@ -508,7 +508,7 @@ def _supabase_store_status_sync_green(store_id: str, product_codes: list[str], *
         temiz_kodlar = sorted({
             str(code or "").strip()
             for code in (product_codes or [])
-            if str(code or "").strip()
+            if str(code or "").strip() and not str(code or "").strip().startswith("__row__:")
         })
         if not temiz_kodlar:
             return

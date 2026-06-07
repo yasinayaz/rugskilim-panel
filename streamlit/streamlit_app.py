@@ -2794,6 +2794,63 @@ def _sheet_green_kodlari_cached(store_id: str) -> list[str]:
     return sorted(set(yuklu_kodlar))
 
 
+_STORE_STATUS_AUTO_SYNC_TTL = 60.0
+
+
+def _store_status_auto_sync_green(store_id: str) -> None:
+    """
+    Sheet'te green olarak isaretlenmis ama Supabase product_store_status'ta
+    eksik/bayat (green/done degil) olan kayitlari otomatik olarak senkronlar.
+
+    Streamlit her etkilesimde script'i yeniden calistirdigi icin, ayni magaza
+    icin _STORE_STATUS_AUTO_SYNC_TTL saniyede bir defadan fazla calismaz
+    (session_state uzerinde son calisma zamani tutulur).
+    """
+    sid = str(store_id or "").strip()
+    if not sid:
+        return
+
+    throttle_map = st.session_state.setdefault("_store_status_auto_sync_ts", {})
+    simdi = _time.time()
+    son = throttle_map.get(sid, 0.0)
+    if (simdi - son) < _STORE_STATUS_AUTO_SYNC_TTL:
+        return
+    throttle_map[sid] = simdi
+
+    try:
+        from shared.product_catalog import _supabase_ready
+        if not _supabase_ready():
+            return
+        from shared.sheets import _supabase_store_status_sync_green
+
+        green_codes = [
+            kod for kod in _sheet_green_kodlari_cached(sid)
+            if kod and not str(kod).startswith("__row__:")
+        ]
+        if not green_codes:
+            return
+
+        mevcut_satirlar = {
+            str(row.get("product_code") or "").strip(): str(row.get("status") or "").strip().lower()
+            for row in _store_status_rows_cached()
+            if str(row.get("store_id") or "").strip() == sid
+        }
+        eksik_veya_bayat = [
+            kod for kod in green_codes
+            if mevcut_satirlar.get(kod, "") not in {"done", "green"}
+        ]
+        if not eksik_veya_bayat:
+            return
+
+        _supabase_store_status_sync_green(sid, eksik_veya_bayat, status="done")
+
+        # Guncel sayilarin hemen yansimasi icin ilgili cache'leri temizle
+        _store_status_rows_cached.clear()
+        _store_status_loaded_counts_cached.clear()
+    except Exception:
+        pass
+
+
 @st.cache_data(ttl=90, show_spinner=False)
 def _sheet_green_haritasi_cached(store_ids: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
     sonuc: dict[str, set[str]] = {}
@@ -5341,6 +5398,10 @@ if st.session_state.active_main_tab == "kuyruk":
                     pass
 
             satirlar = _kuyruk_satirlari_cached(st.session_state.hedef_magaza_id)
+            try:
+                _store_status_auto_sync_green(st.session_state.hedef_magaza_id)
+            except Exception:
+                pass
             _sk2 = _SK2(st.session_state.hedef_magaza_id)
             _yuklu_kodlar = _magaza_yuklu_kodlari_al(
                 st.session_state.hedef_magaza_id,
@@ -6036,6 +6097,12 @@ if st.session_state.active_main_tab == "urunler":
                     for item in tum_magazalar
                     if str(item.get("store_id") or "").strip()
                 }
+                for _sid_sync in magaza_ad_haritasi:
+                    try:
+                        _store_status_auto_sync_green(_sid_sync)
+                    except Exception:
+                        pass
+
                 store_rows = _store_status_rows_cached()
                 loaded_counts = _store_status_loaded_counts_cached()
                 pending_rows = _store_status_pending_delete_rows_cached()
