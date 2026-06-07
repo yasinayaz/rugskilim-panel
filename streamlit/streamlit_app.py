@@ -2797,6 +2797,29 @@ def _sheet_green_kodlari_cached(store_id: str) -> list[str]:
 _STORE_STATUS_AUTO_SYNC_TTL = 60.0
 
 
+def _sheet_green_kodlari_taze(store_id: str) -> list[str]:
+    """
+    `_sheet_green_kodlari_cached` ile ayni mantigi uygular ama st.cache_data
+    katmanindan TAMAMEN bagimsizdir; dogrudan Sheet'i okur. Sadece
+    `_store_status_auto_sync_green` icin kullanilir, boylece sync'in
+    dogrulugu UI-goruntuleme cache'lerinin TTL'ine bagli kalmaz.
+    """
+    sid = str(store_id or "").strip()
+    if not sid:
+        return []
+    durumlar = _sheetten_magaza_store_status_oku(sid, "")
+    yuklu_kodlar = []
+    for raw_code, satir in durumlar.items():
+        kod = _urun_kodu_normalize(raw_code) or _urun_kodu_al(raw_code)
+        if not kod:
+            continue
+        renk = str((satir or {}).get("renk") or "").strip().lower()
+        durum = str((satir or {}).get("status") or "").strip().lower()
+        if _magaza_kaydi_ui_yuklu_mu(kod, renk, durum):
+            yuklu_kodlar.append(kod)
+    return sorted(set(yuklu_kodlar))
+
+
 def _store_status_auto_sync_green(store_id: str) -> None:
     """
     Sheet'te green olarak isaretlenmis ama Supabase product_store_status'ta
@@ -2824,12 +2847,13 @@ def _store_status_auto_sync_green(store_id: str) -> None:
         from shared.sheets import _supabase_store_status_sync_green
 
         green_codes = [
-            kod for kod in _sheet_green_kodlari_cached(sid)
+            kod for kod in _sheet_green_kodlari_taze(sid)
             if kod and not str(kod).startswith("__row__:")
         ]
         if not green_codes:
             return
 
+        _store_status_rows_cached.clear()
         mevcut_satirlar = {
             str(row.get("product_code") or "").strip(): str(row.get("status") or "").strip().lower()
             for row in _store_status_rows_cached()
@@ -2840,15 +2864,40 @@ def _store_status_auto_sync_green(store_id: str) -> None:
             if mevcut_satirlar.get(kod, "") not in {"done", "green"}
         ]
         if not eksik_veya_bayat:
+            print(
+                f"[auto_sync_green] {sid}: {len(green_codes)} green kod bulundu, eksik yok",
+                file=sys.stderr,
+            )
             return
 
-        _supabase_store_status_sync_green(sid, eksik_veya_bayat, status="done")
+        print(
+            f"[auto_sync_green] {sid}: eksik/bayat {len(eksik_veya_bayat)} kod tespit edildi -> {eksik_veya_bayat}",
+            file=sys.stderr,
+        )
 
-        # Guncel sayilarin hemen yansimasi icin ilgili cache'leri temizle
+        try:
+            _supabase_store_status_sync_green(sid, eksik_veya_bayat, status="done")
+            print(f"[auto_sync_green] {sid}: upsert basarili ({len(eksik_veya_bayat)} kod)", file=sys.stderr)
+        except Exception as exc:
+            print(f"[auto_sync_green] {sid}: upsert HATASI: {exc!r}", file=sys.stderr)
+            raise
+
+        # Guncel sayilarin hemen yansimasi icin ilgili tum cache'leri temizle
         _store_status_rows_cached.clear()
         _store_status_loaded_counts_cached.clear()
-    except Exception:
-        pass
+        _sheet_green_kodlari_cached.clear()
+        try:
+            _sheet_green_haritasi_cached.clear()
+        except Exception:
+            pass
+        # _magaza_yuklu_kodlari_al kendi session_state TTL'ini kullanir; zorla yenile
+        try:
+            st.session_state.pop(f"loaded_codes::{sid}::ts", None)
+            st.session_state.pop(f"loaded_codes::{sid}", None)
+        except Exception:
+            pass
+    except Exception as exc:
+        print(f"[auto_sync_green] {sid}: genel HATA: {exc!r}", file=sys.stderr)
 
 
 @st.cache_data(ttl=90, show_spinner=False)
