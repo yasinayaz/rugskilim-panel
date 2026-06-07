@@ -1156,8 +1156,6 @@ class SheetsKatmani:
         ]
         if renk == "green":
             _supabase_store_status_sync_green(self.store_id, guncellenen_kodlar, status="done")
-        elif renk == "none":
-            _supabase_store_status_delete(self.store_id, guncellenen_kodlar)
 
         print(
             f"[Sheets:{self.store_id}] ✓ Renk güncellendi: "
