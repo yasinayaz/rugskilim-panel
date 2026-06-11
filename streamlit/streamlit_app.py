@@ -1990,7 +1990,7 @@ def _urun_kodu_adaylari(deger: str) -> list[str]:
         return []
 
     adaylar = []
-    for eslesme in _re.finditer(r"([A-Za-z]{0,3})[\s-]*(\d{2,})", metin):
+    for eslesme in _re.finditer(r"([A-Za-zİĞŞÜÖÇıiğşüöç]{0,3})[\s-]*(\d{2,})", metin):
         harf = (eslesme.group(1) or "").strip().lower()
         rakam = (eslesme.group(2) or "").strip()
         if not rakam or set(rakam) == {"0"}:
@@ -2007,7 +2007,7 @@ def _urun_kodu_normalize(deger: str):
         return None
 
     # Ürün kodu sadece baştan alınır; sonrasındaki llc/rst/+/! gibi ekler yok sayılır.
-    eslesme = _re.match(r"^([A-Za-z]{0,3})[\s-]*(\d+)\b", metin)
+    eslesme = _re.match(r"^([A-Za-zİĞŞÜÖÇıiğşüöç]{0,3})[\s-]*(\d+)\b", metin)
     if not eslesme:
         return None
 
@@ -2039,13 +2039,16 @@ def _klasor_urun_kodu_al(klasor_adi: str):
 def _guvenli_urun_kodu_bul(klasor_adi: str, dosya_adlari: list[str] | None = None) -> str:
     aday_metinler = []
     if dosya_adlari:
+        # Bilgi dosyaları en önce: "--" içeren ve (m2 veya ft) içeren dosyalar
         aday_metinler.extend(
             str(ad or "").strip()
             for ad in dosya_adlari
-            if "m2" in str(ad or "").lower()
+            if "--" in str(ad or "") and ("m2" in str(ad or "").lower() or "ft" in str(ad or "").lower())
         )
-        aday_metinler.extend(str(ad or "").strip() for ad in dosya_adlari)
+    # Klasör adı kamera dosyalarından önce — kamera adları (1C4Axxxx) yanlış kod verir
     aday_metinler.append(str(klasor_adi or "").strip())
+    if dosya_adlari:
+        aday_metinler.extend(str(ad or "").strip() for ad in dosya_adlari)
 
     for metin in aday_metinler:
         adaylar = _urun_kodu_adaylari(metin)
@@ -4762,7 +4765,8 @@ def _ai_kuyruga_ekle():
                     else:
                         _bilgi_dosya_kodu = None
                         for _fn in dosya_adlari:
-                            if "--" in _fn and "m2" in _fn.lower():
+                            # Bilgi dosyası = ürün-kodu-- ile başlayan (m2 içersin ya da içermesin)
+                            if "--" in _fn and ("m2" in _fn.lower() or "ft" in _fn.lower()):
                                 _bilgi_dosya_kodu = _fn.split("--")[0].strip()
                                 break
                         secili_urun_kodu = _bilgi_dosya_kodu if _bilgi_dosya_kodu else _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)

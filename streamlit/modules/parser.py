@@ -13,7 +13,7 @@ from pathlib import Path
 
 def _kod_cikart(metin: str) -> str:
     """Metinden baştaki ürün kodunu çıkarır. Örn: '4102 +' → '4102', 'd10 rst' → 'd10'"""
-    m = re.match(r'^([A-Za-z]{0,3}\d+)', metin.strip())
+    m = re.match(r'^([A-Za-zİĞŞÜÖÇıiğşüöç]{0,3}\d+)', metin.strip())
     return m.group(1) if m else metin.strip()
 
 
@@ -139,8 +139,8 @@ def _parse_m2(dosya_adi: str) -> float:
     """
     "4102-- 65x119 = 0,77 m2 2,1x3,9 ft.jpg" → 0.77
     """
-    # Pattern: = 0,77 m2  veya  = 0.77 m2
-    pattern = r'=\s*(\d+[.,]\d+)\s*m2'
+    # "= 0,77 m2 ..." veya "= 11,29 9,7x..." (m2 yazısı olmasa da = sonrası alan değeri)
+    pattern = r'=\s*(\d+[.,]\d+)(?:\s*m2)?(?=\s|\.|$)'
     match = re.search(pattern, dosya_adi, re.IGNORECASE)
     if match:
         return float(match.group(1).replace(',', '.'))
