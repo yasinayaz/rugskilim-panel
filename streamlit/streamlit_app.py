@@ -4767,7 +4767,10 @@ def _ai_kuyruga_ekle():
                         for _fn in dosya_adlari:
                             # Bilgi dosyası = ürün-kodu-- ile başlayan (m2 içersin ya da içermesin)
                             if "--" in _fn and ("m2" in _fn.lower() or "ft" in _fn.lower()):
-                                _bilgi_dosya_kodu = _fn.split("--")[0].strip()
+                                _bilgi_prefix = _fn.split("--")[0].strip()
+                                # "00_2259" gibi prefix'lerde gerçek kodu çıkar (00_ gibi sahte prefix'ler atlanır)
+                                _bilgi_adaylar = _urun_kodu_adaylari(_bilgi_prefix)
+                                _bilgi_dosya_kodu = _bilgi_adaylar[0] if _bilgi_adaylar else _bilgi_prefix
                                 break
                         secili_urun_kodu = _bilgi_dosya_kodu if _bilgi_dosya_kodu else _guvenli_urun_kodu_bul(k["ad"], dosya_adlari)
 
