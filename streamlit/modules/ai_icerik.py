@@ -96,36 +96,32 @@ FORMAT RULES (Etsy SEO):
 - Never include: shop name, price, "SALE", "free shipping", or promotional phrases.
 - Use as much of the 140-character limit as possible — do not leave it short.
 
-CRITICAL VARIETY RULE: Do NOT default to the same opening pattern for every rug. Look at this rug's most distinctive feature — its color, pattern, condition, size, or origin — and lead with THAT. Every title must feel written for this specific rug, not filled into a template.
+VARIETY RULE: Every title must feel written for this specific rug, not filled into a template. Vary the structure across listings so Etsy sees unique content on each product page.
 
-Choose ONE of these five openers based on what makes THIS rug stand out. Do NOT always pick the same one:
+SIZE-FIRST is the default and preferred opener. Use one of the four patterns below. Do NOT always pick the same one:
 
-1. Size-first (when size is the main selling point):
+1. Size-first — DEFAULT (use when no other feature is overwhelmingly stronger):
    "[size] ft [Origin] [Style] [Type] rug | [Color adjective] [Color] [Pattern] wool [Room] | [style/feel]"
    Example: "7x10 ft Turkish oushak area rug | aged terracotta medallion wool living room carpet | bohemian decor"
 
-2. Color-first (when color is the most striking visual feature):
-   "[Color adjective] [Color] [Pattern] Turkish rug — [size] ft [Type] | [Material] [Style] [Room] decor"
-   Example: "Faded rust red medallion Turkish rug — 5x8 ft area | distressed wool bohemian living room decor"
+2. Size + room-first (when the rug is a perfect fit for one specific space):
+   "[size] ft [Room] [Type] rug | [Origin] [Color] [Pattern] wool | [Age/Condition] [Style]"
+   Example: "3x12 ft hallway runner rug | Turkish oushak faded blue tribal wool | vintage distressed decor"
 
-3. Style/origin-first (when the weave, origin or style is rare/distinctive):
-   "[Weave/style] Turkish [Type] [size] ft | [Color] [Pattern] wool — [Room] [Style] rug"
-   Example: "Hand-knotted oushak runner 3x10 ft | muted sage green geometric wool — hallway bohemian rug"
+3. Size + color-first (when color is the most striking visual feature):
+   "[size] ft [Color adjective] [Color] [Pattern] Turkish rug | [Type] [Material] [Style] [Room] decor"
+   Example: "5x8 ft faded rust red medallion Turkish rug | area distressed wool bohemian living room decor"
 
-4. Room/use-first (when the rug perfectly fits a specific space):
-   "[Room] [Type] rug [size] ft | Turkish oushak [Color] [Pattern] wool | [Age/Condition] [Style]"
-   Example: "Hallway runner rug 3x12 ft | Turkish oushak faded blue tribal wool | vintage distressed decor"
-
-5. Condition/character-first (when patina, age, or distressing is a feature):
-   "[Condition descriptor] [Color] Turkish [Type] rug | [size] ft [Pattern] wool | [Style] [Room] decor"
-   Example: "Distressed ivory Turkish area rug | 6x9 ft floral wool | rustic bohemian living room carpet"
+4. Size + weave/style-first (when the weave or style is distinctive):
+   "[size] ft [Weave/style] Turkish [Type] | [Color] [Pattern] wool — [Room] [Style] rug"
+   Example: "3x10 ft hand-knotted oushak runner | muted sage green geometric wool — hallway bohemian rug"
 
 HARD RULES:
 - The rounded size (e.g. "6x9", "3x10", "13x4") MUST always appear in the FIRST SEGMENT — before the first "|" separator — AND within the first 40 characters. No exceptions.
   ✅ "8x5 ft distressed beige Turkish area rug | faded floral wool..."
   ❌ "Distressed beige Turkish area rug | 8x5 ft faded floral wool..."  ← size is after the first "|", WRONG
 - "Turkish" or "Oushak" MUST appear within the first 50 characters.
-- Do NOT open with "Vintage" — let the size lead, then the origin keyword.
+- ALWAYS open with the size (e.g. "3x10 ft", "7x10 ft") — never start with a color word, "Vintage", "Distressed", or any adjective before the size.
 - Rug type keyword ("runner", "area rug", "accent rug") in the first 40 characters when it is a high-search term for this rug (e.g. "runner" for a narrow long rug is mandatory).
 - Include somewhere in the title: color(s), pattern, origin (Turkish/Oushak/Anatolian), material (wool), room fit.
 - Never go below {title_target_min} characters; never exceed {title_max_length}.
@@ -190,15 +186,14 @@ Include: primary keyword (e.g. "vintage Turkish runner rug"), ROUNDED size, and 
 Do NOT use raw decimal ft sizes like 3.6x9.2 in the opening sentence. Use rounded sizes like 4x9 ft in prose.
 The first 160 characters of the description (opening sentence) should answer: what is it, what material, what size.
 Example: "This 3x10 ft vintage Turkish runner rug stops you — its deep rust medallions fading into worn ivory give it the kind of patina that takes decades, not months." """,
-    "story_rules": """Write 3–4 short paragraphs. Each paragraph max 2-3 sentences. Do NOT use bullet points here — flowing prose only.
-- Para 1: Deepen the rug's visual identity from the photo — its actual colors, pattern density, fading or wear. Make the reader picture THIS exact rug.
-- Para 2: Size/fit — what spaces it suits, how it anchors a room. Use the rounded ft size (e.g. "4x9 ft", "3x10 runner"). Do NOT use raw decimal sizes like 3.6x9.2 ft.
-- Para 3: Material quality — handwoven wool, tactile warmth, durability. What makes it honest and lasting.
-- Para 4 (optional): Style versatility + room suggestions + decoration style fit (Bohemian, farmhouse, Scandinavian, etc.) Tone should match the store's voice.
-Close the story section with a call-to-action feel: "Questions? Message us before ordering." (adapt to the store's tone).
-Use \\n between paragraphs. Keep it conversational, human, and warm.
-SEO keywords to weave in naturally: the rounded size, dominant color + rug type, "vintage rug", "handmade", "wool", "Turkish", "antique area rug".
-These same keywords appear in the tags — using them in the description too boosts Etsy SEO and Google indexing.""",
+    "story_rules": """Write exactly 1–2 sentences of flowing prose. No bullet points, no paragraphs, no headers.
+This replaces the old multi-paragraph story. Keep it short, specific, and SEO-driven.
+- The sentence(s) must describe something visually unique about THIS rug (color, pattern detail, wear, texture) that cannot apply to any other rug.
+- Weave in naturally: dominant color + rug type, "vintage", "wool", "Turkish" — these boost Etsy SEO and Google indexing.
+- Do NOT use: "Step into", "Embrace", "one-of-a-kind", "artistry", "bohemian spirit", or any generic filler phrase.
+- Do NOT use raw decimal ft sizes — only the rounded size (e.g. "3x10 ft", not "3.2x9.9 ft").
+- End with: "Questions? Message us before ordering." — always on a new line.
+Use \\n between the sentence(s) and the call-to-action. Output: 1–3 lines total.""",
 }
 
 _DEFAULT_STATIC_TEXTS = {
