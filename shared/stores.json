@@ -107,6 +107,15 @@
       "price_per_m2": 300,
       "template": "LoomAntikRugs_v1",
       "active": true
+    },
+    {
+      "store_id": "DigerMagazalar",
+      "store_name": "Diğer Mağazalar",
+      "sheet_tab": "DigerMagazalar",
+      "google_sheet_id": null,
+      "price_per_m2": 300,
+      "template": null,
+      "active": false
     }
   ]
 }

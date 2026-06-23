@@ -6265,6 +6265,41 @@ if st.session_state.active_main_tab == "urunler":
 
                     detay_satirlari = sorted(detay_satirlari, key=lambda item: (item["Durum"], item["Ürün Kodu"]))
                     st.markdown(f"###### {magaza_ad_haritasi.get(secili_store, secili_store)}")
+
+                    if secili_store == "DigerMagazalar":
+                        st.caption("Bu sanal mağaza otomatik yükleme yapmaz. Dışarıda (Etsy harici) satışta olan ürünleri burada manuel işaretleyin.")
+                        from shared.product_catalog import StoreCatalog as _StoreCatalogDM
+                        _dm1, _dm2 = st.columns([3, 1])
+                        with _dm1.form("diger_magazalar_ekle_form", clear_on_submit=True):
+                            _dm_kod = st.text_input("Ürün kodu ekle", placeholder="Örn: D 149")
+                            if st.form_submit_button("Yüklü olarak işaretle"):
+                                _dm_kod_norm = _urun_kodu_normalize(_dm_kod) or _urun_kodu_al(_dm_kod)
+                                if _dm_kod_norm:
+                                    _StoreCatalogDM().upsert([{
+                                        "product_code": _dm_kod_norm,
+                                        "store_id": "DigerMagazalar",
+                                        "status": "done",
+                                        "renk": "green",
+                                        "islem_tarihi": _time.strftime("%Y-%m-%d %H:%M"),
+                                    }])
+                                    _supabase_store_haritasi_cached.clear()
+                                    st.success(f"{_dm_kod_norm} Diğer Mağazalar'da yüklü olarak işaretlendi.")
+                                    st.rerun()
+                                else:
+                                    st.error("Geçerli bir ürün kodu girin.")
+                        if detay_satirlari:
+                            _dm_kaldir_secim = _dm2.selectbox(
+                                "Kaldır",
+                                options=[row["Ürün Kodu"] for row in detay_satirlari],
+                                key="diger_magazalar_kaldir_sec",
+                                label_visibility="visible",
+                            )
+                            if _dm2.button("Kaldır", key="diger_magazalar_kaldir_btn"):
+                                _StoreCatalogDM().delete("DigerMagazalar", [_dm_kaldir_secim])
+                                _supabase_store_haritasi_cached.clear()
+                                st.success(f"{_dm_kaldir_secim} Diğer Mağazalar'dan kaldırıldı.")
+                                st.rerun()
+
                     if detay_satirlari:
                         df_detay = pd.DataFrame(detay_satirlari)
                         st.dataframe(df_detay, width="stretch", hide_index=True)
