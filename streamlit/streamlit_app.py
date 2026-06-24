@@ -389,6 +389,10 @@ section.main { background-color: var(--bg-0) !important; }
   opacity: 1 !important;
   transition: all 0.12s ease !important;
 }
+.stButton > button *,
+[data-testid="stButton"] > button * {
+  color: var(--text-1) !important;
+}
 .stButton > button:hover,
 [data-testid="stButton"] > button:hover {
   background: var(--bg-3) !important;
@@ -415,7 +419,7 @@ section.main { background-color: var(--bg-0) !important; }
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 76px;
+  min-height: 46px;
 }
 .urun-sec-checkbox [data-testid="stCheckbox"] {
   display: flex;
@@ -430,7 +434,7 @@ section.main { background-color: var(--bg-0) !important; }
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 76px;
+  min-height: 46px;
   font-size: 1rem;
   text-align: center;
 }
