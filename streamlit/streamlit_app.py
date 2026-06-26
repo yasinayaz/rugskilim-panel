@@ -4984,6 +4984,7 @@ if st.session_state.active_main_tab == "urun_sec":
                         st.warning("E-posta ve şifre girin.")
             st.markdown("</div>", unsafe_allow_html=True)
     else:
+        @st.fragment
         def _tab1_gezgin():
             token = st.session_state.pcloud_token
 
