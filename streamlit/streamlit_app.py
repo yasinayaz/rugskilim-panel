@@ -415,21 +415,6 @@ section.main { background-color: var(--bg-0) !important; }
   accent-color: var(--success);
 }
 
-.urun-sec-checkbox {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 46px;
-}
-.urun-sec-checkbox [data-testid="stCheckbox"] {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin: 0;
-}
-.urun-sec-checkbox [data-testid="stCheckbox"] label {
-  margin: 0;
-}
 .urun-sec-status {
   display: flex;
   justify-content: center;
@@ -5299,7 +5284,6 @@ if st.session_state.active_main_tab == "urun_sec":
                                             st.session_state[_row["chk_key"]] = False
                                         elif _row["chk_key"] not in st.session_state:
                                             st.session_state[_row["chk_key"]] = _row["zaten_secili"]
-                                        st.markdown("<div class='urun-sec-checkbox'>", unsafe_allow_html=True)
                                         st.checkbox(
                                             "seç",
                                             key=_row["chk_key"],
@@ -5308,7 +5292,6 @@ if st.session_state.active_main_tab == "urun_sec":
                                             on_change=_secim_toggle,
                                             args=(_row["item"], _row["chk_key"]),
                                         )
-                                        st.markdown("</div>", unsafe_allow_html=True)
 
                                 with _c_name:
                                     st.button(
