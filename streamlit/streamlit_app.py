@@ -5288,7 +5288,7 @@ if st.session_state.active_main_tab == "urun_sec":
                                             "seç",
                                             key=_row["chk_key"],
                                             disabled=_row["satilmis_global"],
-                                            label_visibility="hidden",
+                                            label_visibility="collapsed",
                                             on_change=_secim_toggle,
                                             args=(_row["item"], _row["chk_key"]),
                                         )
