@@ -4921,7 +4921,9 @@ if st.session_state.active_main_tab == "urun_sec":
         )
         if not _rozet_hazir:
             _urun_sec_rozet_yenilemesini_baslat(_aktif_magaza, force=False)
-        elif _cache_var:
+        else:
+            # _cache_var sadece dosya yeni uygulandiginda bir kerelik True olur;
+            # periyodik sheet-degisim kontrolu buna bagli kalirsa rozetler donar kalir.
             _urun_sec_sheet_imza_kontrolunu_baslat(_aktif_magaza, force=False)
 
     if not st.session_state.pcloud_token:
