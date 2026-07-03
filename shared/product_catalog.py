@@ -7,7 +7,33 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from datetime import datetime
+
+import requests
+from requests.adapters import HTTPAdapter
+
+_SESSION: requests.Session | None = None
+_SESSION_LOCK = threading.Lock()
+
+
+def _session() -> requests.Session:
+    """Supabase REST istekleri icin paylasilan, keep-alive'li bir Session dondurur.
+
+    Her cagrida yeni _session().get(...) acmak TCP+TLS handshake'i tekrarlatiyordu;
+    ayni process icindeki tum threadler (Streamlit oturumlari) bu tek Session'i
+    paylasarak baglanti havuzunu yeniden kullanir.
+    """
+    global _SESSION
+    if _SESSION is None:
+        with _SESSION_LOCK:
+            if _SESSION is None:
+                session = requests.Session()
+                adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+                _SESSION = session
+    return _SESSION
 
 SUPABASE_URL_ENV = "SUPABASE_URL"
 SUPABASE_SERVICE_KEY_ENV = "SUPABASE_SERVICE_ROLE_KEY"
@@ -152,12 +178,11 @@ def _schema_missing_column(response_text: str) -> str | None:
 
 def list_sold_product_codes() -> set[str]:
     """Supabase'den sadece status=sold olan urunlerin product_code'larini ceker."""
-    import requests
     codes: set[str] = set()
     page_size = 1000
     offset = 0
     while True:
-        response = requests.get(
+        response = _session().get(
             _rest_url(),
             headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
             params={"select": "product_code", "status": "eq.sold", "order": "product_code.asc"},
@@ -178,12 +203,11 @@ def list_sold_product_codes() -> set[str]:
 
 class ProductCatalog:
     def list_products(self, include_store_presence: bool = False) -> list[dict]:
-        import requests
         products = []
         page_size = 1000
         offset = 0
         while True:
-            response = requests.get(
+            response = _session().get(
                 _rest_url(),
                 headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"},
                 params={"select": "*", "order": "product_code.asc"},
@@ -204,7 +228,7 @@ class ProductCatalog:
                 store_rows = []
                 s_offset = 0
                 while True:
-                    page = requests.get(
+                    page = _session().get(
                         f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}",
                         headers={**_headers(), "Accept": "application/json", "Range-Unit": "items", "Range": f"{s_offset}-{s_offset + 999}"},
                         params={"select": "product_code,store_id,status,renk"},
@@ -229,8 +253,6 @@ class ProductCatalog:
         return products
 
     def list_products_by_codes(self, product_codes: list[str]) -> list[dict]:
-        import requests
-
         codes = sorted({_clean(code) for code in (product_codes or []) if _clean(code)})
         if not codes:
             return []
@@ -239,7 +261,7 @@ class ProductCatalog:
         chunk_size = 200
         for start in range(0, len(codes), chunk_size):
             chunk = codes[start:start + chunk_size]
-            response = requests.get(
+            response = _session().get(
                 _rest_url(),
                 headers={**_headers(), "Accept": "application/json"},
                 params={
@@ -267,7 +289,6 @@ class ProductCatalog:
         if not payload:
             return []
 
-        import requests
         headers = {
             **_headers(),
             "Prefer": "resolution=merge-duplicates,return=representation",
@@ -278,7 +299,7 @@ class ProductCatalog:
                 {k: v for k, v in row.items() if k not in dropped_fields}
                 for row in payload
             ]
-            response = requests.post(
+            response = _session().post(
                 _rest_url(),
                 headers=headers,
                 params={"on_conflict": "product_code"},
@@ -349,8 +370,7 @@ class ProductCatalog:
         if not code:
             return None
 
-        import requests
-        response = requests.patch(
+        response = _session().patch(
             _rest_url(),
             headers={**_headers(), "Prefer": "return=representation"},
             params={"product_code": f"eq.{code}"},
@@ -397,8 +417,7 @@ class ProductCatalog:
         if note is not None:
             payload["note"] = note
 
-        import requests
-        response = requests.patch(
+        response = _session().patch(
             _rest_url(),
             headers={**_headers(), "Prefer": "return=representation"},
             params={"product_code": f"eq.{code}"},
@@ -431,13 +450,12 @@ class ProductCatalog:
         if not codes:
             return 0
 
-        import requests
         deleted = 0
         chunk_size = 200
         for start in range(0, len(codes), chunk_size):
             chunk = codes[start:start + chunk_size]
             code_filter = ",".join(chunk)
-            response = requests.delete(
+            response = _session().delete(
                 _rest_url(),
                 headers={**_headers(), "Prefer": "return=representation"},
                 params={"product_code": f"in.({code_filter})"},
@@ -460,7 +478,6 @@ class StoreCatalog:
         return f"{_base_url()}/rest/v1/{SUPABASE_STORE_TABLE}"
 
     def list_by_store(self, store_id: str | None = None) -> list[dict]:
-        import requests
         rows = []
         page_size = 1000
         offset = 0
@@ -468,7 +485,7 @@ class StoreCatalog:
             params: dict = {"select": "*", "order": "product_code.asc"}
             if store_id:
                 params["store_id"] = f"eq.{store_id}"
-            r = requests.get(
+            r = _session().get(
                 self._url(),
                 headers={
                     **_headers(),
@@ -491,8 +508,7 @@ class StoreCatalog:
     def upsert(self, rows: list[dict]) -> None:
         if not rows:
             return
-        import requests
-        r = requests.post(
+        r = _session().post(
             self._url(),
             headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
             params={"on_conflict": "product_code,store_id"},
@@ -507,11 +523,9 @@ class StoreCatalog:
         if not sid:
             return 0
 
-        import requests
-
         deleted = 0
         if not product_codes:
-            response = requests.delete(
+            response = _session().delete(
                 self._url(),
                 headers={**_headers(), "Prefer": "return=representation"},
                 params={"store_id": f"eq.{sid}"},
@@ -529,7 +543,7 @@ class StoreCatalog:
         for start in range(0, len(codes), chunk_size):
             chunk = codes[start:start + chunk_size]
             code_filter = ",".join(chunk)
-            response = requests.delete(
+            response = _session().delete(
                 self._url(),
                 headers={**_headers(), "Prefer": "return=representation"},
                 # needs_delete_deleted kayıtlar sheet temizlemesinden korunur — panelde görünmeleri gerekir
