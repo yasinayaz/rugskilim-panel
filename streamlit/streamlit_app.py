@@ -704,6 +704,20 @@ if not st.session_state.pcloud_token and not st.session_state.get("_cikis_yapild
         st.session_state.pcloud_token = _tok
         st.session_state.setdefault("pcloud_host", "https://api.pcloud.com")
 
+def _pcloud_token_dogrula(token):
+    """Token'ı her iki pCloud host'unda dener; (çalışan_host, None) veya (None, hata) döner."""
+    son_hata = "Bağlantı hatası"
+    for h in ["https://api.pcloud.com", "https://eapi.pcloud.com"]:
+        try:
+            r = httpx.get(f"{h}/userinfo", params={"auth": token}, timeout=15)
+            d = r.json()
+            if d.get("result") == 0:
+                return h, None
+            son_hata = d.get("error", "Hata")
+        except Exception as e:
+            son_hata = str(e)
+    return None, son_hata
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _token_kaydet(token: str):
     try:
@@ -783,15 +797,20 @@ else:
         _tok_input = st.text_input("Auth Token", placeholder="Token yapıştırın")
         if st.button("🔗 Bağlan", type="primary", width="stretch"):
             if _tok_input.strip():
-                st.session_state.pcloud_token = _tok_input.strip()
-                st.session_state["pcloud_host"] = "https://api.pcloud.com"
-                _token_kaydet(_tok_input.strip())
-                try:
-                    from shared.sheets import config_yaz
-                    config_yaz("PCLOUD_TOKEN", _tok_input.strip())
-                except Exception:
-                    pass
-                st.rerun()
+                with st.spinner("Token doğrulanıyor..."):
+                    _dogru_host, _tok_hata = _pcloud_token_dogrula(_tok_input.strip())
+                if not _dogru_host:
+                    st.error(f"❌ Token doğrulanamadı: {_tok_hata}")
+                else:
+                    st.session_state.pcloud_token = _tok_input.strip()
+                    st.session_state["pcloud_host"] = _dogru_host
+                    _token_kaydet(_tok_input.strip())
+                    try:
+                        from shared.sheets import config_yaz
+                        config_yaz("PCLOUD_TOKEN", _tok_input.strip())
+                    except Exception:
+                        pass
+                    st.rerun()
             else:
                 st.warning("Token girin.")
 
@@ -4317,7 +4336,7 @@ def _klasor_icerigi_getir(token, klasor_id, *, _host_hint="https://api.pcloud.co
             return h, klasorler, dosyalar
         except Exception:
             continue
-    return host, [], []
+    return _host_hint, [], []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -4358,7 +4377,7 @@ def _klasor_meta_getir(token, host, klasor_id):
     }
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _magazalari_otomatik_bul(token, host):
+def _magazalari_otomatik_bul_cached(token, host):
     def _alt(h, folderid):
         for _h in [h, "https://eapi.pcloud.com", "https://api.pcloud.com"]:
             try:
@@ -4391,6 +4410,17 @@ def _magazalari_otomatik_bul(token, host):
     if not vintage: return None, []
     magazalar = _alt(host, vintage["id"])
     return vintage["id"], magazalar
+
+def _magazalari_otomatik_bul(token, host):
+    vintage_id, magazalar = _magazalari_otomatik_bul_cached(token, host)
+    if not magazalar:
+        # Boş/başarısız sonuç cache'te kalırsa geçici bir ağ hatası 30 dakika
+        # boyunca "Klasörler otomatik bulunamadı" olarak yapışıp kalıyor.
+        try:
+            _magazalari_otomatik_bul_cached.clear(token, host)
+        except Exception:
+            _magazalari_otomatik_bul_cached.clear()
+    return vintage_id, magazalar
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _magaza_tum_kodlar(token, host, magaza_id):
@@ -4938,14 +4968,19 @@ if st.session_state.active_main_tab == "urun_sec":
                 st.caption("Chrome: F12 → Console → `document.cookie.match(/pcauth=([^;]+)/)[1]`")
                 if st.button("🔗 Token ile Bağlan", type="primary", width="stretch"):
                     if token_input:
-                        st.session_state.pcloud_token = token_input
-                        st.session_state["pcloud_host"] = "https://api.pcloud.com"
-                        _token_kaydet(token_input)
-                        try:
-                            from shared.sheets import config_yaz
-                            config_yaz("PCLOUD_TOKEN", token_input)
-                        except Exception: pass
-                        st.rerun()
+                        with st.spinner("Token doğrulanıyor..."):
+                            _dogru_host, _tok_hata = _pcloud_token_dogrula(token_input.strip())
+                        if not _dogru_host:
+                            st.error(f"❌ Token doğrulanamadı: {_tok_hata}")
+                        else:
+                            st.session_state.pcloud_token = token_input.strip()
+                            st.session_state["pcloud_host"] = _dogru_host
+                            _token_kaydet(token_input.strip())
+                            try:
+                                from shared.sheets import config_yaz
+                                config_yaz("PCLOUD_TOKEN", token_input.strip())
+                            except Exception: pass
+                            st.rerun()
                     else:
                         st.warning("Token girin.")
             else:
@@ -5106,7 +5141,12 @@ if st.session_state.active_main_tab == "urun_sec":
                 with st.spinner("Mağazalar yükleniyor..."):
                     _, magazalar = _magazalari_otomatik_bul(token, _host_m)
                 if not magazalar:
-                    st.warning("Klasörler otomatik bulunamadı.")
+                    st.warning(
+                        "Klasörler otomatik bulunamadı. pCloud'a geçici olarak ulaşılamamış "
+                        "veya token yetkisiz olabilir. Tekrar deneyin; sorun sürerse çıkış yapıp "
+                        "yeni token ile bağlanın."
+                    )
+                    st.button("🔄 Tekrar dene", key="magaza_bul_tekrar")
                 else:
                     cols_m = st.columns(4)
                     for i, m in enumerate(magazalar):
