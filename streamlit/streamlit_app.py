@@ -1049,6 +1049,160 @@ def _float_or_none(value):
         return None
 
 
+def _kargo_para_str(value) -> str:
+    """Kargo tutarini Sheet/Supabase icin sade string'e cevir. 0/boş -> ''."""
+    num = _float_or_none(value)
+    if not num:
+        return ""
+    return f"{num:.2f}".rstrip("0").rstrip(".")
+
+
+_TR_AYLAR = [
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+
+
+def _satilan_ay_etiketi(sold_at) -> str:
+    """Satış tarihinden '<yıl> <ay>' etiketi (Sheet'teki aylık ayraçla aynı biçim)."""
+    raw = str(sold_at or "").strip()
+    if raw:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                return f"{dt.year} {_TR_AYLAR[dt.month - 1]}"
+            except Exception:
+                pass
+    return "Tarih Yok"
+
+
+def _satilan_stoga_geri_al(urun: dict):
+    """Satılan ürünü tekrar stoğa (active) al; satış/müşteri/kargo alanlarını temizle.
+
+    Supabase + panel cache + ürün Sheet'i (Satılanlar tabından düşer) paralel güncellenir."""
+    kod = str((urun or {}).get("product_code") or "").strip()
+    if not kod:
+        return
+    guncel = dict(urun)
+    guncel["status"] = "active"
+    for _alan in (
+        "sold_at", "sold_site", "customer_name", "customer_phone",
+        "customer_address", "customer_contact_country",
+        "shipping_carrier", "shipping_cost_try", "shipping_cost_usd",
+    ):
+        guncel[_alan] = ""
+    guncel["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
+    _urunleri_cachede_uste_tut(guncel)
+    _bekleyen_urun_override_kaydet(guncel)
+    _urun_guncelle_arkaplanda(guncel)
+
+
+def _satilan_edit_dialog(urun: dict):
+    """Satılan ürün düzenleme + kalıcı silme (aktif ürün edit senaryosunun satış karşılığı)."""
+    import time as _t
+
+    kod0 = str((urun or {}).get("product_code") or "").strip()
+    st.markdown(f"##### ✏️ Satılan ürün düzenle — **{kod0}**")
+
+    try:
+        from shared.store_manager import tum_magazalar as _tm
+        _site_ops = [
+            str(m.get("store_name") or m.get("store_id") or "").strip()
+            for m in _tm()
+            if str(m.get("store_name") or m.get("store_id") or "").strip()
+        ]
+    except Exception:
+        _site_ops = []
+    _mevcut_siteler = [p.strip() for p in str(urun.get("sold_site", "")).split(",") if p.strip()]
+    for _s in _mevcut_siteler:
+        if _s not in _site_ops:
+            _site_ops.append(_s)
+
+    _c1, _c2, _c3 = st.columns(3)
+    _e_site = _c1.multiselect("Satılan site", options=_site_ops, default=_mevcut_siteler)
+    _e_musteri = _c2.text_input("Müşteri adı", value=urun.get("customer_name", ""))
+    _e_tarih = _c3.text_input("Satılan tarih", value=urun.get("sold_at", ""))
+    _c4, _c5 = st.columns(2)
+    _e_tel = _c4.text_input("Telefon", value=urun.get("customer_phone", ""))
+    _e_ulke = _c5.text_input("İletişim & ülke", value=urun.get("customer_contact_country", ""))
+    _k1, _k2, _k3 = st.columns(3)
+    _carriers = ["FEDEX", "UPS"]
+    _cur_carrier = str(urun.get("shipping_carrier", "")).strip().upper()
+    _carrier_index = _carriers.index(_cur_carrier) if _cur_carrier in _carriers else None
+    _e_kargo = _k1.selectbox(
+        "Kargo firması", options=_carriers, index=_carrier_index, placeholder="Seçin (opsiyonel)..."
+    )
+    _e_ktl = _k2.number_input(
+        "Kargo (TL)", min_value=0.0, step=1.0, format="%.2f",
+        value=_float_or_none(urun.get("shipping_cost_try")) or 0.0,
+    )
+    _e_kusd = _k3.number_input(
+        "Kargo (USD)", min_value=0.0, step=1.0, format="%.2f",
+        value=_float_or_none(urun.get("shipping_cost_usd")) or 0.0,
+    )
+    _e_adres = st.text_area("Adres", value=urun.get("customer_address", ""), height=90)
+    _e_not = st.text_input("Not", value=urun.get("note", ""))
+
+    _b1, _b2, _b3 = st.columns([2, 1.4, 1])
+    if _b1.button("Kaydet", type="primary", use_container_width=True, key="satilan_edit_kaydet"):
+        if not _e_site:
+            st.error("Satılan site zorunlu.")
+            return
+        guncel = dict(urun)
+        guncel["status"] = "sold"
+        guncel["sold_site"] = ", ".join(_e_site)
+        guncel["customer_name"] = _e_musteri.strip()
+        guncel["sold_at"] = _e_tarih.strip() or urun.get("sold_at", "")
+        guncel["customer_phone"] = _e_tel.strip()
+        guncel["customer_contact_country"] = _e_ulke.strip()
+        guncel["customer_address"] = _e_adres.strip()
+        guncel["shipping_carrier"] = (_e_kargo or "").strip()
+        guncel["shipping_cost_try"] = _kargo_para_str(_e_ktl)
+        guncel["shipping_cost_usd"] = _kargo_para_str(_e_kusd)
+        guncel["note"] = _e_not.strip()
+        guncel["updated_at"] = _t.strftime("%Y-%m-%d %H:%M")
+        _urunleri_cachede_uste_tut(guncel)
+        _bekleyen_urun_override_kaydet(guncel)
+        _urun_guncelle_arkaplanda(guncel)
+        st.session_state["_edit_satilan"] = None
+        st.session_state.pop("_satilan_sil_onay", None)
+        st.success("Kaydedildi. Kalıcı kayıt arka planda tamamlanıyor.")
+        st.rerun()
+    if _b2.button("İptal", use_container_width=True, key="satilan_edit_iptal"):
+        st.session_state["_edit_satilan"] = None
+        st.session_state.pop("_satilan_sil_onay", None)
+        st.rerun()
+
+    st.divider()
+    if not st.session_state.get("_satilan_sil_onay"):
+        if _b3.button("🗑️ Sil", use_container_width=True, key="satilan_edit_sil"):
+            st.session_state["_satilan_sil_onay"] = True
+            st.rerun()
+    else:
+        st.warning(f"**{kod0}** kalıcı silinecek (satılanlardan da çıkar). Emin misiniz?")
+        _d1, _d2 = st.columns(2)
+        if _d1.button("Evet, sil", type="primary", use_container_width=True, key="satilan_sil_evet"):
+            try:
+                _silinen_urune_ekle(kod0)
+                mevcut = [
+                    item
+                    for item in (st.session_state.get("_urun_katalog_cache") or [])
+                    if str(item.get("product_code") or "").strip() != kod0
+                ]
+                st.session_state["_urun_katalog_cache"] = [dict(i) for i in mevcut]
+                st.session_state["_urun_katalog_cache_ts"] = _time.time()
+                st.session_state["_urun_katalog_cache_stok_mtime"] = 0.0
+                _urun_sil_arkaplanda(kod0, mevcut_snapshot=mevcut)
+                st.session_state.pop("_satilan_sil_onay", None)
+                st.session_state["_edit_satilan"] = None
+                st.rerun()
+            except Exception as exc:
+                st.error(f"{kod0} silinemedi: {exc}")
+        if _d2.button("Vazgeç", use_container_width=True, key="satilan_sil_vazgec"):
+            st.session_state.pop("_satilan_sil_onay", None)
+            st.rerun()
+
+
 def _fmt_size(a, b, digits: int = 1) -> str:
     left = _decimal_str(a, digits=digits)
     right = _decimal_str(b, digits=digits)
@@ -6476,6 +6630,15 @@ if st.session_state.active_main_tab == "urunler":
                         _s4, _s5 = st.columns(2)
                         musteri_telefon = _s4.text_input("Telefon")
                         iletisim_ulke = _s5.text_input("İletişim & ülke")
+                        _sk1, _sk2, _sk3 = st.columns(3)
+                        kargo_firma = _sk1.selectbox(
+                            "Kargo firması",
+                            options=["FEDEX", "UPS"],
+                            index=None,
+                            placeholder="Seçin (opsiyonel)...",
+                        )
+                        kargo_tl = _sk2.number_input("Kargo (TL)", min_value=0.0, step=1.0, format="%.2f")
+                        kargo_usd = _sk3.number_input("Kargo (USD)", min_value=0.0, step=1.0, format="%.2f")
                         musteri_adres = st.text_area("Adres", height=90)
                         satilan_not = st.text_input("Not")
                         submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
@@ -6499,6 +6662,9 @@ if st.session_state.active_main_tab == "urunler":
                                 copy["customer_phone"] = musteri_telefon.strip()
                                 copy["customer_address"] = musteri_adres.strip()
                                 copy["customer_contact_country"] = iletisim_ulke.strip()
+                                copy["shipping_carrier"] = (kargo_firma or "").strip()
+                                copy["shipping_cost_try"] = _kargo_para_str(kargo_tl)
+                                copy["shipping_cost_usd"] = _kargo_para_str(kargo_usd)
                                 if satilan_not.strip():
                                     copy["note"] = satilan_not.strip()
                                 copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
@@ -6521,6 +6687,9 @@ if st.session_state.active_main_tab == "urunler":
                                         customer_address=secili_urun.get("customer_address"),
                                         customer_contact_country=secili_urun.get("customer_contact_country"),
                                         note=secili_urun.get("note"),
+                                        shipping_carrier=secili_urun.get("shipping_carrier"),
+                                        shipping_cost_try=secili_urun.get("shipping_cost_try"),
+                                        shipping_cost_usd=secili_urun.get("shipping_cost_usd"),
                                     )
                                 except Exception as _e:
                                     _kayit_hatasi = str(_e)
@@ -6667,6 +6836,9 @@ if st.session_state.active_main_tab == "urunler":
                         "kategori": urun.get("category", ""),
                         "satılan_tarih": urun.get("sold_at", ""),
                         "site": _site_label(urun.get("sold_site", "")),
+                        "kargo": urun.get("shipping_carrier", ""),
+                        "kargo_TL": urun.get("shipping_cost_try", ""),
+                        "kargo_USD": urun.get("shipping_cost_usd", ""),
                         "müşteri": urun.get("customer_name", ""),
                         "telefon": urun.get("customer_phone", ""),
                         "iletişim_ülke": urun.get("customer_contact_country", ""),
@@ -6676,9 +6848,89 @@ if st.session_state.active_main_tab == "urunler":
                     })
 
                 if satilan_satirlar:
-                    st.dataframe(pd.DataFrame(satilan_satirlar), width="stretch", hide_index=True)
+                    # Aylik kargo ozeti (Excel'deki aylik toplamlarin panel karsiligi)
+                    _aylik_ozet = {}
+                    _aylik_sira = []
+                    for urun in satilan_goster:
+                        _ay_key = _satilan_ay_etiketi(urun.get("sold_at", ""))
+                        if _ay_key not in _aylik_ozet:
+                            _aylik_ozet[_ay_key] = {"adet": 0, "tl": 0.0, "usd": 0.0}
+                            _aylik_sira.append(_ay_key)
+                        _aylik_ozet[_ay_key]["adet"] += 1
+                        _aylik_ozet[_ay_key]["tl"] += _float_or_none(urun.get("shipping_cost_try")) or 0.0
+                        _aylik_ozet[_ay_key]["usd"] += _float_or_none(urun.get("shipping_cost_usd")) or 0.0
+                    if _aylik_sira:
+                        _ozet_satirlar = [
+                            {
+                                "Ay": _ay,
+                                "Satış Adedi": _aylik_ozet[_ay]["adet"],
+                                "Kargo Toplam (TL)": round(_aylik_ozet[_ay]["tl"], 2),
+                                "Kargo Toplam (USD)": round(_aylik_ozet[_ay]["usd"], 2),
+                            }
+                            for _ay in _aylik_sira
+                        ]
+                        with st.expander("📊 Aylık satış & kargo özeti", expanded=False):
+                            st.dataframe(pd.DataFrame(_ozet_satirlar), width="stretch", hide_index=True)
+
+                    _sat_secim = st.dataframe(
+                        pd.DataFrame(satilan_satirlar),
+                        width="stretch",
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                        key="satilan_urun_tablosu",
+                    )
+                    _sat_secili_satirlar = (
+                        _sat_secim.selection.rows
+                        if _sat_secim and hasattr(_sat_secim, "selection")
+                        else []
+                    )
+                    if _sat_secili_satirlar:
+                        _sat_kod = satilan_satirlar[_sat_secili_satirlar[0]]["Ürün Kodu"]
+                        _sat_urun = next(
+                            (u for u in satilanlar if u.get("product_code") == _sat_kod),
+                            None,
+                        )
+                        if _sat_urun:
+                            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                            _sab1, _sab2, _sab3 = st.columns([1.4, 1.6, 3.0])
+                            if _sab1.button(
+                                f"✏️ {_sat_kod} Düzenle",
+                                type="primary",
+                                use_container_width=True,
+                                key="satilan_duzenle_btn",
+                            ):
+                                st.session_state["_edit_satilan"] = _sat_urun
+                                st.session_state.pop("_satilan_stok_onay", None)
+                                st.rerun()
+                            if not st.session_state.get("_satilan_stok_onay"):
+                                if _sab2.button(
+                                    "📦 Stoğa Geri Al",
+                                    use_container_width=True,
+                                    key="satilan_stoga_al_btn",
+                                ):
+                                    st.session_state["_satilan_stok_onay"] = _sat_kod
+                                    st.rerun()
+                            elif st.session_state.get("_satilan_stok_onay") == _sat_kod:
+                                _so1, _so2 = _sab2.columns(2)
+                                if _so1.button("Evet", type="primary", use_container_width=True, key="satilan_stok_evet"):
+                                    _satilan_stoga_geri_al(_sat_urun)
+                                    st.session_state.pop("_satilan_stok_onay", None)
+                                    st.success(f"{_sat_kod} tekrar stoğa alındı.")
+                                    st.rerun()
+                                if _so2.button("Vazgeç", use_container_width=True, key="satilan_stok_vazgec"):
+                                    st.session_state.pop("_satilan_stok_onay", None)
+                                    st.rerun()
+                            if st.session_state.get("_satilan_stok_onay") == _sat_kod:
+                                st.warning(
+                                    f"**{_sat_kod}** satılanlardan çıkarılıp tekrar stokta görünecek; "
+                                    "satış/müşteri/kargo bilgileri temizlenir. Excel'de de otomatik güncellenir."
+                                )
                 else:
                     st.info("Satılan ürün bulunamadı.")
+
+                if st.session_state.get("_edit_satilan"):
+                    _satilan_edit_dialog(st.session_state.get("_edit_satilan"))
             except Exception as exc:
                 st.warning(f"Satılan ürün listesi çizilemedi: {exc}")
 

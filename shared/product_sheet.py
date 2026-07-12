@@ -67,6 +67,9 @@ SOLD_TAB_HEADERS = [
     "Kategori",
     "Satilan Site",
     "Satilan Tarih",
+    "Kargo Firmasi",
+    "Kargo TL",
+    "Kargo USD",
 ]
 
 ACTIVE_TAB_HEADER_MAP = {
@@ -88,7 +91,21 @@ SOLD_TAB_HEADER_MAP = {
     "Kategori": "category",
     "Satilan Site": "sold_site",
     "Satilan Tarih": "sold_at",
+    "Kargo Firmasi": "shipping_carrier",
+    "Kargo TL": "shipping_cost_try",
+    "Kargo USD": "shipping_cost_usd",
 }
+
+# Satilanlar sekmesinde urun satirlarinin arasina yazilan ay-ayraci ve aylik
+# toplam satirlari. read_products bunlari (product_code sutunundaki etiketten)
+# tanir ve atlar; boylece Sheet -> Supabase geri-senkronunda urune donusmezler.
+TR_MONTHS = [
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+_TR_MONTHS_SET = set(TR_MONTHS)
+SOLD_TOTAL_LABEL_PREFIX = "AYLIK TOPLAM"
+SOLD_UNDATED_LABEL = "Tarih Yok"
 
 CATEGORY_TABS = {
     "Area": "Area",
@@ -197,7 +214,63 @@ def _sold_tab_row(product: dict) -> list:
         _normalize_category(product.get("category")),
         _clean_str(product.get("sold_site")),
         _clean_str(product.get("sold_at")),
+        _clean_str(product.get("shipping_carrier")),
+        _clean_str(product.get("shipping_cost_try")),
+        _clean_str(product.get("shipping_cost_usd")),
     ]
+
+
+def _sold_month_key(product: dict) -> tuple[int, int] | None:
+    """sold_at'tan (yil, ay) uret; parse edilemezse None."""
+    raw_dt = _clean_str(product.get("sold_at"))
+    if not raw_dt:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(raw_dt, fmt)
+            return (dt.year, dt.month)
+        except Exception:
+            continue
+    return None
+
+
+def _sold_month_label(key: tuple[int, int] | None) -> str:
+    if key is None:
+        return SOLD_UNDATED_LABEL
+    year, month = key
+    ay = TR_MONTHS[month - 1] if 1 <= month <= 12 else str(month)
+    return f"{year} {ay}"
+
+
+def _is_sold_section_label(code: str) -> bool:
+    """Ay-ayraci veya aylik toplam satiri mi? (urun satiri degil)."""
+    text = _clean_str(code)
+    if not text:
+        return False
+    if text.upper().startswith(SOLD_TOTAL_LABEL_PREFIX):
+        return True
+    if text == SOLD_UNDATED_LABEL:
+        return True
+    parts = text.split()
+    if len(parts) == 2 and parts[0].isdigit() and len(parts[0]) == 4 and parts[1] in _TR_MONTHS_SET:
+        return True
+    return False
+
+
+def _sold_money_sum(value, acc: float) -> float:
+    try:
+        if value in ("", None):
+            return acc
+        return acc + float(str(value).replace(",", "."))
+    except Exception:
+        return acc
+
+
+def _fmt_money(value: float) -> str:
+    if value == 0:
+        return ""
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text
 
 
 def _active_sort_key(product: dict):
@@ -285,6 +358,9 @@ class ProductSheet:
                         for sheet_key, internal_key in SOLD_TAB_HEADER_MAP.items()
                     }
                     product["status"] = "sold"
+                    # Ay-ayraci / aylik toplam satirlarini atla (urun degil).
+                    if _is_sold_section_label(product.get("product_code")):
+                        continue
                 else:
                     product = {
                         internal_key: _clean_str(row.get(sheet_key))
@@ -306,6 +382,52 @@ class ProductSheet:
                 products.append(product)
         return products
 
+    def _build_sold_body(self, rows: list[dict]) -> list:
+        """Satilanlar sekmesi govdesi: ay-ayraci + urunler + aylik kargo toplami.
+
+        Aylar kronolojik (eskiden yeniye) yazilir; her ayin ustunde '<yil> <ay>'
+        ayraci, altinda o aya ait AYLIK TOPLAM (adet + TL + USD kargo) satiri olur.
+        """
+        body: list = [SOLD_TAB_HEADERS]
+        ncol = len(SOLD_TAB_HEADERS)
+
+        groups: dict = {}
+        order: list = []
+        for product in sorted(rows, key=_sold_sort_key):
+            copy = dict(product)
+            copy["updated_at"] = copy.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M")
+            if not copy.get("sold_at"):
+                copy["sold_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            key = _sold_month_key(copy)
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(copy)
+
+        # Aylar kronolojik (eskiden yeniye); tarihi cozulemeyen grup en sona.
+        order.sort(key=lambda k: k if k is not None else (9999, 13))
+
+        for key in order:
+            aylik = groups[key]
+            sep = [""] * ncol
+            sep[0] = _sold_month_label(key)
+            body.append(sep)
+
+            tl_sum = 0.0
+            usd_sum = 0.0
+            for product in aylik:
+                tl_sum = _sold_money_sum(product.get("shipping_cost_try"), tl_sum)
+                usd_sum = _sold_money_sum(product.get("shipping_cost_usd"), usd_sum)
+                body.append(_sold_tab_row(product))
+
+            total = [""] * ncol
+            total[0] = f"{SOLD_TOTAL_LABEL_PREFIX} ({len(aylik)} ürün)"
+            total[8] = _fmt_money(tl_sum)
+            total[9] = _fmt_money(usd_sum)
+            body.append(total)
+
+        return body
+
     def write_products(self, products: list[dict]):
         self.ensure_structure()
         grouped = {title: [] for title in ALL_TABS}
@@ -324,14 +446,14 @@ class ProductSheet:
         for title, rows in grouped.items():
             ws = self._worksheet(title)
             is_sold_tab = title == "Satilanlar"
-            body = [SOLD_TAB_HEADERS if is_sold_tab else ACTIVE_TAB_HEADERS]
-            sorter = _sold_sort_key if is_sold_tab else _active_sort_key
-            for product in sorted(rows, key=sorter):
-                copy = dict(product)
-                copy["updated_at"] = copy.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M")
-                if is_sold_tab and not copy.get("sold_at"):
-                    copy["sold_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                body.append(_sold_tab_row(copy) if is_sold_tab else _active_tab_row(copy))
+            if is_sold_tab:
+                body = self._build_sold_body(rows)
+            else:
+                body = [ACTIVE_TAB_HEADERS]
+                for product in sorted(rows, key=_active_sort_key):
+                    copy = dict(product)
+                    copy["updated_at"] = copy.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M")
+                    body.append(_active_tab_row(copy))
             _yeniden_dene("Product sheet temizleme", ws.clear)
             _yeniden_dene(
                 "Product sheet boyutlandirma",

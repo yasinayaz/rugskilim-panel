@@ -50,6 +50,9 @@ OPTIONAL_PRODUCT_FIELDS = {
     "customer_phone",
     "customer_address",
     "customer_contact_country",
+    "shipping_carrier",
+    "shipping_cost_try",
+    "shipping_cost_usd",
 }
 
 
@@ -382,6 +385,32 @@ class ProductCatalog:
         data = response.json()
         return data[0] if data else None
 
+    def _patch_by_code(self, code: str, payload: dict) -> dict | None:
+        """PATCH products WHERE product_code=code. Eksik opsiyonel kolonlari
+        (henuz migration uygulanmamis kargo alanlari gibi) otomatik atlar."""
+        dropped_fields: set[str] = set()
+        while True:
+            request_payload = {k: v for k, v in payload.items() if k not in dropped_fields}
+            response = _session().patch(
+                _rest_url(),
+                headers={**_headers(), "Prefer": "return=representation"},
+                params={"product_code": f"eq.{code}"},
+                json=request_payload,
+                timeout=45,
+            )
+            if response.ok:
+                data = response.json()
+                return data[0] if data else None
+
+            missing_column = _schema_missing_column(response.text)
+            if missing_column and missing_column in OPTIONAL_PRODUCT_FIELDS and missing_column not in dropped_fields:
+                dropped_fields.add(missing_column)
+                continue
+
+            raise RuntimeError(
+                f"Supabase satış güncellemesi başarısız: {response.status_code} {response.text}"
+            )
+
     def sell_product(
         self,
         product_code: str,
@@ -393,8 +422,11 @@ class ProductCatalog:
         customer_address: str | None = None,
         customer_contact_country: str | None = None,
         note: str | None = None,
+        shipping_carrier: str | None = None,
+        shipping_cost_try: str | None = None,
+        shipping_cost_usd: str | None = None,
     ) -> dict | None:
-        """Ürünü satıldı olarak işaretle ve müşteri bilgilerini güncelle (PATCH)."""
+        """Ürünü satıldı olarak işaretle ve müşteri/kargo bilgilerini güncelle (PATCH)."""
         code = _clean(product_code)
         if not code:
             return None
@@ -416,20 +448,14 @@ class ProductCatalog:
             payload["customer_contact_country"] = customer_contact_country
         if note is not None:
             payload["note"] = note
+        if shipping_carrier is not None:
+            payload["shipping_carrier"] = shipping_carrier
+        if shipping_cost_try is not None:
+            payload["shipping_cost_try"] = shipping_cost_try
+        if shipping_cost_usd is not None:
+            payload["shipping_cost_usd"] = shipping_cost_usd
 
-        response = _session().patch(
-            _rest_url(),
-            headers={**_headers(), "Prefer": "return=representation"},
-            params={"product_code": f"eq.{code}"},
-            json=payload,
-            timeout=45,
-        )
-        if not response.ok:
-            raise RuntimeError(
-                f"Supabase satış güncellemesi başarısız: {response.status_code} {response.text}"
-            )
-        data = response.json()
-        return data[0] if data else None
+        return self._patch_by_code(code, payload)
 
     def refresh_store_presence(self, store_map: dict[str, set[str]]) -> None:
         """Mağaza varlığını product_store_status tablosuna yazar."""

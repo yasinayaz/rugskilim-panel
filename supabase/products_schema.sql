@@ -21,6 +21,9 @@ create table if not exists public.products (
   customer_phone text,
   customer_address text,
   customer_contact_country text,
+  shipping_carrier text,
+  shipping_cost_try text,
+  shipping_cost_usd text,
   note text,
   updated_at text
 );
