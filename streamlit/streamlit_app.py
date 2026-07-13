@@ -6905,6 +6905,11 @@ if st.session_state.active_main_tab == "urunler":
                             st.session_state["_satilan_tumunu_goster"] = False
                             st.rerun()
 
+                    # Aksiyon butonları listenin ÜSTÜNDE görünsün (aktif ürün
+                    # listesindeki gibi). Container tabloyu render etmeden önce
+                    # burada açılır; seçim sonrası içine yazınca üstte belirir.
+                    _satilan_aksiyon_alani = st.container()
+
                     _sat_secim = st.dataframe(
                         pd.DataFrame(satilan_satirlar),
                         width="stretch",
@@ -6925,40 +6930,40 @@ if st.session_state.active_main_tab == "urunler":
                             None,
                         )
                         if _sat_urun:
-                            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-                            _sab1, _sab2, _sab3 = st.columns([1.4, 1.6, 3.0])
-                            if _sab1.button(
-                                f"✏️ {_sat_kod} Düzenle",
-                                type="primary",
-                                use_container_width=True,
-                                key="satilan_duzenle_btn",
-                            ):
-                                st.session_state["_edit_satilan"] = _sat_urun
-                                st.session_state.pop("_satilan_stok_onay", None)
-                                st.rerun()
-                            if not st.session_state.get("_satilan_stok_onay"):
-                                if _sab2.button(
-                                    "📦 Stoğa Geri Al",
+                            with _satilan_aksiyon_alani:
+                                _sab1, _sab2, _sab3 = st.columns([1.4, 1.6, 3.0])
+                                if _sab1.button(
+                                    f"✏️ {_sat_kod} Düzenle",
+                                    type="primary",
                                     use_container_width=True,
-                                    key="satilan_stoga_al_btn",
+                                    key="satilan_duzenle_btn",
                                 ):
-                                    st.session_state["_satilan_stok_onay"] = _sat_kod
-                                    st.rerun()
-                            elif st.session_state.get("_satilan_stok_onay") == _sat_kod:
-                                _so1, _so2 = _sab2.columns(2)
-                                if _so1.button("Evet", type="primary", use_container_width=True, key="satilan_stok_evet"):
-                                    _satilan_stoga_geri_al(_sat_urun)
-                                    st.session_state.pop("_satilan_stok_onay", None)
-                                    st.success(f"{_sat_kod} tekrar stoğa alındı.")
-                                    st.rerun()
-                                if _so2.button("Vazgeç", use_container_width=True, key="satilan_stok_vazgec"):
+                                    st.session_state["_edit_satilan"] = _sat_urun
                                     st.session_state.pop("_satilan_stok_onay", None)
                                     st.rerun()
-                            if st.session_state.get("_satilan_stok_onay") == _sat_kod:
-                                st.warning(
-                                    f"**{_sat_kod}** satılanlardan çıkarılıp tekrar stokta görünecek; "
-                                    "satış/müşteri/kargo bilgileri temizlenir. Excel'de de otomatik güncellenir."
-                                )
+                                if not st.session_state.get("_satilan_stok_onay"):
+                                    if _sab2.button(
+                                        "📦 Stoğa Geri Al",
+                                        use_container_width=True,
+                                        key="satilan_stoga_al_btn",
+                                    ):
+                                        st.session_state["_satilan_stok_onay"] = _sat_kod
+                                        st.rerun()
+                                elif st.session_state.get("_satilan_stok_onay") == _sat_kod:
+                                    _so1, _so2 = _sab2.columns(2)
+                                    if _so1.button("Evet", type="primary", use_container_width=True, key="satilan_stok_evet"):
+                                        _satilan_stoga_geri_al(_sat_urun)
+                                        st.session_state.pop("_satilan_stok_onay", None)
+                                        st.success(f"{_sat_kod} tekrar stoğa alındı.")
+                                        st.rerun()
+                                    if _so2.button("Vazgeç", use_container_width=True, key="satilan_stok_vazgec"):
+                                        st.session_state.pop("_satilan_stok_onay", None)
+                                        st.rerun()
+                                if st.session_state.get("_satilan_stok_onay") == _sat_kod:
+                                    st.warning(
+                                        f"**{_sat_kod}** satılanlardan çıkarılıp tekrar stokta görünecek; "
+                                        "satış/müşteri/kargo bilgileri temizlenir. Excel'de de otomatik güncellenir."
+                                    )
                 else:
                     st.info("Satılan ürün bulunamadı.")
 
