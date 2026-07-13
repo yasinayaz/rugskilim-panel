@@ -7106,14 +7106,24 @@ if st.session_state.active_main_tab == "urunler":
                     # Aylik kargo ozeti (Excel'deki aylik toplamlarin panel karsiligi)
                     _aylik_ozet = {}
                     _aylik_sira = []
+                    _aylik_kargo = {}  # (ay, kargo_firma) -> {adet, tl, usd}
                     for urun in satilan_goster:
                         _ay_key = _satilan_ay_etiketi(urun.get("sold_at", ""))
                         if _ay_key not in _aylik_ozet:
                             _aylik_ozet[_ay_key] = {"adet": 0, "tl": 0.0, "usd": 0.0}
                             _aylik_sira.append(_ay_key)
+                        _tl = _float_or_none(urun.get("shipping_cost_try")) or 0.0
+                        _usd = _float_or_none(urun.get("shipping_cost_usd")) or 0.0
                         _aylik_ozet[_ay_key]["adet"] += 1
-                        _aylik_ozet[_ay_key]["tl"] += _float_or_none(urun.get("shipping_cost_try")) or 0.0
-                        _aylik_ozet[_ay_key]["usd"] += _float_or_none(urun.get("shipping_cost_usd")) or 0.0
+                        _aylik_ozet[_ay_key]["tl"] += _tl
+                        _aylik_ozet[_ay_key]["usd"] += _usd
+                        _kargo_firma = str(urun.get("shipping_carrier") or "").strip().upper() or "Belirtilmemiş"
+                        _kk = (_ay_key, _kargo_firma)
+                        if _kk not in _aylik_kargo:
+                            _aylik_kargo[_kk] = {"adet": 0, "tl": 0.0, "usd": 0.0}
+                        _aylik_kargo[_kk]["adet"] += 1
+                        _aylik_kargo[_kk]["tl"] += _tl
+                        _aylik_kargo[_kk]["usd"] += _usd
                     if _aylik_sira:
                         _ozet_satirlar = [
                             {
@@ -7124,10 +7134,23 @@ if st.session_state.active_main_tab == "urunler":
                             }
                             for _ay in _aylik_sira
                         ]
+                        _kargo_ozet_satirlar = [
+                            {
+                                "Ay": _ay,
+                                "Kargo": _car,
+                                "Adet": _aylik_kargo[(_ay, _car)]["adet"],
+                                "Kargo (TL)": round(_aylik_kargo[(_ay, _car)]["tl"], 2),
+                                "Kargo (USD)": round(_aylik_kargo[(_ay, _car)]["usd"], 2),
+                            }
+                            for _ay in _aylik_sira
+                            for _car in sorted({c for (a, c) in _aylik_kargo if a == _ay})
+                        ]
                         if st.session_state.get("satilan_ozet_acik"):
                             with st.container(border=True):
                                 st.caption("📊 Aylık satış & kargo özeti (tüm satışlar)")
                                 st.dataframe(pd.DataFrame(_ozet_satirlar), width="stretch", hide_index=True)
+                                st.caption("🚚 Aylık × kargo firması kırılımı")
+                                st.dataframe(pd.DataFrame(_kargo_ozet_satirlar), width="stretch", hide_index=True)
 
                     if _satilan_kirpildi:
                         _kirp_c1, _kirp_c2 = st.columns([4, 1], vertical_alignment="center")
