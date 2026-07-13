@@ -6585,21 +6585,15 @@ if st.session_state.active_main_tab == "urunler":
                 satilan_site_opsiyonlari = []
 
             _satilan_form_acik = bool(st.session_state.satilan_urun_formu_acik)
-            with st.container(border=True, key=f"satilan_urun_panel_{'open' if _satilan_form_acik else 'closed'}"):
-                _sold_hdr, _sold_btn = st.columns([6, 1.4], vertical_alignment="center")
-                _sold_hdr.markdown("##### Satılan Ürün Ekle")
-                _sold_hdr.caption(
-                    "Kapalıyken yer kaplamaz, gerektiğinde açıp kayıt girebilirsiniz."
-                    if not _satilan_form_acik
-                    else "Form açık. Kaydettikten sonra otomatik kapanır."
-                )
-                if _sold_btn.button(
-                    "Aç" if not _satilan_form_acik else "Kapat",
-                    key="satilan_urun_form_toggle_btn",
-                    use_container_width=True,
-                ):
-                    st.session_state.satilan_urun_formu_acik = not _satilan_form_acik
-                    st.rerun()
+            _sold_btn_col, _ = st.columns([2, 5])
+            if _sold_btn_col.button(
+                "✕ Formu Kapat" if _satilan_form_acik else "➕ Satılan Ürün Ekle",
+                key="satilan_urun_form_toggle_btn",
+                type="primary" if _satilan_form_acik else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.satilan_urun_formu_acik = not _satilan_form_acik
+                st.rerun()
 
             if _satilan_form_acik:
                 with st.container(border=True, key="satilan_urun_form_panel"):
@@ -6779,83 +6773,104 @@ if st.session_state.active_main_tab == "urunler":
                 )
             ]
 
-            # Kompakt filtre alanı: arama her zaman görünür; diğer filtreler
-            # açılır-kapanır expander içinde (iç içe multiselect/tarih seçici
-            # popover'da kırpıldığı için expander tercih edildi). Expander
-            # etiketinde kaç filtrenin aktif olduğu gösterilir.
+            # Kompakt araç çubuğu: arama her zaman görünür; filtre ve aylık özet
+            # panelleri buton ile açılıp kapanır. Panel kapalıyken filtre
+            # değerleri session_state'ten okunur (filtre aktif kalır); açıkken
+            # aşağıdaki widget'lar günceller.
             _sat_f_keys = (
                 "satilan_f_kategori", "satilan_f_kargo", "satilan_f_magaza",
                 "satilan_f_tarih_modu", "satilan_f_ay",
                 "satilan_f_tarih_bas", "satilan_f_tarih_bit",
             )
-            _sat_tarih_modu_kayit = st.session_state.get("satilan_f_tarih_modu", "Tümü")
-            _sat_aktif_f = sum((
-                st.session_state.get("satilan_f_kategori", "Tümü") != "Tümü",
-                st.session_state.get("satilan_f_kargo", "Tümü") != "Tümü",
-                bool(st.session_state.get("satilan_f_magaza")),
-                _sat_tarih_modu_kayit != "Tümü",
-            ))
             satilan_ara = st.text_input(
                 "Satılanlarda ara", placeholder="Kod, müşteri adı, site, telefon..."
             )
 
-            # Filtre değişkenleri için güvenli varsayılanlar (expander içinde
-            # sadece ilgili tarih moduna ait widget'lar oluşturulur).
-            satilan_aylar = []
-            tarih_bas = None
-            tarih_bit = None
+            satilan_kategori = st.session_state.get("satilan_f_kategori", "Tümü")
+            satilan_kargo = st.session_state.get("satilan_f_kargo", "Tümü")
+            satilan_magazalar = list(st.session_state.get("satilan_f_magaza", []) or [])
+            tarih_modu = st.session_state.get("satilan_f_tarih_modu", "Tümü")
+            satilan_aylar = (
+                list(st.session_state.get("satilan_f_ay", []) or [])
+                if tarih_modu == "Aylık" else []
+            )
+            tarih_bas = st.session_state.get("satilan_f_tarih_bas") if tarih_modu == "Tarih aralığı" else None
+            tarih_bit = st.session_state.get("satilan_f_tarih_bit") if tarih_modu == "Tarih aralığı" else None
 
-            _f_label = "⚙️ Filtreler" + (f"  ·  {_sat_aktif_f} aktif" if _sat_aktif_f else "")
-            with st.expander(_f_label, expanded=bool(_sat_aktif_f)):
-                _f1, _f2, _f3 = st.columns(3)
-                satilan_kategori = _f1.selectbox(
-                    "Kategori",
-                    ["Tümü", "Boş", "Doormat", "Area", "Runner"],
-                    key="satilan_f_kategori",
-                )
-                satilan_kargo = _f2.selectbox(
-                    "Kargo",
-                    ["Tümü"] + _satilan_kargo_ops + ["Boş"],
-                    key="satilan_f_kargo",
-                )
-                satilan_magazalar = _f3.multiselect(
-                    "Mağaza",
-                    options=_satilan_magaza_ops,
-                    placeholder="Tümü",
-                    key="satilan_f_magaza",
-                )
+            _sat_aktif_f = sum((
+                satilan_kategori != "Tümü",
+                satilan_kargo != "Tümü",
+                bool(satilan_magazalar),
+                tarih_modu != "Tümü",
+            ))
+            _flt_open = bool(st.session_state.get("satilan_filtre_panel_acik"))
+            _ozet_open = bool(st.session_state.get("satilan_ozet_acik"))
 
-                _t1, _t2 = st.columns([1.2, 3], vertical_alignment="top")
-                tarih_modu = _t1.radio(
-                    "Tarih filtresi",
-                    ["Tümü", "Aylık", "Tarih aralığı"],
-                    key="satilan_f_tarih_modu",
-                )
-                if tarih_modu == "Aylık":
-                    satilan_aylar = _t2.multiselect(
-                        "Ay seç",
-                        options=_satilan_ay_ops,
+            _tb1, _tb2, _tb3 = st.columns([1.7, 1.7, 5])
+            _flt_label = "⚙️ Filtreler" + (f"  ·  {_sat_aktif_f}" if _sat_aktif_f else "")
+            if _tb1.button(
+                _flt_label, key="satilan_filtre_toggle",
+                type="primary" if (_flt_open or _sat_aktif_f) else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["satilan_filtre_panel_acik"] = not _flt_open
+                st.rerun()
+            if _tb2.button(
+                "📊 Aylık Özet", key="satilan_ozet_toggle",
+                type="primary" if _ozet_open else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["satilan_ozet_acik"] = not _ozet_open
+                st.rerun()
+
+            if _flt_open:
+                with st.container(border=True):
+                    _f1, _f2, _f3 = st.columns(3)
+                    satilan_kategori = _f1.selectbox(
+                        "Kategori",
+                        ["Tümü", "Boş", "Doormat", "Area", "Runner"],
+                        key="satilan_f_kategori",
+                    )
+                    satilan_kargo = _f2.selectbox(
+                        "Kargo",
+                        ["Tümü"] + _satilan_kargo_ops + ["Boş"],
+                        key="satilan_f_kargo",
+                    )
+                    satilan_magazalar = _f3.multiselect(
+                        "Mağaza",
+                        options=_satilan_magaza_ops,
                         placeholder="Tümü",
-                        key="satilan_f_ay",
+                        key="satilan_f_magaza",
                     )
-                elif tarih_modu == "Tarih aralığı":
-                    _d1, _d2 = _t2.columns(2)
-                    tarih_bas = _d1.date_input(
-                        "Başlangıç", value=None, format="YYYY-MM-DD",
-                        key="satilan_f_tarih_bas",
+                    tarih_modu = st.radio(
+                        "Tarih filtresi",
+                        ["Tümü", "Aylık", "Tarih aralığı"],
+                        key="satilan_f_tarih_modu",
+                        horizontal=True,
                     )
-                    tarih_bit = _d2.date_input(
-                        "Bitiş", value=None, format="YYYY-MM-DD",
-                        key="satilan_f_tarih_bit",
-                    )
-
-                if _sat_aktif_f and st.button(
-                    "🧹 Filtreleri temizle",
-                    key="satilan_filtre_temizle",
-                ):
-                    for _k in _sat_f_keys:
-                        st.session_state.pop(_k, None)
-                    st.rerun()
+                    if tarih_modu == "Aylık":
+                        satilan_aylar = st.multiselect(
+                            "Ay seç",
+                            options=_satilan_ay_ops,
+                            placeholder="Tümü",
+                            key="satilan_f_ay",
+                        )
+                    elif tarih_modu == "Tarih aralığı":
+                        _d1, _d2 = st.columns(2)
+                        tarih_bas = _d1.date_input(
+                            "Başlangıç", value=None, format="YYYY-MM-DD",
+                            key="satilan_f_tarih_bas",
+                        )
+                        tarih_bit = _d2.date_input(
+                            "Bitiş", value=None, format="YYYY-MM-DD",
+                            key="satilan_f_tarih_bit",
+                        )
+                    if _sat_aktif_f and st.button(
+                        "🧹 Filtreleri temizle", key="satilan_filtre_temizle",
+                    ):
+                        for _k in _sat_f_keys:
+                            st.session_state.pop(_k, None)
+                        st.rerun()
 
             satilan_goster = list(satilanlar)
             if satilan_ara.strip():
@@ -7021,8 +7036,10 @@ if st.session_state.active_main_tab == "urunler":
                             }
                             for _ay in _aylik_sira
                         ]
-                        with st.expander("📊 Aylık satış & kargo özeti", expanded=False):
-                            st.dataframe(pd.DataFrame(_ozet_satirlar), width="stretch", hide_index=True)
+                        if st.session_state.get("satilan_ozet_acik"):
+                            with st.container(border=True):
+                                st.caption("📊 Aylık satış & kargo özeti (tüm satışlar)")
+                                st.dataframe(pd.DataFrame(_ozet_satirlar), width="stretch", hide_index=True)
 
                     if _satilan_kirpildi:
                         _kirp_c1, _kirp_c2 = st.columns([4, 1], vertical_alignment="center")
