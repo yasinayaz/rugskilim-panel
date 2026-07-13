@@ -6585,7 +6585,8 @@ if st.session_state.active_main_tab == "urunler":
                 satilan_site_opsiyonlari = []
 
             _satilan_form_acik = bool(st.session_state.satilan_urun_formu_acik)
-            _sold_btn_col, _ = st.columns([2, 5])
+            _sold_hdr_col, _sold_btn_col = st.columns([5, 2], vertical_alignment="center")
+            _sold_hdr_col.markdown("##### Satılan Ürünler")
             if _sold_btn_col.button(
                 "✕ Formu Kapat" if _satilan_form_acik else "➕ Satılan Ürün Ekle",
                 key="satilan_urun_form_toggle_btn",
@@ -6717,7 +6718,6 @@ if st.session_state.active_main_tab == "urunler":
                                 st.info("Başka yüklü mağaza görünmüyor.")
                             st.rerun()
 
-            st.markdown("##### Satılan Ürünler")
             try:
                 from shared.store_manager import tum_magazalar as _tum_filtre_magazalar
                 _tum_magaza_kayitlari = _tum_filtre_magazalar()
