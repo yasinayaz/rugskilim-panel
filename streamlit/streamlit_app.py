@@ -6675,39 +6675,47 @@ if st.session_state.active_main_tab == "urunler":
                         for u in aktifler
                     ]
                     with st.form("satilan_urun_form", clear_on_submit=False):
-                        st.markdown(_zorunlu_label("Ürün seç"), unsafe_allow_html=True)
-                        secili = st.selectbox(
-                            "Ürün seç",
-                            options=aktif_opsiyonlar,
-                            index=None,
-                            placeholder="Bir aktif ürün seçin...",
-                            key="satilan_urun_form_secimi",
-                            label_visibility="collapsed",
-                        )
-                        _s1, _s2, _s3 = st.columns(3)
-                        _s1.markdown(_zorunlu_label("Satılan site"), unsafe_allow_html=True)
-                        satilan_site = _s1.multiselect(
-                            "Satılan site",
-                            options=satilan_site_opsiyonlari,
-                            placeholder="Bir veya daha fazla mağaza seçin...",
-                            label_visibility="collapsed",
-                        )
-                        musteri_adi = _s2.text_input("Müşteri adı")
-                        satilan_tarih = _s3.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
-                        _s4, _s5 = st.columns(2)
-                        musteri_telefon = _s4.text_input("Telefon")
-                        iletisim_ulke = _s5.text_input("İletişim & ülke")
-                        _sk1, _sk2, _sk3 = st.columns(3)
-                        kargo_firma = _sk1.selectbox(
+                        # Satır 1: Ürün seç * | Satılan site *  (zorunlu seçim)
+                        _r1c1, _r1c2 = st.columns(2)
+                        with _r1c1:
+                            st.markdown(_zorunlu_label("Ürün seç"), unsafe_allow_html=True)
+                            secili = st.selectbox(
+                                "Ürün seç",
+                                options=aktif_opsiyonlar,
+                                index=None,
+                                placeholder="Bir aktif ürün seçin...",
+                                key="satilan_urun_form_secimi",
+                                label_visibility="collapsed",
+                            )
+                        with _r1c2:
+                            st.markdown(_zorunlu_label("Satılan site"), unsafe_allow_html=True)
+                            satilan_site = st.multiselect(
+                                "Satılan site",
+                                options=satilan_site_opsiyonlari,
+                                placeholder="Bir veya daha fazla mağaza seçin...",
+                                label_visibility="collapsed",
+                            )
+                        # Satır 2: Müşteri iletişim
+                        _r2c1, _r2c2, _r2c3 = st.columns(3)
+                        musteri_adi = _r2c1.text_input("Müşteri adı")
+                        musteri_telefon = _r2c2.text_input("Telefon")
+                        iletisim_ulke = _r2c3.text_input("Ülke")
+                        # Satır 3: Kargo grubu
+                        _r3c1, _r3c2, _r3c3 = st.columns(3)
+                        kargo_firma = _r3c1.selectbox(
                             "Kargo firması",
                             options=["FEDEX", "UPS"],
                             index=None,
                             placeholder="Seçin (opsiyonel)...",
                         )
-                        kargo_tl = _sk2.number_input("Kargo (TL)", min_value=0.0, step=1.0, format="%.2f")
-                        kargo_usd = _sk3.number_input("Kargo (USD)", min_value=0.0, step=1.0, format="%.2f")
-                        musteri_adres = st.text_area("Adres", height=90)
-                        satilan_not = st.text_input("Not")
+                        kargo_tl = _r3c2.number_input("Kargo (TL)", min_value=0.0, step=1.0, format="%.2f")
+                        kargo_usd = _r3c3.number_input("Kargo (USD)", min_value=0.0, step=1.0, format="%.2f")
+                        # Satır 4: Tarih | Not
+                        _r4c1, _r4c2 = st.columns(2)
+                        satilan_tarih = _r4c1.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
+                        satilan_not = _r4c2.text_input("Not")
+                        # Satır 5: Adres (tam genişlik, kısa)
+                        musteri_adres = st.text_area("Adres", height=70)
                         submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
 
                 if submit_sold:
