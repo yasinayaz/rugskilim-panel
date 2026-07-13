@@ -6803,6 +6803,22 @@ if st.session_state.active_main_tab == "urunler":
                     return (0, 0)
             satilan_goster = sorted(satilan_goster, key=_satilan_siralama, reverse=True)
 
+            # İnteraktif tablo yükünü sınırla: binlerce satırlık on_select dataframe
+            # kısıtlı sunucuda bellek/CPU baskısı yaratabilir. Varsayılan olarak en
+            # yeni N kaydı göster. Arama/filtre TÜM satılanlarda çalışır ve aylık özet
+            # de tüm satılanlar üzerinden hesaplanır; sadece tablo görünümü kırpılır.
+            _SATILAN_TABLO_LIMIT = 400
+            _satilan_filtre_aktif = bool(
+                satilan_ara.strip() or satilan_magazalar or satilan_kategori != "Tümü"
+            )
+            _satilan_tumunu = bool(st.session_state.get("_satilan_tumunu_goster"))
+            if not _satilan_filtre_aktif and not _satilan_tumunu and len(satilan_goster) > _SATILAN_TABLO_LIMIT:
+                satilan_tablo = satilan_goster[:_SATILAN_TABLO_LIMIT]
+                _satilan_kirpildi = True
+            else:
+                satilan_tablo = satilan_goster
+                _satilan_kirpildi = False
+
             try:
                 import pandas as pd
 
@@ -6810,7 +6826,7 @@ if st.session_state.active_main_tab == "urunler":
                 store_map = _supabase_store_haritasi_cached()
 
                 satilan_satirlar = []
-                for urun in satilan_goster:
+                for urun in satilan_tablo:
                     kod = _urun_kodu_normalize(urun.get("product_code", "")) or _urun_kodu_al(urun.get("product_code", ""))
                     satilan_site_listesi = [
                         str(parca or "").strip()
@@ -6871,6 +6887,23 @@ if st.session_state.active_main_tab == "urunler":
                         ]
                         with st.expander("📊 Aylık satış & kargo özeti", expanded=False):
                             st.dataframe(pd.DataFrame(_ozet_satirlar), width="stretch", hide_index=True)
+
+                    if _satilan_kirpildi:
+                        _kirp_c1, _kirp_c2 = st.columns([4, 1], vertical_alignment="center")
+                        _kirp_c1.caption(
+                            f"Performans için en yeni {_SATILAN_TABLO_LIMIT} kayıt gösteriliyor "
+                            f"(toplam {len(satilan_goster)} satılan). Arama/filtre tüm kayıtlarda çalışır; "
+                            "aylık özet tüm satışları kapsar."
+                        )
+                        if _kirp_c2.button("Tümünü göster", key="satilan_tumunu_goster_btn", use_container_width=True):
+                            st.session_state["_satilan_tumunu_goster"] = True
+                            st.rerun()
+                    elif _satilan_tumunu and len(satilan_goster) > _SATILAN_TABLO_LIMIT:
+                        _kirp_c1, _kirp_c2 = st.columns([4, 1], vertical_alignment="center")
+                        _kirp_c1.caption(f"Tüm {len(satilan_goster)} satılan gösteriliyor.")
+                        if _kirp_c2.button("Daha az göster", key="satilan_daha_az_btn", use_container_width=True):
+                            st.session_state["_satilan_tumunu_goster"] = False
+                            st.rerun()
 
                     _sat_secim = st.dataframe(
                         pd.DataFrame(satilan_satirlar),
