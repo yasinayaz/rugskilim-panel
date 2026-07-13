@@ -451,6 +451,24 @@ div[class*="st-key-urun_alt_tab_"] button[kind="primary"]:hover {
   border-color: var(--accent) !important;
 }
 
+/* Alt sekme şeridi — üst bardan ayıran zarif panel (toolbar) */
+.st-key-sub_nav_bar {
+  background: var(--bg-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 6px 12px !important;
+  margin: 4px 0 14px !important;
+}
+/* Şerit içindeki Aktif/Satılan rozetleri — daha ince, düz */
+.st-key-sub_nav_bar .compact-stat {
+  padding: 6px 14px !important;
+  box-shadow: none !important;
+  background: var(--bg-2) !important;
+  border-color: var(--border) !important;
+}
+.st-key-sub_nav_bar .compact-stat-value { font-size: 1.05rem !important; }
+.st-key-sub_nav_bar .compact-stat-label { font-size: 0.78rem !important; }
+
 [data-testid="stCheckbox"] input {
   accent-color: var(--success);
 }
@@ -6024,73 +6042,74 @@ if st.session_state.active_main_tab == "urunler":
         _satilan_aktif = st.session_state.urun_alt_tab == "satilan"
         _magazalar_aktif = st.session_state.urun_alt_tab == "magazalar"
         _silinecekler_aktif = st.session_state.urun_alt_tab == "silinecekler"
-        _tabs_col, _stats_col, _refresh_col, _btn_col = st.columns(
-            [4.8, 2.3, 1.15, 1.35], vertical_alignment="center"
-        )
-        with _tabs_col:
-            _b1, _b2, _b3, _b4 = st.columns([1.05, 1.05, 1.0, 1.1], vertical_alignment="center")
-            if _b1.button(
-                "Ürün Listesi",
-                key="urun_alt_tab_liste",
-                width="stretch",
-                type="primary" if _liste_aktif else "secondary",
-                on_click=_urunler_alt_tab_sec,
-                args=("liste",),
-            ):
-                pass
-            if _b2.button(
-                "Satılan Ürünler",
-                key="urun_alt_tab_satilan",
-                width="stretch",
-                type="primary" if _satilan_aktif else "secondary",
-                on_click=_urunler_alt_tab_sec,
-                args=("satilan",),
-            ):
-                pass
-            if _b3.button(
-                "Mağazalar",
-                key="urun_alt_tab_magazalar",
-                width="stretch",
-                type="primary" if _magazalar_aktif else "secondary",
-                on_click=_urunler_alt_tab_sec,
-                args=("magazalar",),
-            ):
-                pass
-            if _b4.button(
-                "Silinmesi Gerekenler",
-                key="urun_alt_tab_silinecekler",
-                width="stretch",
-                type="primary" if _silinecekler_aktif else "secondary",
-                on_click=_urunler_alt_tab_sec,
-                args=("silinecekler",),
-            ):
-                pass
-        with _stats_col:
-            st.markdown(
-                "<div class='compact-stats' style='justify-content:flex-start; flex-wrap:nowrap; margin:0;'>"
-                f"<div class='compact-stat'><span class='compact-stat-label'>Aktif</span>"
-                f"<span class='compact-stat-value'>{len(aktifler)}</span></div>"
-                f"<div class='compact-stat'><span class='compact-stat-label'>Satılan</span>"
-                f"<span class='compact-stat-value'>{len(satilanlar)}</span></div>"
-                "</div>",
-                unsafe_allow_html=True,
+        with st.container(key="sub_nav_bar"):
+            _tabs_col, _refresh_col, _btn_col, _stats_col = st.columns(
+                [5.0, 1.2, 1.4, 2.4], vertical_alignment="center"
             )
-        with _refresh_col:
-            if st.button("🔄 Yenile", width="stretch", key="urun_list_refresh_btn"):
-                _urun_katalog_cache_temizle()
-                _store_status_caches_temizle()
-                st.session_state["_urunler_loading_ui"] = True
-                st.session_state["_urunler_store_refresh"] = True
-                st.rerun()
-        with _btn_col:
-            if _liste_aktif:
-                if st.button(
-                    "➕ Yeni Ürün Ekle" if not st.session_state.urun_formu_acik else "✖ Kapat",
+            with _tabs_col:
+                _b1, _b2, _b3, _b4 = st.columns([1.05, 1.05, 1.0, 1.1], vertical_alignment="center")
+                if _b1.button(
+                    "Ürün Listesi",
+                    key="urun_alt_tab_liste",
                     width="stretch",
-                    key="urun_form_toggle_btn",
+                    type="primary" if _liste_aktif else "secondary",
+                    on_click=_urunler_alt_tab_sec,
+                    args=("liste",),
                 ):
-                    st.session_state.urun_formu_acik = not st.session_state.urun_formu_acik
+                    pass
+                if _b2.button(
+                    "Satılan Ürünler",
+                    key="urun_alt_tab_satilan",
+                    width="stretch",
+                    type="primary" if _satilan_aktif else "secondary",
+                    on_click=_urunler_alt_tab_sec,
+                    args=("satilan",),
+                ):
+                    pass
+                if _b3.button(
+                    "Mağazalar",
+                    key="urun_alt_tab_magazalar",
+                    width="stretch",
+                    type="primary" if _magazalar_aktif else "secondary",
+                    on_click=_urunler_alt_tab_sec,
+                    args=("magazalar",),
+                ):
+                    pass
+                if _b4.button(
+                    "Silinmesi Gerekenler",
+                    key="urun_alt_tab_silinecekler",
+                    width="stretch",
+                    type="primary" if _silinecekler_aktif else "secondary",
+                    on_click=_urunler_alt_tab_sec,
+                    args=("silinecekler",),
+                ):
+                    pass
+            with _refresh_col:
+                if st.button("🔄 Yenile", width="stretch", key="urun_list_refresh_btn"):
+                    _urun_katalog_cache_temizle()
+                    _store_status_caches_temizle()
+                    st.session_state["_urunler_loading_ui"] = True
+                    st.session_state["_urunler_store_refresh"] = True
                     st.rerun()
+            with _btn_col:
+                if _liste_aktif:
+                    if st.button(
+                        "➕ Yeni Ürün Ekle" if not st.session_state.urun_formu_acik else "✖ Kapat",
+                        width="stretch",
+                        key="urun_form_toggle_btn",
+                    ):
+                        st.session_state.urun_formu_acik = not st.session_state.urun_formu_acik
+                        st.rerun()
+            with _stats_col:
+                st.markdown(
+                    "<div class='compact-stats' style='justify-content:flex-end; flex-wrap:nowrap; margin:0;'>"
+                    f"<div class='compact-stat'><span class='compact-stat-label'>Aktif</span>"
+                    f"<span class='compact-stat-value'>{len(aktifler)}</span></div>"
+                    f"<div class='compact-stat'><span class='compact-stat-label'>Satılan</span>"
+                    f"<span class='compact-stat-value'>{len(satilanlar)}</span></div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
         if _urunler_alt_tab_gecis_ekrani():
             return
