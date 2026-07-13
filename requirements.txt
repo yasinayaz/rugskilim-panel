@@ -1,9 +1,16 @@
-streamlit
-httpx
-gspread
-google-auth
-pandas
-openpyxl
-requests
-numpy
-opencv-python-headless
+# Sürümler sabitlendi: sürümsüz bırakıldığında her rebuild farklı kütüphane
+# sürümleri çekiyor ve "önce çalışıyordu, redeploy'dan sonra bozuldu" tipi
+# sorunlara yol açıyordu. Aşağıdaki set, panel akışları (satılan listesi,
+# edit/stoğa-alma, kargo) Docker'da uçtan uca doğrulanarak sağlıklı bulundu.
+streamlit==1.59.2
+httpx==0.28.1
+gspread==6.2.1
+google-auth==2.56.0
+pandas==3.0.3
+# pyarrow: Streamlit dataframe serileştirmesinde kullanılır; numpy ile ABI
+# uyumu şart (uyumsuz kombinasyon dataframe render/seçiminde segfault yapar).
+pyarrow==24.0.0
+openpyxl==3.1.5
+requests==2.34.2
+numpy==2.4.6
+opencv-python-headless==5.0.0.93
