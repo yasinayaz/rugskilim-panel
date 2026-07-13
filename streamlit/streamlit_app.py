@@ -411,6 +411,46 @@ section.main { background-color: var(--bg-0) !important; }
   border-color: #d97706 !important;
 }
 
+/* ── Navigasyon hiyerarşisi ── */
+/* Üst bar (ana alanlar) — birincil: daha büyük, belirgin, dolu turuncu aktif */
+div[class*="st-key-main_tab_btn_"] button {
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  padding-top: 0.62rem !important;
+  padding-bottom: 0.62rem !important;
+  border-radius: 10px !important;
+}
+
+/* Alt bar (alt sekmeler) — ikincil: hafif, düz; aktif = çerçeveli turuncu */
+div[class*="st-key-urun_alt_tab_"] button {
+  background: transparent !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-2) !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  padding-top: 0.32rem !important;
+  padding-bottom: 0.32rem !important;
+  border-radius: 7px !important;
+}
+div[class*="st-key-urun_alt_tab_"] button * { color: var(--text-2) !important; }
+div[class*="st-key-urun_alt_tab_"] button:hover {
+  background: var(--bg-2) !important;
+  color: var(--text-1) !important;
+  border-color: var(--text-3) !important;
+}
+div[class*="st-key-urun_alt_tab_"] button:hover * { color: var(--text-1) !important; }
+div[class*="st-key-urun_alt_tab_"] button[kind="primary"] {
+  background: rgba(245,158,11,0.12) !important;
+  border: 1px solid var(--accent) !important;
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+div[class*="st-key-urun_alt_tab_"] button[kind="primary"] * { color: var(--accent) !important; }
+div[class*="st-key-urun_alt_tab_"] button[kind="primary"]:hover {
+  background: rgba(245,158,11,0.18) !important;
+  border-color: var(--accent) !important;
+}
+
 [data-testid="stCheckbox"] input {
   accent-color: var(--success);
 }
