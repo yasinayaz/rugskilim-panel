@@ -1211,8 +1211,10 @@ def _satilan_edit_dialog(urun: dict):
         "Kargo (USD)", min_value=0.0, step=1.0, format="%.2f",
         value=_float_or_none(urun.get("shipping_cost_usd")) or 0.0,
     )
-    _e_adres = st.text_area("Adres", value=urun.get("customer_address", ""), height=90)
-    _e_not = st.text_input("Not", value=urun.get("note", ""))
+    _e_adres = st.text_area("Adres", value=urun.get("customer_address", ""), height=70)
+    _c6, _c7 = st.columns(2)
+    _e_takip = _c6.text_input("Takip No", value=urun.get("shipping_tracking_no", ""))
+    _e_not = _c7.text_input("Not", value=urun.get("note", ""))
 
     _b1, _b2, _b3 = st.columns([2, 1.4, 1])
     if _b1.button("Kaydet", type="primary", use_container_width=True, key="satilan_edit_kaydet"):
@@ -1230,6 +1232,7 @@ def _satilan_edit_dialog(urun: dict):
         guncel["shipping_carrier"] = (_e_kargo or "").strip()
         guncel["shipping_cost_try"] = _kargo_para_str(_e_ktl)
         guncel["shipping_cost_usd"] = _kargo_para_str(_e_kusd)
+        guncel["shipping_tracking_no"] = _e_takip.strip()
         guncel["note"] = _e_not.strip()
         guncel["updated_at"] = _t.strftime("%Y-%m-%d %H:%M")
         _urunleri_cachede_uste_tut(guncel)
@@ -6710,10 +6713,11 @@ if st.session_state.active_main_tab == "urunler":
                         )
                         kargo_tl = _r3c2.number_input("Kargo (TL)", min_value=0.0, step=1.0, format="%.2f")
                         kargo_usd = _r3c3.number_input("Kargo (USD)", min_value=0.0, step=1.0, format="%.2f")
-                        # Satır 4: Tarih | Not
-                        _r4c1, _r4c2 = st.columns(2)
-                        satilan_tarih = _r4c1.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
-                        satilan_not = _r4c2.text_input("Not")
+                        # Satır 4: Takip No | Tarih | Not
+                        _r4c1, _r4c2, _r4c3 = st.columns(3)
+                        kargo_takip = _r4c1.text_input("Takip No", placeholder="Kargo takip numarası")
+                        satilan_tarih = _r4c2.text_input("Satılan tarih", value=_time.strftime("%Y-%m-%d %H:%M"))
+                        satilan_not = _r4c3.text_input("Not")
                         # Satır 5: Adres (tam genişlik, kısa)
                         musteri_adres = st.text_area("Adres", height=70)
                         submit_sold = st.form_submit_button("🟥 Satılan Ürünü Kaydet", type="primary", width="stretch")
@@ -6740,6 +6744,7 @@ if st.session_state.active_main_tab == "urunler":
                                 copy["shipping_carrier"] = (kargo_firma or "").strip()
                                 copy["shipping_cost_try"] = _kargo_para_str(kargo_tl)
                                 copy["shipping_cost_usd"] = _kargo_para_str(kargo_usd)
+                                copy["shipping_tracking_no"] = kargo_takip.strip()
                                 if satilan_not.strip():
                                     copy["note"] = satilan_not.strip()
                                 copy["updated_at"] = _time.strftime("%Y-%m-%d %H:%M")
@@ -6765,6 +6770,7 @@ if st.session_state.active_main_tab == "urunler":
                                         shipping_carrier=secili_urun.get("shipping_carrier"),
                                         shipping_cost_try=secili_urun.get("shipping_cost_try"),
                                         shipping_cost_usd=secili_urun.get("shipping_cost_usd"),
+                                        shipping_tracking_no=secili_urun.get("shipping_tracking_no"),
                                     )
                                 except Exception as _e:
                                     _kayit_hatasi = str(_e)
@@ -6961,6 +6967,7 @@ if st.session_state.active_main_tab == "urunler":
                     or needle in str(u.get("customer_name", "")).lower()
                     or needle in str(u.get("sold_site", "")).lower()
                     or needle in str(u.get("customer_phone", "")).lower()
+                    or needle in str(u.get("shipping_tracking_no", "")).lower()
                 ]
             if satilan_kategori == "Boş":
                 satilan_goster = [u for u in satilan_goster if not str(u.get("category", "")).strip()]
@@ -7084,6 +7091,7 @@ if st.session_state.active_main_tab == "urunler":
                         "satılan_tarih": urun.get("sold_at", ""),
                         "site": _site_label(urun.get("sold_site", "")),
                         "kargo": urun.get("shipping_carrier") or "",
+                        "takip_no": urun.get("shipping_tracking_no") or "",
                         "kargo_TL": urun.get("shipping_cost_try") or "",
                         "kargo_USD": urun.get("shipping_cost_usd") or "",
                         "müşteri": urun.get("customer_name", ""),

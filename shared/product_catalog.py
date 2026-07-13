@@ -53,6 +53,7 @@ OPTIONAL_PRODUCT_FIELDS = {
     "shipping_carrier",
     "shipping_cost_try",
     "shipping_cost_usd",
+    "shipping_tracking_no",
 }
 
 
@@ -425,6 +426,7 @@ class ProductCatalog:
         shipping_carrier: str | None = None,
         shipping_cost_try: str | None = None,
         shipping_cost_usd: str | None = None,
+        shipping_tracking_no: str | None = None,
     ) -> dict | None:
         """Ürünü satıldı olarak işaretle ve müşteri/kargo bilgilerini güncelle (PATCH)."""
         code = _clean(product_code)
@@ -454,6 +456,8 @@ class ProductCatalog:
             payload["shipping_cost_try"] = shipping_cost_try
         if shipping_cost_usd is not None:
             payload["shipping_cost_usd"] = shipping_cost_usd
+        if shipping_tracking_no is not None:
+            payload["shipping_tracking_no"] = shipping_tracking_no
 
         return self._patch_by_code(code, payload)
 

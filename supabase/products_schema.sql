@@ -24,6 +24,7 @@ create table if not exists public.products (
   shipping_carrier text,
   shipping_cost_try text,
   shipping_cost_usd text,
+  shipping_tracking_no text,
   note text,
   updated_at text
 );

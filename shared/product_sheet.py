@@ -70,6 +70,7 @@ SOLD_TAB_HEADERS = [
     "Kargo Firmasi",
     "Kargo TL",
     "Kargo USD",
+    "Kargo Takip",
 ]
 
 ACTIVE_TAB_HEADER_MAP = {
@@ -94,6 +95,7 @@ SOLD_TAB_HEADER_MAP = {
     "Kargo Firmasi": "shipping_carrier",
     "Kargo TL": "shipping_cost_try",
     "Kargo USD": "shipping_cost_usd",
+    "Kargo Takip": "shipping_tracking_no",
 }
 
 # Satilanlar sekmesinde urun satirlarinin arasina yazilan ay-ayraci ve aylik
@@ -217,6 +219,7 @@ def _sold_tab_row(product: dict) -> list:
         _clean_str(product.get("shipping_carrier")),
         _clean_str(product.get("shipping_cost_try")),
         _clean_str(product.get("shipping_cost_usd")),
+        _clean_str(product.get("shipping_tracking_no")),
     ]
 
 
