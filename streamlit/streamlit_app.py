@@ -468,6 +468,19 @@ div[class*="st-key-urun_alt_tab_"] button[kind="primary"]:hover {
 }
 .st-key-sub_nav_bar .compact-stat-value { font-size: 1.05rem !important; }
 .st-key-sub_nav_bar .compact-stat-label { font-size: 0.78rem !important; }
+/* Rozetleri şerit içinde dikey ortala (markdown sarmalayıcı boşluğunu sıfırla) */
+.st-key-sub_nav_bar .stMarkdown,
+.st-key-sub_nav_bar div[data-testid="stMarkdownContainer"] {
+  margin: 0 !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+}
+.st-key-sub_nav_bar .compact-stats {
+  height: 100% !important;
+  align-items: center !important;
+  margin: 0 !important;
+}
 
 [data-testid="stCheckbox"] input {
   accent-color: var(--success);
