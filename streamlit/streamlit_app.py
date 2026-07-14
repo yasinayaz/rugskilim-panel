@@ -1168,12 +1168,13 @@ def _satilan_stoga_geri_al(urun: dict):
     _urun_guncelle_arkaplanda(guncel)
 
 
+@st.dialog("✏️ Satılan ürün düzenle", width="large")
 def _satilan_edit_dialog(urun: dict):
     """Satılan ürün düzenleme + kalıcı silme (aktif ürün edit senaryosunun satış karşılığı)."""
     import time as _t
 
     kod0 = str((urun or {}).get("product_code") or "").strip()
-    st.markdown(f"##### ✏️ Satılan ürün düzenle — **{kod0}**")
+    st.markdown(f"**{kod0}**")
 
     try:
         from shared.store_manager import tum_magazalar as _tm
@@ -7204,7 +7205,6 @@ if st.session_state.active_main_tab == "urunler":
                                 ):
                                     st.session_state["_edit_satilan"] = _sat_urun
                                     st.session_state.pop("_satilan_stok_onay", None)
-                                    st.rerun()
                                 if not st.session_state.get("_satilan_stok_onay"):
                                     if _sab2.button(
                                         "📦 Stoğa Geri Al",
