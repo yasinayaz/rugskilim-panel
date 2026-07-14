@@ -1192,11 +1192,11 @@ def _satilan_edit_dialog(urun: dict):
 
     _c1, _c2, _c3 = st.columns(3)
     _e_site = _c1.multiselect("Satılan site", options=_site_ops, default=_mevcut_siteler)
-    _e_musteri = _c2.text_input("Müşteri adı", value=urun.get("customer_name", ""))
-    _e_tarih = _c3.text_input("Satılan tarih", value=urun.get("sold_at", ""))
+    _e_musteri = _c2.text_input("Müşteri adı", value=urun.get("customer_name") or "")
+    _e_tarih = _c3.text_input("Satılan tarih", value=urun.get("sold_at") or "")
     _c4, _c5 = st.columns(2)
-    _e_tel = _c4.text_input("Telefon", value=urun.get("customer_phone", ""))
-    _e_ulke = _c5.text_input("İletişim & ülke", value=urun.get("customer_contact_country", ""))
+    _e_tel = _c4.text_input("Telefon", value=urun.get("customer_phone") or "")
+    _e_ulke = _c5.text_input("Ülke", value=urun.get("customer_contact_country") or "")
     _k1, _k2, _k3 = st.columns(3)
     _carriers = ["FEDEX", "UPS"]
     _cur_carrier = str(urun.get("shipping_carrier", "")).strip().upper()
@@ -1212,10 +1212,10 @@ def _satilan_edit_dialog(urun: dict):
         "Kargo (USD)", min_value=0.0, step=1.0, format="%.2f",
         value=_float_or_none(urun.get("shipping_cost_usd")) or 0.0,
     )
-    _e_adres = st.text_area("Adres", value=urun.get("customer_address", ""), height=70)
+    _e_adres = st.text_area("Adres", value=urun.get("customer_address") or "", height=70)
     _c6, _c7 = st.columns(2)
-    _e_takip = _c6.text_input("Takip No", value=urun.get("shipping_tracking_no", ""))
-    _e_not = _c7.text_input("Not", value=urun.get("note", ""))
+    _e_takip = _c6.text_input("Takip No", value=urun.get("shipping_tracking_no") or "")
+    _e_not = _c7.text_input("Not", value=urun.get("note") or "")
 
     _b1, _b2, _b3 = st.columns([2, 1.4, 1])
     if _b1.button("Kaydet", type="primary", use_container_width=True, key="satilan_edit_kaydet"):
